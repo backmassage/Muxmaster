@@ -1,13 +1,26 @@
 # Muxmaster Media Library Encoder
 
-Batch-convert media for a Jellyfin-style library with:
+> A fast, resilient batch encoder/remuxer for Jellyfin-style libraries.
 
-- HEVC video (VAAPI or CPU/x265)
-- AAC audio (all tracks by default)
-- Optional HEVC remux mode (copy video, process audio)
-- Clean output folder structure for TV and movies
+## At a Glance
 
-The script is designed to be resilient with mixed anime/TV/movie files, including dual-audio releases, ASS subtitles, and attachment fonts.
+- HEVC video encoding via VAAPI or CPU/x265
+- Strict AAC audio processing for all tracks (214k target)
+- Optional HEVC remux mode (copy video + process audio)
+- Automatic TV/movie folder structure normalization
+- Stream-safe defaults for subtitles and attachment fonts
+
+The script is designed to handle mixed anime/TV/movie files, including dual-audio releases, ASS subtitles, and attachment fonts.
+
+## Mini PC Profile (Tuned/Tested)
+
+This project is actively tuned and validated on:
+
+| Component | Spec |
+|---|---|
+| CPU | AMD Ryzen 6600H |
+| RAM | 20 GB |
+| OS | Arch Linux |
 
 ---
 
@@ -64,6 +77,17 @@ Typical anime/dual-audio remux workflow:
 ```bash
 ./Muxmaster.sh -m vaapi --skip-hevc -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
 ```
+
+### Quick Command Cheat Sheet
+
+| Goal | Command |
+|---|---|
+| Standard encode pass | `./Muxmaster.sh -m vaapi "/input" "/output"` |
+| CPU encode | `./Muxmaster.sh -m cpu "/input" "/output"` |
+| Keep HEVC video, process audio | `./Muxmaster.sh --skip-hevc "/input" "/output"` |
+| Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
+| Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
+| System diagnostics | `./Muxmaster.sh --check` |
 
 ---
 
