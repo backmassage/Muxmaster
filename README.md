@@ -78,6 +78,7 @@ jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 | `-p, --preset <preset>` | CPU preset for x265 (default: `slow`) |
 | `-d, --dry-run` | Preview planned operations only |
 | `--skip-hevc` | HEVC files: copy video, process audio |
+| `--include-extras` | Include files from `NC`/`Extras`/`Sample` folders |
 | `--no-subs` | Do not copy subtitle streams |
 | `--no-attachments` | Do not copy attachment streams |
 | `-f, --force` | Overwrite existing output files |
@@ -99,13 +100,14 @@ jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 - If AAC fails on a file: fallback to **copy all source audio tracks**
 - Subtitles: copied by default (ASS and others preserved)
 - Attachments: copied by default
+- Extras folders (`NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`) are skipped by default (`--include-extras` to include)
 - Existing output files: skipped by default (`--force` to overwrite)
 
 Supported input extensions:
 
 - `mkv`, `mp4`, `avi`, `m4v`, `mov`, `wmv`, `flv`, `webm`, `ts`, `m2ts`
 
-The script also skips common extras/sample folders like:
+By default, the script skips common extras/sample folders like:
 
 - `NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`
 

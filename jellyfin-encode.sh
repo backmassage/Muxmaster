@@ -35,6 +35,7 @@ KEEP_ATTACHMENTS=true
 DRY_RUN=false
 SKIP_EXISTING=true
 SKIP_HEVC=false
+SKIP_EXTRAS=true
 LOG_FILE=""
 VERBOSE=false
 CHECK_ONLY=false
@@ -109,6 +110,7 @@ Options:
   -p, --preset <preset>     CPU preset (default: slow)
   -d, --dry-run             Preview only
   --skip-hevc               HEVC files: copy video, encode audio only (fast)
+  --include-extras          Include NC/Extras/Sample/Featurettes folders
   --no-subs                 Do not copy subtitle streams
   --no-attachments          Do not copy attachment streams (fonts/images)
   -f, --force               Overwrite existing output files
@@ -177,6 +179,7 @@ parse_args() {
                 ;;
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
+            --include-extras) SKIP_EXTRAS=false; shift ;;
             --no-subs) KEEP_SUBTITLES=false; shift ;;
             --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
             --color) COLOR_MODE="always"; shift ;;
@@ -593,6 +596,8 @@ process_files() {
     log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (copy fallback preserves all tracks) | Keyframes: ${KEYFRAME_INT}f"
     [[ "$KEEP_SUBTITLES" == true ]] && log_info "Subtitles: Copy all subtitle streams (ASS and others preserved)"
     [[ "$KEEP_ATTACHMENTS" == true ]] && log_info "Attachments: Copy font/image attachments"
+    [[ "$SKIP_EXTRAS" == true ]] && log_info "Folder filter: skipping NC/Extras/Sample/Featurettes directories"
+    [[ "$SKIP_EXTRAS" == false ]] && log_info "Folder filter: including all directories"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     echo
     
@@ -604,8 +609,10 @@ process_files() {
         ((current++))
         
         # Skip files in NC/extras/sample folders
-        local dirpath=$(dirname "$f")
-        if [[ "$dirpath" =~ /(NC|NCOP|NCED|Extras?|Samples?|Featurettes?)(/|$) ]]; then
+        local dirpath
+        dirpath=$(dirname "$f")
+        local dirpath_lower="${dirpath,,}"
+        if [[ "$SKIP_EXTRAS" == true && "$dirpath_lower" =~ /(nc|ncop|nced|extras?|samples?|featurettes?)(/|$) ]]; then
             log_debug "Skip (extras): $(basename "$f")"
             ((skipped++))
             continue
