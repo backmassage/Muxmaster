@@ -2,7 +2,19 @@
 
 > A fast, resilient batch encoder/remuxer for Jellyfin-style libraries.
 
-Current version: **1.0**
+Current version: **1.1**
+
+## Quick Changelog
+
+### v1.1 (2026-02-16)
+
+- Added FFmpeg hardening retries for attachment tag issues, subtitle mux failures, mux queue overflow, and timestamp discontinuities.
+- Added `--strict` mode to disable automatic per-file retry fallbacks.
+- Preserved original audio/subtitle stream metadata (track titles/language tags).
+- Reorganized helper script structure and moved `harleybox_auto.sh` to `scripts/helpers/`.
+- Updated HarleyBox helper mount settings to remove `umask=000` and add `nofail` to fstab options.
+
+Full release notes: [`CHANGELOG.md`](./CHANGELOG.md)
 
 ## At a Glance
 
@@ -27,6 +39,22 @@ This project is actively tuned and validated on:
 
 ---
 
+## Repository Structure (WIP)
+
+```text
+.
+├── Muxmaster.sh
+└── scripts/
+    └── helpers/
+        ├── harleybox_auto.sh
+        └── extra/
+            └── .gitkeep
+```
+
+Use `scripts/helpers/` for helper `.sh` utilities.
+
+---
+
 ## Features
 
 - **Encoder modes**
@@ -37,16 +65,26 @@ This project is actively tuned and validated on:
 - **Audio handling**
   - Tries to convert **all audio tracks** to AAC stereo 224k.
   - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
+  - Preserves original audio track metadata per track (title/language tags), including multi/dual-audio releases.
 - **Subtitle handling**
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
+  - If subtitle mux/copy fails, the file is retried without subtitles.
+  - Preserves original subtitle track metadata (title/language tags).
 - **Attachment handling**
   - Copies attachment streams by default (fonts/images), which helps ASS styling render correctly.
+  - If an input attachment stream is missing required tags (filename/mimetype), the file is retried without attachments.
 - **HEVC skip mode**
   - Default behavior remuxes HEVC sources (copy video + process audio).
   - Use `--no-skip-hevc` to force HEVC re-encode.
 - **Metadata handling**
   - Default behavior strips container metadata and chapters for cleaner outputs.
   - Use `--keep-metadata` to preserve source container metadata/chapters.
+  - If preserve mode fails for a file, that file is retried with clean metadata.
+  - Stream-level audio/subtitle metadata is preserved in both clean and keep modes.
+- **Mux/timestamp resilience**
+  - Retries with a larger mux queue if FFmpeg reports packet buffer overflow.
+  - Retries with generated timestamps when FFmpeg reports non-monotonic DTS.
+  - Use `--strict` to disable all automatic per-file retry fallbacks.
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**
@@ -91,6 +129,7 @@ Typical anime/dual-audio remux workflow:
 | CPU encode | `./Muxmaster.sh -m cpu "/input" "/output"` |
 | Force HEVC re-encode | `./Muxmaster.sh --no-skip-hevc "/input" "/output"` |
 | Preserve source metadata/chapters | `./Muxmaster.sh --keep-metadata "/input" "/output"` |
+| Disable automatic retry fallbacks | `./Muxmaster.sh --strict "/input" "/output"` |
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
 | System diagnostics | `./Muxmaster.sh --check` |
@@ -120,6 +159,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-stats` | Hide per-file source video stats (resolution/bitrate) |
 | `--no-subs` | Do not copy subtitle streams |
 | `--no-attachments` | Do not copy attachment streams |
+| `--strict` | Disable automatic FFmpeg retry fallbacks (fail fast per file) |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
 | `--` | End options parsing (use before paths starting with `-`) |
@@ -145,6 +185,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - Per-file source video stats are shown by default (`--no-stats` to hide)
 - Existing output files: skipped by default (`--force` to overwrite)
 - HEVC sources: remux by default (`--no-skip-hevc` to force HEVC re-encode)
+- Automatic FFmpeg fallback retries are enabled by default (`--strict` disables them)
 
 Supported input extensions:
 
@@ -230,6 +271,11 @@ The script attempts to classify files as TV episodes or movies from filename pat
 
 ## Troubleshooting
 
+### Need hard-fail behavior for debugging
+
+- Use `--strict` to disable all automatic per-file retry fallbacks.
+- This is useful when you want the first FFmpeg failure to be the only failure shown.
+
 ### "No VAAPI device"
 
 - Check `/dev/dri/renderD*` exists.
@@ -240,6 +286,26 @@ The script attempts to classify files as TV episodes or movies from filename pat
 
 - These often come from odd font attachments in MKVs.
 - The script maps only needed streams and should still proceed in most cases.
+
+### Attachment tag errors like "Attachment stream ... has no filename/mimetype tag"
+
+- Newer script versions automatically retry the file without attachments.
+- If you still need a manual override for a run, use `--no-attachments`.
+
+### Subtitle mux/copy errors
+
+- Newer script versions automatically retry the file without subtitles if subtitle stream muxing fails.
+- Manual override: run with `--no-subs`.
+
+### "Too many packets buffered for output stream"
+
+- Newer script versions automatically retry the file with a larger FFmpeg mux queue.
+- If issues persist, run with `-v` to inspect the full FFmpeg stream mapping and packet flow.
+
+### Non-monotonic DTS / timestamp ordering errors
+
+- Newer script versions automatically retry with generated timestamps.
+- For badly damaged sources, remuxing the source once with FFmpeg may still be required.
 
 ### Audio issues on specific files
 

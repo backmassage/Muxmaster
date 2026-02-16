@@ -43,11 +43,12 @@ VERBOSE=false
 CHECK_ONLY=false
 QUALITY_OVERRIDE=""
 COLOR_MODE="auto"
+STRICT_MODE=false
 
 INPUT_DIR=""
 OUTPUT_DIR=""
 SCRIPT_NAME="$(basename "$0")"
-SCRIPT_VERSION="1.0"
+SCRIPT_VERSION="1.1"
 
 # ANSI color palette (initialized by init_colors)
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
@@ -153,6 +154,7 @@ Options:
   --no-stats                Hide per-file source video stats section
   --no-subs                 Do not copy subtitle streams
   --no-attachments          Do not copy attachment streams (fonts/images)
+  --strict                  Disable automatic ffmpeg retry fallbacks
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
   --                        End options parsing
@@ -232,6 +234,7 @@ parse_args() {
             --no-stats) SHOW_FILE_STATS=false; shift ;;
             --no-subs) KEEP_SUBTITLES=false; shift ;;
             --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
+            --strict) STRICT_MODE=true; shift ;;
             --color) COLOR_MODE="always"; shift ;;
             --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
@@ -351,10 +354,28 @@ get_codec() {
 
 # Return success if at least one audio stream exists.
 has_audio_stream() {
-    local has_audio
-    has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=index \
-        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | sed -n '1p')
-    [[ -n "$has_audio" ]]
+    local count
+    count=$(get_stream_count "a" "$1")
+    [[ "$count" -gt 0 ]]
+}
+
+# Return success if at least one subtitle stream exists.
+has_subtitle_stream() {
+    local count
+    count=$(get_stream_count "s" "$1")
+    [[ "$count" -gt 0 ]]
+}
+
+# Return stream count for a selector (e.g., a, s, v).
+get_stream_count() {
+    local selector="$1"
+    local input="$2"
+    local count
+
+    count=$(ffprobe -v error -select_streams "$selector" -show_entries stream=index \
+        -of csv=p=0 "$input" 2>/dev/null | sed '/^[[:space:]]*$/d' | wc -l | tr -d '[:space:]')
+    [[ "$count" =~ ^[0-9]+$ ]] || count=0
+    printf '%s\n' "$count"
 }
 
 # Return the first non-attached-pic video stream index.
@@ -456,14 +477,51 @@ run_ffmpeg_logged() {
     fi
 }
 
+# Return success when ffmpeg output reports attachment metadata/tag issues.
+ffmpeg_error_has_attachment_tag_issue() {
+    local err_file="$1"
+    [[ -s "$err_file" ]] || return 1
+    grep -Eq 'Attachment stream [0-9]+ has no (filename|mimetype) tag' "$err_file"
+}
+
+# Return success when ffmpeg output reports subtitle stream mux/copy issues.
+ffmpeg_error_has_subtitle_mux_issue() {
+    local err_file="$1"
+    [[ -s "$err_file" ]] || return 1
+    grep -Eqi 'Subtitle codec .* is not supported|Could not find tag for codec .* in stream .*subtitle|Error initializing output stream .*subtitle' "$err_file"
+}
+
+# Return success when ffmpeg reports mux queue overflow.
+ffmpeg_error_has_mux_queue_overflow() {
+    local err_file="$1"
+    [[ -s "$err_file" ]] || return 1
+    grep -Eq 'Too many packets buffered for output stream' "$err_file"
+}
+
+# Return success when ffmpeg reports non-monotonic timestamp issues.
+ffmpeg_error_has_timestamp_discontinuity() {
+    local err_file="$1"
+    [[ -s "$err_file" ]] || return 1
+    grep -Eqi 'Non-monotonous DTS|non monotonically increasing dts|DTS .*out of order' "$err_file"
+}
+
 # Core remux executor used by skip-hevc flow.
 # - audio options are injected by caller
 # - subtitle/attachment copying follows KEEP_* toggles
 # - metadata_mode supports "keep" or "strip"
 run_remux_with_audio_opts() {
-    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
-    shift 5
-    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts
+    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_subtitles="$6" include_attachments="$7" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
+    shift 9
+    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts
+    local audio_stream_count subtitle_stream_count i
+
+    if [[ "$timestamp_fix" == true ]]; then
+        pre_input_opts=(-fflags +genpts)
+        timestamp_opts=(-avoid_negative_ts make_zero)
+    else
+        pre_input_opts=()
+        timestamp_opts=()
+    fi
 
     if [[ "$metadata_mode" == "strip" ]]; then
         metadata_opts=(-map_metadata -1 -map_chapters -1)
@@ -471,33 +529,54 @@ run_remux_with_audio_opts() {
         metadata_opts=(-map_metadata 0 -map_chapters 0)
     fi
 
-    if [[ "$KEEP_SUBTITLES" == true ]]; then
+    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
         subtitle_opts=(-map 0:s? -c:s copy)
     else
         subtitle_opts=()
     fi
 
-    if [[ "$KEEP_ATTACHMENTS" == true ]]; then
+    if [[ "$KEEP_ATTACHMENTS" == true && "$include_attachments" == true ]]; then
         attachment_opts=(-map 0:t? -c:t copy)
     else
         attachment_opts=()
     fi
 
+    # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
+    stream_metadata_opts=()
+    audio_stream_count=$(get_stream_count "a" "$input")
+    if [[ "$audio_stream_count" -gt 0 ]]; then
+        for ((i=0; i<audio_stream_count; i++)); do
+            stream_metadata_opts+=(-map_metadata:s:a:"$i" 0:s:a:"$i")
+        done
+    fi
+
+    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
+        subtitle_stream_count=$(get_stream_count "s" "$input")
+        if [[ "$subtitle_stream_count" -gt 0 ]]; then
+            for ((i=0; i<subtitle_stream_count; i++)); do
+                stream_metadata_opts+=(-map_metadata:s:s:"$i" 0:s:s:"$i")
+            done
+        fi
+    fi
+
     run_ffmpeg_logged "$err_file" \
         ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
             -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+            "${pre_input_opts[@]}" \
             -i "$input" \
             -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-            -dn -max_muxing_queue_size 4096 \
+            -dn -max_muxing_queue_size "$muxing_queue_size" \
             -c:v copy \
             "${metadata_opts[@]}" \
+            "${stream_metadata_opts[@]}" \
+            "${timestamp_opts[@]}" \
             "$output"
 }
 
 # Build remux audio args for strict AAC mode:
 # - all audio tracks -> AAC
 run_remux_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
+    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_attachments="${6:-true}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     local -a audio_opts
 
     if has_audio_stream "$input"; then
@@ -506,15 +585,16 @@ run_remux_attempt() {
         audio_opts=(-an)
     fi
 
-    run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$metadata_mode" "$err_file" "${audio_opts[@]}"
+    run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$metadata_mode" "$err_file" "$include_subtitles" "$include_attachments" "$muxing_queue_size" "$timestamp_fix" "${audio_opts[@]}"
 }
 
 # Core transcode executor for non-remux flow.
 # Video is encoded to HEVC; audio is encoded to AAC for all tracks, and
 # subtitles/attachments are preserved by default.
 run_encode_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" err_file="$4"
-    local -a audio_opts subtitle_opts attachment_opts metadata_opts
+    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" metadata_mode="${6:-}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
+    local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts
+    local audio_stream_count subtitle_stream_count i
 
     if has_audio_stream "$input"; then
         audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
@@ -522,46 +602,82 @@ run_encode_attempt() {
         audio_opts=(-an)
     fi
 
-    if [[ "$KEEP_SUBTITLES" == true ]]; then
+    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
         subtitle_opts=(-map 0:s? -c:s copy)
     else
         subtitle_opts=()
     fi
 
-    if [[ "$KEEP_ATTACHMENTS" == true ]]; then
+    if [[ "$KEEP_ATTACHMENTS" == true && "$include_attachments" == true ]]; then
         attachment_opts=(-map 0:t? -c:t copy)
     else
         attachment_opts=()
     fi
 
-    if [[ "$CLEAN_METADATA" == true ]]; then
+    if [[ -z "$metadata_mode" ]]; then
+        [[ "$CLEAN_METADATA" == true ]] && metadata_mode="strip" || metadata_mode="keep"
+    fi
+
+    if [[ "$metadata_mode" == "strip" ]]; then
         metadata_opts=(-map_metadata -1 -map_chapters -1)
     else
         metadata_opts=(-map_metadata 0 -map_chapters 0)
+    fi
+
+    if [[ "$timestamp_fix" == true ]]; then
+        pre_input_opts=(-fflags +genpts)
+        timestamp_opts=(-avoid_negative_ts make_zero)
+    else
+        pre_input_opts=()
+        timestamp_opts=()
+    fi
+
+    # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
+    stream_metadata_opts=()
+    audio_stream_count=$(get_stream_count "a" "$input")
+    if [[ "$audio_stream_count" -gt 0 ]]; then
+        for ((i=0; i<audio_stream_count; i++)); do
+            stream_metadata_opts+=(-map_metadata:s:a:"$i" 0:s:a:"$i")
+        done
+    fi
+
+    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
+        subtitle_stream_count=$(get_stream_count "s" "$input")
+        if [[ "$subtitle_stream_count" -gt 0 ]]; then
+            for ((i=0; i<subtitle_stream_count; i++)); do
+                stream_metadata_opts+=(-map_metadata:s:s:"$i" 0:s:s:"$i")
+            done
+        fi
     fi
 
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         run_ffmpeg_logged "$err_file" \
             ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
                 -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                "${pre_input_opts[@]}" \
                 -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
                 -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
                 -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-                -dn -max_muxing_queue_size 4096 \
+                -dn -max_muxing_queue_size "$muxing_queue_size" \
                 -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
                 "${metadata_opts[@]}" \
+                "${stream_metadata_opts[@]}" \
+                "${timestamp_opts[@]}" \
                 "$output"
     else
         run_ffmpeg_logged "$err_file" \
             ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
                 -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                "${pre_input_opts[@]}" \
                 -i "$input" \
                 -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-                -dn -max_muxing_queue_size 4096 \
+                -dn -max_muxing_queue_size "$muxing_queue_size" \
                 -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
                 -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
                 -x265-params log-level=error \
                 "${metadata_opts[@]}" \
+                "${stream_metadata_opts[@]}" \
+                "${timestamp_opts[@]}" \
                 "$output"
     fi
 }
@@ -655,11 +771,78 @@ encode_file() {
     start=$(date +%s)
     local ffmpeg_err
     ffmpeg_err=$(mktemp)
+    local encode_metadata_mode="strip"
+    local encode_include_attachments=true
+    local encode_include_subtitles=true
+    local encode_muxing_queue_size=4096
+    local encode_timestamp_fix=false
+    [[ "$CLEAN_METADATA" == false ]] && encode_metadata_mode="keep"
 
-    if ! run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err"; then
-        result=$?
-    else
+    if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
         result=0
+    else
+        result=$?
+
+        if [[ "$STRICT_MODE" != true ]]; then
+            if [[ "$encode_metadata_mode" == "keep" ]]; then
+                log_warn "Encode retry: switching to clean metadata mode"
+                encode_metadata_mode="strip"
+                rm -f "$output"
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
+            fi
+
+            if [[ "$result" -ne 0 && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$ffmpeg_err"; then
+                log_warn "Encode retry: source attachment tag issue; retrying without attachments"
+                rm -f "$output"
+                encode_include_attachments=false
+
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
+            fi
+
+            if [[ "$result" -ne 0 && "$KEEP_SUBTITLES" == true && "$encode_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$ffmpeg_err"; then
+                log_warn "Encode retry: subtitle stream mux issue; retrying without subtitles"
+                rm -f "$output"
+                encode_include_subtitles=false
+
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
+            fi
+
+            if [[ "$result" -ne 0 && "$encode_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$ffmpeg_err"; then
+                log_warn "Encode retry: increasing mux queue size to 16384"
+                rm -f "$output"
+                encode_muxing_queue_size=16384
+
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
+            fi
+
+            if [[ "$result" -ne 0 && "$encode_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$ffmpeg_err"; then
+                log_warn "Encode retry: timestamp discontinuity detected; retrying with genpts"
+                rm -f "$output"
+                encode_timestamp_fix=true
+
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
+            fi
+        fi
     fi
     
     local elapsed=$(( $(date +%s) - start ))
@@ -706,6 +889,7 @@ process_files() {
     [[ "$SHOW_FFMPEG_FPS" == true ]] && log_info "FFmpeg progress: live FPS/speed enabled"
     [[ "$SHOW_FILE_STATS" == true ]] && log_info "File stats: source video resolution/bitrate section enabled"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
+    [[ "$STRICT_MODE" == true ]] && log_info "Retry policy: strict mode enabled (automatic retries disabled)"
     echo
     
     # Main per-file pipeline:
@@ -752,18 +936,67 @@ process_files() {
                     local remux_err remux_ok=false
                     remux_err=$(mktemp)
                     local remux_metadata_mode="strip"
+                    local remux_include_subtitles=true
+                    local remux_include_attachments=true
+                    local remux_muxing_queue_size=4096
+                    local remux_timestamp_fix=false
                     [[ "$CLEAN_METADATA" == false ]] && remux_metadata_mode="keep"
 
                     # Primary attempt follows the selected metadata mode.
-                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err"; then
+                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
                         remux_ok=true
-                    elif [[ "$remux_metadata_mode" == "keep" ]]; then
-                        log_warn "Remux retry: switching to clean metadata mode"
-                        rm -f "$out"
+                    fi
 
-                        # Fallback to clean metadata mode if preserve mode fails.
-                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "strip" "$remux_err"; then
-                            remux_ok=true
+                    if [[ "$STRICT_MODE" != true ]]; then
+                        if [[ "$remux_ok" != true && "$remux_metadata_mode" == "keep" ]]; then
+                            log_warn "Remux retry: switching to clean metadata mode"
+                            remux_metadata_mode="strip"
+                            rm -f "$out"
+
+                            # Fallback to clean metadata mode if preserve mode fails.
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
+                        fi
+
+                        if [[ "$remux_ok" != true && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$remux_err"; then
+                            log_warn "Remux retry: source attachment tag issue; retrying without attachments"
+                            rm -f "$out"
+                            remux_include_attachments=false
+
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
+                        fi
+
+                        if [[ "$remux_ok" != true && "$KEEP_SUBTITLES" == true && "$remux_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$remux_err"; then
+                            log_warn "Remux retry: subtitle stream mux issue; retrying without subtitles"
+                            rm -f "$out"
+                            remux_include_subtitles=false
+
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
+                        fi
+
+                        if [[ "$remux_ok" != true && "$remux_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$remux_err"; then
+                            log_warn "Remux retry: increasing mux queue size to 16384"
+                            rm -f "$out"
+                            remux_muxing_queue_size=16384
+
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
+                        fi
+
+                        if [[ "$remux_ok" != true && "$remux_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$remux_err"; then
+                            log_warn "Remux retry: timestamp discontinuity detected; retrying with genpts"
+                            rm -f "$out"
+                            remux_timestamp_fix=true
+
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
                         fi
                     fi
 
