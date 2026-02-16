@@ -199,6 +199,7 @@ Options:
   --skip-hevc               HEVC files: copy video, encode audio only (fast)
   --include-extras          Include NC/Extras/Sample/Featurettes folders
   --show-fps                Show live ffmpeg encoding FPS/speed (default: on)
+  --no-fps                  Disable live ffmpeg FPS/speed progress
   --no-stats                Hide per-file source video stats section
   --no-subs                 Do not copy subtitle streams
   --no-attachments          Do not copy attachment streams (fonts/images)
@@ -272,6 +273,7 @@ parse_args() {
             --skip-hevc) SKIP_HEVC=true; shift ;;
             --include-extras) SKIP_EXTRAS=false; shift ;;
             --show-fps) SHOW_FFMPEG_FPS=true; shift ;;
+            --no-fps) SHOW_FFMPEG_FPS=false; shift ;;
             --no-stats) SHOW_FILE_STATS=false; shift ;;
             --no-subs) KEEP_SUBTITLES=false; shift ;;
             --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
@@ -637,7 +639,7 @@ parse_filename() {
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | tr '_' ' ' | xargs)
     # Movie with year
-    elif [[ "$base" =~ (.+)[._[:space:]]\(?([12][0-9]{3})\)? ]]; then
+    elif [[ "$base" =~ (.+)[._[:space:]]\(?((19[0-9]{2}|20[0-9]{2}))\)? ]]; then
         MEDIA_TYPE="movie"
         MOVIE_NAME=$(echo "${BASH_REMATCH[1]}" | tr '._' ' ' | xargs)
         YEAR="${BASH_REMATCH[2]}"

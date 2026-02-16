@@ -30,8 +30,7 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**
-  - Quiet FFmpeg output by default, detailed FFmpeg output with `-v`.
-  - Live FPS/speed progress is enabled by default.
+  - Live FFmpeg FPS/speed progress by default, detailed FFmpeg output with `-v`.
 - **Color support**
   - Auto color in TTY, plus `--color` / `--no-color`.
 - **File stats section**
@@ -56,14 +55,14 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
 ## Quick Start
 
 ```bash
-chmod +x Muxmaster
-./Muxmaster -m vaapi -q 19 "/path/to/input" "/path/to/output"
+chmod +x Muxmaster.sh
+./Muxmaster.sh -m vaapi -q 19 "/path/to/input" "/path/to/output"
 ```
 
 Typical anime/dual-audio remux workflow:
 
 ```bash
-./Muxmaster -m vaapi --skip-hevc -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
+./Muxmaster.sh -m vaapi --skip-hevc -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
 ```
 
 ---
@@ -71,7 +70,7 @@ Typical anime/dual-audio remux workflow:
 ## Command Usage
 
 ```text
-Muxmaster [OPTIONS] <input_dir> <output_dir>
+Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 ```
 
 ### Options
@@ -85,6 +84,7 @@ Muxmaster [OPTIONS] <input_dir> <output_dir>
 | `--skip-hevc` | HEVC files: copy video, process audio |
 | `--include-extras` | Include files from `NC`/`Extras`/`Sample` folders |
 | `--show-fps` | Show live FFmpeg encoding FPS/speed progress (default: on) |
+| `--no-fps` | Disable live FFmpeg FPS/speed progress |
 | `--no-stats` | Hide per-file source video stats (resolution/bitrate) |
 | `--no-subs` | Do not copy subtitle streams |
 | `--no-attachments` | Do not copy attachment streams |
@@ -110,7 +110,7 @@ Muxmaster [OPTIONS] <input_dir> <output_dir>
 - Subtitles: copied by default (ASS and others preserved)
 - Attachments: copied by default
 - Extras folders (`NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`) are skipped by default (`--include-extras` to include)
-- FFmpeg FPS/speed live progress is on by default
+- FFmpeg FPS/speed live progress is on by default (`--no-fps` to disable)
 - Per-file source video stats are shown by default (`--no-stats` to hide)
 - CSV results: written by default to `<output>/encode-results-YYYYmmdd-HHMMSS.csv`
 - Existing output files: skipped by default (`--force` to overwrite)
@@ -148,55 +148,61 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### VAAPI encode
 
 ```bash
-./Muxmaster -m vaapi -q 19 "/media/input" "/media/output"
+./Muxmaster.sh -m vaapi -q 19 "/media/input" "/media/output"
 ```
 
 ### CPU encode
 
 ```bash
-./Muxmaster -m cpu -q 20 -p medium "/media/input" "/media/output"
+./Muxmaster.sh -m cpu -q 20 -p medium "/media/input" "/media/output"
 ```
 
 ### Keep existing outputs untouched (default)
 
 ```bash
-./Muxmaster "/media/input" "/media/output"
+./Muxmaster.sh "/media/input" "/media/output"
 ```
 
 ### Force overwrite existing outputs
 
 ```bash
-./Muxmaster -f "/media/input" "/media/output"
+./Muxmaster.sh -f "/media/input" "/media/output"
 ```
 
 ### Disable subtitle and attachment copying
 
 ```bash
-./Muxmaster --no-subs --no-attachments "/media/input" "/media/output"
+./Muxmaster.sh --no-subs --no-attachments "/media/input" "/media/output"
 ```
 
 ### Verbose FFmpeg diagnostics
 
 ```bash
-./Muxmaster -v -m cpu "/media/input" "/media/output"
+./Muxmaster.sh -v -m cpu "/media/input" "/media/output"
 ```
 
-### Show live FFmpeg FPS/speed progress
+### Show live FFmpeg FPS/speed progress (default behavior)
 
 ```bash
-./Muxmaster --show-fps -m cpu "/media/input" "/media/output"
+./Muxmaster.sh --show-fps -m cpu "/media/input" "/media/output"
+```
+
+### Disable live FFmpeg FPS/speed progress
+
+```bash
+./Muxmaster.sh --no-fps -m cpu "/media/input" "/media/output"
 ```
 
 ### Custom CSV results path
 
 ```bash
-./Muxmaster --csv-log "/media/output/encode-report.csv" "/media/input" "/media/output"
+./Muxmaster.sh --csv-log "/media/output/encode-report.csv" "/media/input" "/media/output"
 ```
 
 ### System diagnostics only
 
 ```bash
-./Muxmaster --check
+./Muxmaster.sh --check
 ```
 
 ---
