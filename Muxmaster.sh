@@ -456,11 +456,11 @@ run_ffmpeg_logged() {
     fi
 }
 
-# Return success when ffmpeg output reports an unnamed attachment stream.
-ffmpeg_error_has_missing_attachment_filename() {
+# Return success when ffmpeg output reports attachment metadata/tag issues.
+ffmpeg_error_has_attachment_tag_issue() {
     local err_file="$1"
     [[ -s "$err_file" ]] || return 1
-    grep -Eq 'Attachment stream [0-9]+ has no filename tag' "$err_file"
+    grep -Eq 'Attachment stream [0-9]+ has no (filename|mimetype) tag' "$err_file"
 }
 
 # Core remux executor used by skip-hevc flow.
@@ -520,7 +520,7 @@ run_remux_attempt() {
 # Video is encoded to HEVC; audio is encoded to AAC for all tracks, and
 # subtitles/attachments are preserved by default.
 run_encode_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}"
+    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" metadata_mode="${6:-}"
     local -a audio_opts subtitle_opts attachment_opts metadata_opts
 
     if has_audio_stream "$input"; then
@@ -541,7 +541,11 @@ run_encode_attempt() {
         attachment_opts=()
     fi
 
-    if [[ "$CLEAN_METADATA" == true ]]; then
+    if [[ -z "$metadata_mode" ]]; then
+        [[ "$CLEAN_METADATA" == true ]] && metadata_mode="strip" || metadata_mode="keep"
+    fi
+
+    if [[ "$metadata_mode" == "strip" ]]; then
         metadata_opts=(-map_metadata -1 -map_chapters -1)
     else
         metadata_opts=(-map_metadata 0 -map_chapters 0)
@@ -662,18 +666,43 @@ encode_file() {
     start=$(date +%s)
     local ffmpeg_err
     ffmpeg_err=$(mktemp)
+    local encode_metadata_mode="strip"
+    local encode_include_attachments=true
+    [[ "$CLEAN_METADATA" == false ]] && encode_metadata_mode="keep"
 
-    if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" true; then
+    if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode"; then
         result=0
     else
         result=$?
-        if [[ "$KEEP_ATTACHMENTS" == true && "$result" -ne 0 ]] && ffmpeg_error_has_missing_attachment_filename "$ffmpeg_err"; then
-            log_warn "Retrying without attachments (source has unnamed attachment stream)"
+
+        if [[ "$encode_metadata_mode" == "keep" ]]; then
+            log_warn "Encode retry: switching to clean metadata mode"
             rm -f "$output"
-            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" false; then
+            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "strip"; then
                 result=0
             else
                 result=$?
+            fi
+        fi
+
+        if [[ "$result" -ne 0 && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$ffmpeg_err"; then
+            log_warn "Encode retry: source attachment tag issue; retrying without attachments"
+            rm -f "$output"
+            encode_include_attachments=false
+
+            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode"; then
+                result=0
+            else
+                result=$?
+                if [[ "$encode_metadata_mode" == "keep" ]]; then
+                    log_warn "Encode retry: switching to clean metadata mode"
+                    rm -f "$output"
+                    if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "strip"; then
+                        result=0
+                    else
+                        result=$?
+                    fi
+                fi
             fi
         fi
     fi
@@ -784,8 +813,8 @@ process_files() {
                         fi
                     fi
 
-                    if [[ "$remux_ok" != true && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_missing_attachment_filename "$remux_err"; then
-                        log_warn "Remux retry: source attachment missing filename tag; retrying without attachments"
+                    if [[ "$remux_ok" != true && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$remux_err"; then
+                        log_warn "Remux retry: source attachment tag issue; retrying without attachments"
                         rm -f "$out"
                         remux_include_attachments=false
 

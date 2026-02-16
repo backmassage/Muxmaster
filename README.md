@@ -57,13 +57,14 @@ Use `scripts/helpers/extra/` for additional helper `.sh` utilities.
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
 - **Attachment handling**
   - Copies attachment streams by default (fonts/images), which helps ASS styling render correctly.
-  - If an input attachment stream is missing a filename tag, the file is retried without attachments.
+  - If an input attachment stream is missing required tags (filename/mimetype), the file is retried without attachments.
 - **HEVC skip mode**
   - Default behavior remuxes HEVC sources (copy video + process audio).
   - Use `--no-skip-hevc` to force HEVC re-encode.
 - **Metadata handling**
   - Default behavior strips container metadata and chapters for cleaner outputs.
   - Use `--keep-metadata` to preserve source container metadata/chapters.
+  - If preserve mode fails for a file, that file is retried with clean metadata.
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**
@@ -257,6 +258,11 @@ The script attempts to classify files as TV episodes or movies from filename pat
 
 - These often come from odd font attachments in MKVs.
 - The script maps only needed streams and should still proceed in most cases.
+
+### Attachment tag errors like "Attachment stream ... has no filename/mimetype tag"
+
+- Newer script versions automatically retry the file without attachments.
+- If you still need a manual override for a run, use `--no-attachments`.
 
 ### Audio issues on specific files
 
