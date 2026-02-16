@@ -9,10 +9,14 @@ set -o pipefail
 ENCODER_MODE="vaapi"
 VAAPI_DEVICE="/dev/dri/renderD128"
 VAAPI_QP=19
+VAAPI_PROFILE="main10"
+VAAPI_SW_FORMAT="p010"
 CPU_CRF=19
 CPU_PRESET="slow"
 OUTPUT_CONTAINER="mkv"
 KEYFRAME_INT=48              # Keyframes every 48 frames (~2s at 24fps)
+AUDIO_CHANNELS=2
+AUDIO_BITRATE="192k"
 
 DRY_RUN=false
 SKIP_EXISTING=true
@@ -20,6 +24,7 @@ SKIP_HEVC=false
 LOG_FILE=""
 VERBOSE=false
 CHECK_ONLY=false
+QUALITY_OVERRIDE=""
 
 INPUT_DIR=""
 OUTPUT_DIR=""
@@ -64,9 +69,7 @@ parse_args() {
     while [[ $# -gt 0 ]]; do
         case $1 in
             -m|--mode) ENCODER_MODE="$2"; shift 2 ;;
-            -q|--quality)
-                [[ "$ENCODER_MODE" == "vaapi" ]] && VAAPI_QP="$2" || CPU_CRF="$2"
-                shift 2 ;;
+            -q|--quality) QUALITY_OVERRIDE="$2"; shift 2 ;;
             -p|--preset) CPU_PRESET="$2"; shift 2 ;;
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
@@ -85,10 +88,44 @@ parse_args() {
         INPUT_DIR="${positional[0]%/}"   # Strip trailing slash
         OUTPUT_DIR="${positional[1]%/}"  # Strip trailing slash
     fi
+
+    case "$ENCODER_MODE" in
+        vaapi|cpu) ;;
+        *)
+            log_error "Invalid mode '$ENCODER_MODE' (use 'vaapi' or 'cpu')"
+            exit 1
+            ;;
+    esac
+
+    if [[ -n "$QUALITY_OVERRIDE" ]]; then
+        if ! [[ "$QUALITY_OVERRIDE" =~ ^[0-9]+$ ]]; then
+            log_error "Quality must be a whole number (got '$QUALITY_OVERRIDE')"
+            exit 1
+        fi
+
+        if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+            VAAPI_QP="$QUALITY_OVERRIDE"
+        else
+            CPU_CRF="$QUALITY_OVERRIDE"
+        fi
+    fi
+}
+
+test_vaapi_profile() {
+    local sw_format="$1"
+    local profile="$2"
+    local err_file="$3"
+
+    ffmpeg -hide_banner -loglevel error \
+        -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
+        -f lavfi -i color=black:s=256x256:d=0.1 \
+        -vf "format=${sw_format},hwupload" \
+        -c:v hevc_vaapi -profile:v "$profile" -f null - > /dev/null 2>"$err_file"
 }
 
 check_deps() {
     command -v ffmpeg &>/dev/null || { log_error "ffmpeg not found"; exit 1; }
+    command -v ffprobe &>/dev/null || { log_error "ffprobe not found"; exit 1; }
     
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         if [[ ! -e "$VAAPI_DEVICE" ]]; then
@@ -100,16 +137,29 @@ check_deps() {
         
         local vaapi_err
         vaapi_err=$(mktemp)
-        if ! ffmpeg -hide_banner -init_hw_device vaapi=va:"$VAAPI_DEVICE" \
-                -f lavfi -i color=black:s=256x256:d=0.1 \
-                -vf 'format=p010,hwupload' -c:v hevc_vaapi -profile:v main10 -f null - 2>"$vaapi_err"; then
+        if test_vaapi_profile "p010" "main10" "$vaapi_err"; then
+            VAAPI_SW_FORMAT="p010"
+            VAAPI_PROFILE="main10"
+            log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main10)"
+        elif test_vaapi_profile "nv12" "main" "$vaapi_err"; then
+            VAAPI_SW_FORMAT="nv12"
+            VAAPI_PROFILE="main"
+            log_warn "VAAPI main10 unavailable, falling back to HEVC main (8-bit)"
+            log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main)"
+        else
             log_error "VAAPI test failed"
             [[ "$VERBOSE" == true ]] && cat "$vaapi_err"
             rm -f "$vaapi_err"
             exit 1
         fi
         rm -f "$vaapi_err"
-        log_success "VAAPI ready: $VAAPI_DEVICE (10-bit HEVC)"
+    else
+        if ! ffmpeg -hide_banner -loglevel error \
+                -f lavfi -i color=black:s=256x256:d=0.1 \
+                -c:v libx265 -f null - > /dev/null 2>&1; then
+            log_error "CPU mode selected but libx265 is unavailable"
+            exit 1
+        fi
     fi
 }
 
@@ -200,25 +250,27 @@ encode_file() {
     
     local start result=0
     start=$(date +%s)
+    local ffmpeg_err
+    ffmpeg_err=$(mktemp)
     
     # Run ffmpeg with visible progress (-stats shows frame/speed on stderr)
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         ffmpeg -hide_banner -y -stats \
             -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
-            -i "$input" -vf 'format=p010,hwupload' \
-            -map 0:v:0 -map 0:a -map -0:s -map -0:t \
-            -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v main10 -g "$KEYFRAME_INT" \
-            -c:a aac -ac 2 -b:a 192k -map_metadata 0 \
-            "$output" || result=$?
+            -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
+            -map 0:v:0 -map 0:a? \
+            -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
+            -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE" -map_metadata 0 \
+            "$output" 2> >(tee "$ffmpeg_err" >&2) || result=$?
     else
         ffmpeg -hide_banner -y -stats \
             -i "$input" \
-            -map 0:v:0 -map 0:a -map -0:s -map -0:t \
+            -map 0:v:0 -map 0:a? \
             -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
             -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
             -x265-params log-level=error \
-            -c:a aac -ac 2 -b:a 192k -map_metadata 0 \
-            "$output" || result=$?
+            -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE" -map_metadata 0 \
+            "$output" 2> >(tee "$ffmpeg_err" >&2) || result=$?
     fi
     
     local elapsed=$(( $(date +%s) - start ))
@@ -228,10 +280,16 @@ encode_file() {
         in_sz=$(stat -c%s "$input" 2>/dev/null) || in_sz=0
         out_sz=$(stat -c%s "$output" 2>/dev/null) || out_sz=0
         [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=0
+        rm -f "$ffmpeg_err"
         log_success "Done in ${elapsed}s (${ratio}%)"
         return 0
     else
         log_error "Failed!"
+        if [[ -s "$ffmpeg_err" ]]; then
+            log_error "Last ffmpeg output:"
+            tail -n 20 "$ffmpeg_err" | sed 's/^/  /'
+        fi
+        rm -f "$ffmpeg_err"
         rm -f "$output"
         return 1
     fi
@@ -249,7 +307,7 @@ process_files() {
     
     log_info "Found $total files"
     log_info "Mode: $ENCODER_MODE (10-bit HEVC), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
-    log_info "Audio: All tracks → Stereo AAC 192k | Keyframes: ${KEYFRAME_INT}f"
+    log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} | Keyframes: ${KEYFRAME_INT}f"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     echo
     
@@ -291,15 +349,16 @@ process_files() {
                     # Copy video, encode all audio to stereo AAC, exclude subs & attachments
                     ffmpeg -hide_banner -y -stats \
                         -i "$f" \
-                        -map 0:v:0 -map 0:a -map -0:s -map -0:t \
+                        -map 0:v:0 -map 0:a? \
                         -c:v copy \
-                        -c:a aac -ac 2 -b:a 192k \
+                        -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE" \
                         -map_metadata 0 \
                         "$out" || { log_error "Remux failed"; ((failed++)); echo; continue; }
                     
                     local elapsed_rm=$(( $(date +%s) - start_rm ))
-                    local in_sz=$(stat -c%s "$f" 2>/dev/null) || in_sz=0
-                    local out_sz=$(stat -c%s "$out" 2>/dev/null) || out_sz=0
+                    local in_sz out_sz ratio
+                    in_sz=$(stat -c%s "$f" 2>/dev/null) || in_sz=0
+                    out_sz=$(stat -c%s "$out" 2>/dev/null) || out_sz=0
                     [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=100
                     log_success "Remuxed in ${elapsed_rm}s (${ratio}% of original)"
                 fi
