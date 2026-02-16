@@ -456,13 +456,20 @@ run_ffmpeg_logged() {
     fi
 }
 
+# Return success when ffmpeg output reports an unnamed attachment stream.
+ffmpeg_error_has_missing_attachment_filename() {
+    local err_file="$1"
+    [[ -s "$err_file" ]] || return 1
+    grep -Eq 'Attachment stream [0-9]+ has no filename tag' "$err_file"
+}
+
 # Core remux executor used by skip-hevc flow.
 # - audio options are injected by caller
 # - subtitle/attachment copying follows KEEP_* toggles
 # - metadata_mode supports "keep" or "strip"
 run_remux_with_audio_opts() {
-    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
-    shift 5
+    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_attachments="$6"
+    shift 6
     local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts
 
     if [[ "$metadata_mode" == "strip" ]]; then
@@ -477,7 +484,7 @@ run_remux_with_audio_opts() {
         subtitle_opts=()
     fi
 
-    if [[ "$KEEP_ATTACHMENTS" == true ]]; then
+    if [[ "$KEEP_ATTACHMENTS" == true && "$include_attachments" == true ]]; then
         attachment_opts=(-map 0:t? -c:t copy)
     else
         attachment_opts=()
@@ -497,7 +504,7 @@ run_remux_with_audio_opts() {
 # Build remux audio args for strict AAC mode:
 # - all audio tracks -> AAC
 run_remux_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
+    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_attachments="${6:-true}"
     local -a audio_opts
 
     if has_audio_stream "$input"; then
@@ -506,14 +513,14 @@ run_remux_attempt() {
         audio_opts=(-an)
     fi
 
-    run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$metadata_mode" "$err_file" "${audio_opts[@]}"
+    run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$metadata_mode" "$err_file" "$include_attachments" "${audio_opts[@]}"
 }
 
 # Core transcode executor for non-remux flow.
 # Video is encoded to HEVC; audio is encoded to AAC for all tracks, and
 # subtitles/attachments are preserved by default.
 run_encode_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" err_file="$4"
+    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}"
     local -a audio_opts subtitle_opts attachment_opts metadata_opts
 
     if has_audio_stream "$input"; then
@@ -528,7 +535,7 @@ run_encode_attempt() {
         subtitle_opts=()
     fi
 
-    if [[ "$KEEP_ATTACHMENTS" == true ]]; then
+    if [[ "$KEEP_ATTACHMENTS" == true && "$include_attachments" == true ]]; then
         attachment_opts=(-map 0:t? -c:t copy)
     else
         attachment_opts=()
@@ -656,10 +663,19 @@ encode_file() {
     local ffmpeg_err
     ffmpeg_err=$(mktemp)
 
-    if ! run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err"; then
-        result=$?
-    else
+    if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" true; then
         result=0
+    else
+        result=$?
+        if [[ "$KEEP_ATTACHMENTS" == true && "$result" -ne 0 ]] && ffmpeg_error_has_missing_attachment_filename "$ffmpeg_err"; then
+            log_warn "Retrying without attachments (source has unnamed attachment stream)"
+            rm -f "$output"
+            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" false; then
+                result=0
+            else
+                result=$?
+            fi
+        fi
     fi
     
     local elapsed=$(( $(date +%s) - start ))
@@ -752,18 +768,36 @@ process_files() {
                     local remux_err remux_ok=false
                     remux_err=$(mktemp)
                     local remux_metadata_mode="strip"
+                    local remux_include_attachments=true
                     [[ "$CLEAN_METADATA" == false ]] && remux_metadata_mode="keep"
 
                     # Primary attempt follows the selected metadata mode.
-                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err"; then
+                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments"; then
                         remux_ok=true
                     elif [[ "$remux_metadata_mode" == "keep" ]]; then
                         log_warn "Remux retry: switching to clean metadata mode"
                         rm -f "$out"
 
                         # Fallback to clean metadata mode if preserve mode fails.
-                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "strip" "$remux_err"; then
+                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "strip" "$remux_err" "$remux_include_attachments"; then
                             remux_ok=true
+                        fi
+                    fi
+
+                    if [[ "$remux_ok" != true && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_missing_attachment_filename "$remux_err"; then
+                        log_warn "Remux retry: source attachment missing filename tag; retrying without attachments"
+                        rm -f "$out"
+                        remux_include_attachments=false
+
+                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments"; then
+                            remux_ok=true
+                        elif [[ "$remux_metadata_mode" == "keep" ]]; then
+                            log_warn "Remux retry: switching to clean metadata mode"
+                            rm -f "$out"
+
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "strip" "$remux_err" "$remux_include_attachments"; then
+                                remux_ok=true
+                            fi
                         fi
                     fi
 

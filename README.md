@@ -57,6 +57,7 @@ Use `scripts/helpers/extra/` for additional helper `.sh` utilities.
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
 - **Attachment handling**
   - Copies attachment streams by default (fonts/images), which helps ASS styling render correctly.
+  - If an input attachment stream is missing a filename tag, the file is retried without attachments.
 - **HEVC skip mode**
   - Default behavior remuxes HEVC sources (copy video + process audio).
   - Use `--no-skip-hevc` to force HEVC re-encode.
