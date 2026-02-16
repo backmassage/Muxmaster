@@ -768,7 +768,11 @@ process_files() {
     
     log_info "=============================="
     log_info "Done: $encoded encoded, $skipped skipped, $failed failed"
-    [[ "$CSV_LOG_ACTIVE" == true ]] && log_info "CSV results: $CSV_LOG_FILE"
+    if [[ "$CSV_LOG_ACTIVE" == true ]]; then
+        log_info "CSV results: $CSV_LOG_FILE"
+    fi
+
+    return 0
 }
 
 # Lightweight environment diagnostics for quick troubleshooting.
