@@ -33,6 +33,8 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
   - Quiet FFmpeg output by default, detailed FFmpeg output with `-v`.
 - **Color support**
   - Auto color in TTY, plus `--color` / `--no-color`.
+- **File stats section**
+  - Shows source video resolution and bitrate for each file.
 - **CSV result reporting**
   - Writes per-file results (encoded/remuxed/skipped/failed) with rename tracking.
 
@@ -81,6 +83,7 @@ Muxmaster [OPTIONS] <input_dir> <output_dir>
 | `-d, --dry-run` | Preview planned operations only |
 | `--skip-hevc` | HEVC files: copy video, process audio |
 | `--include-extras` | Include files from `NC`/`Extras`/`Sample` folders |
+| `--no-stats` | Hide per-file source video stats (resolution/bitrate) |
 | `--no-subs` | Do not copy subtitle streams |
 | `--no-attachments` | Do not copy attachment streams |
 | `-f, --force` | Overwrite existing output files |
@@ -105,6 +108,7 @@ Muxmaster [OPTIONS] <input_dir> <output_dir>
 - Subtitles: copied by default (ASS and others preserved)
 - Attachments: copied by default
 - Extras folders (`NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`) are skipped by default (`--include-extras` to include)
+- Per-file source video stats are shown by default (`--no-stats` to hide)
 - CSV results: written by default to `<output>/encode-results-YYYYmmdd-HHMMSS.csv`
 - Existing output files: skipped by default (`--force` to overwrite)
 
@@ -215,6 +219,6 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ## Notes
 
 - Logs printed with colors are for terminal readability; log files remain plain text.
-- CSV rows include action (`encode`/`remux`), status, source/destination paths, and a `renamed` column.
+- CSV rows include action (`encode`/`remux`), status, source/destination paths, `renamed`, and source video resolution/bitrate columns.
 - For large libraries, start with a small subset or `--dry-run` first.
 

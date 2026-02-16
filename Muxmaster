@@ -36,6 +36,7 @@ DRY_RUN=false
 SKIP_EXISTING=true
 SKIP_HEVC=false
 SKIP_EXTRAS=true
+SHOW_FILE_STATS=true
 LOG_FILE=""
 CSV_LOG_ENABLED=true
 CSV_LOG_FILE=""
@@ -146,7 +147,7 @@ init_csv_log() {
     mkdir -p "$csv_dir" || { log_error "Cannot create CSV directory: $csv_dir"; exit 1; }
 
     : > "$CSV_LOG_FILE" || { log_error "Cannot write CSV log file: $CSV_LOG_FILE"; exit 1; }
-    printf '%s\n' "timestamp,status,action,reason,input_path,output_path,input_name,output_name,renamed,input_video_codec,media_type" >> "$CSV_LOG_FILE"
+    printf '%s\n' "timestamp,status,action,reason,input_path,output_path,input_name,output_name,renamed,input_video_codec,input_video_resolution,input_video_bitrate,media_type" >> "$CSV_LOG_FILE"
     CSV_LOG_ACTIVE=true
 }
 
@@ -154,7 +155,7 @@ init_csv_log() {
 csv_log_result() {
     [[ "$CSV_LOG_ACTIVE" == true ]] || return 0
 
-    local status="$1" action="$2" reason="$3" input_path="$4" output_path="$5" input_codec="$6" media_type="$7"
+    local status="$1" action="$2" reason="$3" input_path="$4" output_path="$5" input_codec="$6" media_type="$7" input_resolution="$8" input_bitrate="$9"
     local timestamp input_name="" output_name="" renamed="no"
     timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -163,8 +164,10 @@ csv_log_result() {
     [[ -n "$input_name" && -n "$output_name" && "$input_name" != "$output_name" ]] && renamed="yes"
     [[ -z "$media_type" ]] && media_type="unknown"
     [[ -z "$input_codec" ]] && input_codec="unknown"
+    [[ -z "$input_resolution" ]] && input_resolution="unknown"
+    [[ -z "$input_bitrate" ]] && input_bitrate="unknown"
 
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
         "$(csv_escape_field "$timestamp")" \
         "$(csv_escape_field "$status")" \
         "$(csv_escape_field "$action")" \
@@ -175,6 +178,8 @@ csv_log_result() {
         "$(csv_escape_field "$output_name")" \
         "$(csv_escape_field "$renamed")" \
         "$(csv_escape_field "$input_codec")" \
+        "$(csv_escape_field "$input_resolution")" \
+        "$(csv_escape_field "$input_bitrate")" \
         "$(csv_escape_field "$media_type")" \
         >> "$CSV_LOG_FILE"
 }
@@ -192,6 +197,7 @@ Options:
   -d, --dry-run             Preview only
   --skip-hevc               HEVC files: copy video, encode audio only (fast)
   --include-extras          Include NC/Extras/Sample/Featurettes folders
+  --no-stats                Hide per-file source video stats section
   --no-subs                 Do not copy subtitle streams
   --no-attachments          Do not copy attachment streams (fonts/images)
   -f, --force               Overwrite existing output files
@@ -263,6 +269,7 @@ parse_args() {
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
             --include-extras) SKIP_EXTRAS=false; shift ;;
+            --no-stats) SHOW_FILE_STATS=false; shift ;;
             --no-subs) KEEP_SUBTITLES=false; shift ;;
             --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
             --color) COLOR_MODE="always"; shift ;;
@@ -416,6 +423,63 @@ get_primary_video_codec() {
         -of csv=p=0 "$1" 2>/dev/null)
 
     get_codec "$1"
+}
+
+# Format bitrate in bits/s as a readable label.
+format_bitrate_label() {
+    local bitrate_bps="$1"
+
+    if [[ "$bitrate_bps" =~ ^[0-9]+$ && "$bitrate_bps" -gt 0 ]]; then
+        printf '%d kb/s\n' "$(((bitrate_bps + 500) / 1000))"
+    else
+        printf 'unknown\n'
+    fi
+}
+
+# Return WxH for the first non-attached-pic video stream.
+get_primary_video_resolution() {
+    local idx width height attached
+    while IFS=',' read -r idx width height attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" == "1" ]] && continue
+
+        if [[ "$width" =~ ^[0-9]+$ && "$height" =~ ^[0-9]+$ && "$width" -gt 0 && "$height" -gt 0 ]]; then
+            printf '%sx%s\n' "$width" "$height"
+        else
+            printf 'unknown\n'
+        fi
+        return 0
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,width,height:stream_disposition=attached_pic \
+        -of csv=p=0 "$1" 2>/dev/null)
+
+    printf 'unknown\n'
+}
+
+# Return bitrate (bits/s) for first non-attached-pic video stream, with
+# fallback to container bitrate when stream bitrate is unavailable.
+get_primary_video_bitrate_bps() {
+    local idx bit_rate attached
+    while IFS=',' read -r idx bit_rate attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" == "1" ]] && continue
+        [[ "$bit_rate" =~ ^[0-9]+$ && "$bit_rate" -gt 0 ]] && { echo "$bit_rate"; return 0; }
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,bit_rate:stream_disposition=attached_pic \
+        -of csv=p=0 "$1" 2>/dev/null)
+
+    local format_bitrate
+    format_bitrate=$(ffprobe -v error -show_entries format=bit_rate -of csv=p=0 "$1" 2>/dev/null | sed -n '1p')
+    [[ "$format_bitrate" =~ ^[0-9]+$ && "$format_bitrate" -gt 0 ]] && { echo "$format_bitrate"; return 0; }
+
+    echo ""
+}
+
+# Return readable video bitrate label for the primary video stream.
+get_primary_video_bitrate_label() {
+    local bitrate_bps
+    bitrate_bps=$(get_primary_video_bitrate_bps "$1")
+    format_bitrate_label "$bitrate_bps"
 }
 
 # Execute ffmpeg and capture stderr to an error file.
@@ -672,6 +736,7 @@ process_files() {
     [[ "$KEEP_ATTACHMENTS" == true ]] && log_info "Attachments: Copy font/image attachments"
     [[ "$SKIP_EXTRAS" == true ]] && log_info "Folder filter: skipping NC/Extras/Sample/Featurettes directories"
     [[ "$SKIP_EXTRAS" == false ]] && log_info "Folder filter: including all directories"
+    [[ "$SHOW_FILE_STATS" == true ]] && log_info "File stats: source video resolution/bitrate section enabled"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     echo
     
@@ -689,7 +754,7 @@ process_files() {
         if [[ "$SKIP_EXTRAS" == true && "$dirpath_lower" =~ /(nc|ncop|nced|extras?|samples?|featurettes?)(/|$) ]]; then
             log_debug "Skip (extras): $(basename "$f")"
             ((skipped++))
-            csv_log_result "skipped" "skip" "extras_folder" "$f" "" "" "unknown"
+            csv_log_result "skipped" "skip" "extras_folder" "$f" "" "" "unknown" "unknown" "unknown"
             continue
         fi
         
@@ -697,12 +762,19 @@ process_files() {
         
         # Parse filename first to get output path
         parse_filename "$(basename "$f")" "$(basename "$(dirname "$f")")"
-        local out=$(get_output_path)
-        local video_idx video_codec
+        local out
+        out=$(get_output_path)
+        local video_idx video_codec video_resolution video_bitrate_label
         video_idx=$(get_primary_video_stream_index "$f")
         video_codec=$(get_primary_video_codec "$f")
         [[ -z "$video_codec" ]] && video_codec=$(get_codec "$f")
+        video_resolution=$(get_primary_video_resolution "$f")
+        video_bitrate_label=$(get_primary_video_bitrate_label "$f")
         log_debug "Primary video stream: index=${video_idx:-0}, codec=${video_codec:-unknown}"
+        if [[ "$SHOW_FILE_STATS" == true ]]; then
+            log_info "File Stats:"
+            log_info "  Video: ${video_resolution} | ${video_bitrate_label} | codec=${video_codec:-unknown}"
+        fi
         
         # Check if already HEVC - copy video, but still encode audio to AAC
         if [[ "$SKIP_HEVC" == true ]]; then
@@ -710,7 +782,7 @@ process_files() {
                 if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
                     log_warn "Skip (exists): $(basename "$out")"
                     ((skipped++))
-                    csv_log_result "skipped" "remux" "output_exists" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+                    csv_log_result "skipped" "remux" "output_exists" "$f" "$out" "$video_codec" "$MEDIA_TYPE" "$video_resolution" "$video_bitrate_label"
                     echo
                     continue
                 fi
@@ -719,7 +791,7 @@ process_files() {
                 mkdir -p "$(dirname "$out")"
                 if [[ "$DRY_RUN" == true ]]; then
                     log_success "[DRY] Would remux"
-                    csv_log_result "dry_run" "remux" "planned" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+                    csv_log_result "dry_run" "remux" "planned" "$f" "$out" "$video_codec" "$MEDIA_TYPE" "$video_resolution" "$video_bitrate_label"
                 else
                     local start_rm=$(date +%s)
                     local remux_err remux_ok=false
@@ -747,7 +819,7 @@ process_files() {
                         rm -f "$remux_err"
                         rm -f "$out"
                         ((failed++))
-                        csv_log_result "failed" "remux" "ffmpeg_error" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+                        csv_log_result "failed" "remux" "ffmpeg_error" "$f" "$out" "$video_codec" "$MEDIA_TYPE" "$video_resolution" "$video_bitrate_label"
                         echo
                         continue
                     fi
@@ -759,7 +831,7 @@ process_files() {
                     out_sz=$(stat -c%s "$out" 2>/dev/null) || out_sz=0
                     [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=100
                     log_success "Remuxed in ${elapsed_rm}s (${ratio}% of original)"
-                    csv_log_result "success" "remux" "completed" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+                    csv_log_result "success" "remux" "completed" "$f" "$out" "$video_codec" "$MEDIA_TYPE" "$video_resolution" "$video_bitrate_label"
                 fi
                 ((encoded++))
                 echo
@@ -770,7 +842,7 @@ process_files() {
         if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
             log_warn "Skip (exists)"
             ((skipped++))
-            csv_log_result "skipped" "encode" "output_exists" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+            csv_log_result "skipped" "encode" "output_exists" "$f" "$out" "$video_codec" "$MEDIA_TYPE" "$video_resolution" "$video_bitrate_label"
             echo
             continue
         fi
@@ -778,13 +850,13 @@ process_files() {
         if encode_file "$f" "$out" "${video_idx:-0}"; then
             ((encoded++))
             if [[ "$DRY_RUN" == true ]]; then
-                csv_log_result "dry_run" "encode" "planned" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+                csv_log_result "dry_run" "encode" "planned" "$f" "$out" "$video_codec" "$MEDIA_TYPE" "$video_resolution" "$video_bitrate_label"
             else
-                csv_log_result "success" "encode" "completed" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+                csv_log_result "success" "encode" "completed" "$f" "$out" "$video_codec" "$MEDIA_TYPE" "$video_resolution" "$video_bitrate_label"
             fi
         else
             ((failed++))
-            csv_log_result "failed" "encode" "ffmpeg_error" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+            csv_log_result "failed" "encode" "ffmpeg_error" "$f" "$out" "$video_codec" "$MEDIA_TYPE" "$video_resolution" "$video_bitrate_label"
         fi
         echo
     done
