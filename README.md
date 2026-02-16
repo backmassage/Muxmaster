@@ -7,7 +7,7 @@ Current version: **1.0**
 ## At a Glance
 
 - HEVC video encoding via VAAPI or CPU/x265
-- Strict AAC audio processing for all tracks (214k target)
+- Strict AAC audio processing for all tracks (224k target)
 - HEVC remux mode by default (copy video + process audio)
 - Clean container metadata/chapters by default
 - Automatic TV/movie folder structure normalization
@@ -35,7 +35,7 @@ This project is actively tuned and validated on:
 - **10-bit first**
   - VAAPI probes main10 first and falls back to main (8-bit) if needed.
 - **Audio handling**
-  - Tries to convert **all audio tracks** to AAC stereo 214k.
+  - Tries to convert **all audio tracks** to AAC stereo 224k.
   - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
 - **Subtitle handling**
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
@@ -136,7 +136,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 
 - Output container: **MKV**
 - Keyframe interval: **48**
-- Audio target: **AAC stereo 214k** (all tracks)
+- Audio target: **AAC stereo 224k** (all tracks)
 - If AAC fails on a file: file processing fails (**no audio-copy fallback**)
 - Subtitles: copied by default (ASS and others preserved)
 - Attachments: copied by default

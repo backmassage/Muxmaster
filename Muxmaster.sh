@@ -19,7 +19,7 @@ CPU_PRESET="slow"
 OUTPUT_CONTAINER="mkv"
 KEYFRAME_INT=48              # Keyframes every 48 frames (~2s at 24fps)
 AUDIO_CHANNELS=2
-AUDIO_BITRATE="214k"
+AUDIO_BITRATE="224k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
 
@@ -163,7 +163,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 214k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 224k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata
 EOF
     exit "$exit_code"
 }
