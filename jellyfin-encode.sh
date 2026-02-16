@@ -113,6 +113,7 @@ Options:
   --no-attachments          Do not copy attachment streams (fonts/images)
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
+  --                        End options parsing
   --color                   Force colored logs
   --no-color                Disable colored logs
   -v, --verbose             Verbose output (includes ffmpeg progress/details)
@@ -124,14 +125,56 @@ EOF
     exit "$exit_code"
 }
 
+# Ensure options that require values never trigger a shift-loop.
+require_option_value() {
+    local opt="$1"
+    local value="${2-}"
+    if [[ -z "$value" ]]; then
+        log_error "Option '$opt' requires a value"
+        usage 1
+    fi
+}
+
+# Remove trailing slashes from directory args while preserving root (/).
+normalize_dir_arg() {
+    local path="$1"
+    if [[ "$path" == "/" ]]; then
+        printf '/\n'
+        return 0
+    fi
+
+    while [[ "$path" == */ ]]; do
+        path="${path%/}"
+    done
+
+    printf '%s\n' "$path"
+}
+
 # Parse and validate CLI arguments, then derive runtime ffmpeg log settings.
 parse_args() {
     local positional=()
     while [[ $# -gt 0 ]]; do
         case $1 in
-            -m|--mode) ENCODER_MODE="$2"; shift 2 ;;
-            -q|--quality) QUALITY_OVERRIDE="$2"; shift 2 ;;
-            -p|--preset) CPU_PRESET="$2"; shift 2 ;;
+            --)
+                shift
+                positional+=("$@")
+                break
+                ;;
+            -m|--mode)
+                require_option_value "$1" "${2-}"
+                ENCODER_MODE="$2"
+                shift 2
+                ;;
+            -q|--quality)
+                require_option_value "$1" "${2-}"
+                QUALITY_OVERRIDE="$2"
+                shift 2
+                ;;
+            -p|--preset)
+                require_option_value "$1" "${2-}"
+                CPU_PRESET="$2"
+                shift 2
+                ;;
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
             --no-subs) KEEP_SUBTITLES=false; shift ;;
@@ -140,7 +183,11 @@ parse_args() {
             --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
             -c|--check) CHECK_ONLY=true; shift ;;
-            -l|--log) LOG_FILE="$2"; shift 2 ;;
+            -l|--log)
+                require_option_value "$1" "${2-}"
+                LOG_FILE="$2"
+                shift 2
+                ;;
             -f|--force) SKIP_EXISTING=false; shift ;;
             -h|--help) usage 0 ;;
             -*) log_error "Unknown: $1"; usage 1 ;;
@@ -149,9 +196,9 @@ parse_args() {
     done
     
     if [[ "$CHECK_ONLY" != true ]]; then
-        [[ ${#positional[@]} -lt 2 ]] && { log_error "Need input_dir and output_dir"; usage 1; }
-        INPUT_DIR="${positional[0]%/}"   # Strip trailing slash
-        OUTPUT_DIR="${positional[1]%/}"  # Strip trailing slash
+        [[ ${#positional[@]} -ne 2 ]] && { log_error "Need exactly input_dir and output_dir"; usage 1; }
+        INPUT_DIR="$(normalize_dir_arg "${positional[0]}")"
+        OUTPUT_DIR="$(normalize_dir_arg "${positional[1]}")"
     fi
 
     case "$ENCODER_MODE" in

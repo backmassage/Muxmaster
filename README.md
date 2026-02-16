@@ -82,6 +82,7 @@ jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-attachments` | Do not copy attachment streams |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
+| `--` | End options parsing (use before paths starting with `-`) |
 | `--color` | Force colored logs |
 | `--no-color` | Disable colored logs |
 | `-v, --verbose` | Verbose mode (includes FFmpeg details/progress) |
