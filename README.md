@@ -27,6 +27,22 @@ This project is actively tuned and validated on:
 
 ---
 
+## Repository Structure (WIP)
+
+```text
+.
+├── Muxmaster.sh
+├── harleybox_auto.sh
+└── scripts/
+    └── helpers/
+        └── extra/
+            └── .gitkeep
+```
+
+Use `scripts/helpers/extra/` for additional helper `.sh` utilities.
+
+---
+
 ## Features
 
 - **Encoder modes**
