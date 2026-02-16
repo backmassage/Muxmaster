@@ -34,7 +34,7 @@ KEEP_ATTACHMENTS=true
 # Runtime behavior defaults
 DRY_RUN=false
 SKIP_EXISTING=true
-SKIP_HEVC=false
+SKIP_HEVC=true
 SKIP_EXTRAS=true
 SHOW_FILE_STATS=true
 SHOW_FFMPEG_FPS=true
@@ -49,6 +49,7 @@ COLOR_MODE="auto"
 INPUT_DIR=""
 OUTPUT_DIR=""
 SCRIPT_NAME="$(basename "$0")"
+SCRIPT_VERSION="1.0"
 
 # ANSI color palette (initialized by init_colors)
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
@@ -189,6 +190,8 @@ csv_log_result() {
 usage() {
     local exit_code="${1:-0}"
     cat << EOF
+Muxmaster v$SCRIPT_VERSION
+
 Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
 
 Options:
@@ -196,7 +199,8 @@ Options:
   -q, --quality <value>     QP for VAAPI, CRF for CPU (default: 19, lower=better)
   -p, --preset <preset>     CPU preset (default: slow)
   -d, --dry-run             Preview only
-  --skip-hevc               HEVC files: copy video, encode audio only (fast)
+  --skip-hevc               HEVC files: copy video, encode audio only (default: on)
+  --no-skip-hevc            Re-encode HEVC video instead of remuxing it
   --include-extras          Include NC/Extras/Sample/Featurettes folders
   --show-fps                Show live ffmpeg encoding FPS/speed (default: on)
   --no-fps                  Disable live ffmpeg FPS/speed progress
@@ -212,11 +216,16 @@ Options:
   --no-color                Disable colored logs
   -v, --verbose             Verbose output (includes ffmpeg progress/details)
   -c, --check               System diagnostics
+  -V, --version             Print script version and exit
   -h, --help                Help
 
 Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 214k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames
 EOF
     exit "$exit_code"
+}
+
+show_version() {
+    printf '%s v%s\n' "$SCRIPT_NAME" "$SCRIPT_VERSION"
 }
 
 # Ensure options that require values never trigger a shift-loop.
@@ -271,6 +280,7 @@ parse_args() {
                 ;;
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
+            --no-skip-hevc) SKIP_HEVC=false; shift ;;
             --include-extras) SKIP_EXTRAS=false; shift ;;
             --show-fps) SHOW_FFMPEG_FPS=true; shift ;;
             --no-fps) SHOW_FFMPEG_FPS=false; shift ;;
@@ -281,6 +291,7 @@ parse_args() {
             --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
             -c|--check) CHECK_ONLY=true; shift ;;
+            -V|--version) show_version; exit 0 ;;
             -l|--log)
                 require_option_value "$1" "${2-}"
                 LOG_FILE="$2"
@@ -928,7 +939,7 @@ main() {
     [[ ! -d "$INPUT_DIR" ]] && { log_error "Input not found: $INPUT_DIR"; exit 1; }
     mkdir -p "$OUTPUT_DIR"
     
-    log_info "=== Muxmaster ==="
+    log_info "=== Muxmaster v${SCRIPT_VERSION} ==="
     log_info "In:  $INPUT_DIR"
     log_info "Out: $OUTPUT_DIR"
     [[ "$DRY_RUN" == true ]] && log_warn "DRY RUN"

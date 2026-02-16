@@ -2,11 +2,13 @@
 
 > A fast, resilient batch encoder/remuxer for Jellyfin-style libraries.
 
+Current version: **1.0**
+
 ## At a Glance
 
 - HEVC video encoding via VAAPI or CPU/x265
 - Strict AAC audio processing for all tracks (214k target)
-- Optional HEVC remux mode (copy video + process audio)
+- HEVC remux mode by default (copy video + process audio)
 - Automatic TV/movie folder structure normalization
 - Stream-safe defaults for subtitles and attachment fonts
 
@@ -39,7 +41,8 @@ This project is actively tuned and validated on:
 - **Attachment handling**
   - Copies attachment streams by default (fonts/images), which helps ASS styling render correctly.
 - **HEVC skip mode**
-  - `--skip-hevc`: if the source is already HEVC, copy video and process audio only.
+  - Default behavior remuxes HEVC sources (copy video + process audio).
+  - Use `--no-skip-hevc` to force HEVC re-encode.
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**
@@ -75,16 +78,16 @@ chmod +x Muxmaster.sh
 Typical anime/dual-audio remux workflow:
 
 ```bash
-./Muxmaster.sh -m vaapi --skip-hevc -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
+./Muxmaster.sh -m vaapi -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
 ```
 
 ### Quick Command Cheat Sheet
 
 | Goal | Command |
 |---|---|
-| Standard encode pass | `./Muxmaster.sh -m vaapi "/input" "/output"` |
+| Standard encode pass (HEVC remux default) | `./Muxmaster.sh -m vaapi "/input" "/output"` |
 | CPU encode | `./Muxmaster.sh -m cpu "/input" "/output"` |
-| Keep HEVC video, process audio | `./Muxmaster.sh --skip-hevc "/input" "/output"` |
+| Force HEVC re-encode | `./Muxmaster.sh --no-skip-hevc "/input" "/output"` |
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
 | System diagnostics | `./Muxmaster.sh --check` |
@@ -105,7 +108,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `-q, --quality <value>` | VAAPI QP or CPU CRF (default: `19`) |
 | `-p, --preset <preset>` | CPU preset for x265 (default: `slow`) |
 | `-d, --dry-run` | Preview planned operations only |
-| `--skip-hevc` | HEVC files: copy video, process audio |
+| `--skip-hevc` | HEVC files: copy video, process audio (default behavior) |
+| `--no-skip-hevc` | Re-encode HEVC video instead of remuxing it |
 | `--include-extras` | Include files from `NC`/`Extras`/`Sample` folders |
 | `--show-fps` | Show live FFmpeg encoding FPS/speed progress (default: on) |
 | `--no-fps` | Disable live FFmpeg FPS/speed progress |
@@ -121,6 +125,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-color` | Disable colored logs |
 | `-v, --verbose` | Verbose mode (includes FFmpeg details/progress) |
 | `-c, --check` | Run dependency/system checks only |
+| `-V, --version` | Print script version and exit |
 | `-h, --help` | Show help |
 
 ---
@@ -138,6 +143,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - Per-file source video stats are shown by default (`--no-stats` to hide)
 - CSV results: written by default to `<output>/encode-results-YYYYmmdd-HHMMSS.csv`
 - Existing output files: skipped by default (`--force` to overwrite)
+- HEVC sources: remux by default (`--no-skip-hevc` to force HEVC re-encode)
 
 Supported input extensions:
 
