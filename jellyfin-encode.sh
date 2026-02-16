@@ -20,6 +20,8 @@ AUDIO_BITRATE="192k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
 AUDIO_PROBE_DURATION="30"
+FFMPEG_LOGLEVEL="error"
+declare -a FFMPEG_PROGRESS_ARGS=()
 
 DRY_RUN=false
 SKIP_EXISTING=true
@@ -28,27 +30,65 @@ LOG_FILE=""
 VERBOSE=false
 CHECK_ONLY=false
 QUALITY_OVERRIDE=""
+COLOR_MODE="auto"
 
 INPUT_DIR=""
 OUTPUT_DIR=""
 
 # Colors
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
+RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
 
-log() {
-    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-    echo -e "$msg"
-    [[ -n "$LOG_FILE" ]] && echo "$msg" >> "$LOG_FILE"
+init_colors() {
+    local enable_colors=false
+
+    case "$COLOR_MODE" in
+        always) enable_colors=true ;;
+        never)  enable_colors=false ;;
+        auto)
+            if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
+                enable_colors=true
+            fi
+            ;;
+    esac
+
+    if [[ "$enable_colors" == true ]]; then
+        RED=$'\033[0;31m'
+        GREEN=$'\033[0;32m'
+        YELLOW=$'\033[1;33m'
+        BLUE=$'\033[0;34m'
+        CYAN=$'\033[0;36m'
+        NC=$'\033[0m'
+    else
+        RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
+    fi
+}
+
+log_line() {
+    local level="$1"
+    local color="$2"
+    local text="$3"
+    local ts="[$(date '+%Y-%m-%d %H:%M:%S')]"
+
+    if [[ -n "$color" ]]; then
+        printf '%s %b[%s]%b %s\n' "$ts" "$color" "$level" "$NC" "$text"
+    else
+        printf '%s [%s] %s\n' "$ts" "$level" "$text"
+    fi
+
+    if [[ -n "$LOG_FILE" ]]; then
+        printf '%s [%s] %s\n' "$ts" "$level" "$text" >> "$LOG_FILE"
+    fi
+
     return 0
 }
-log_info()    { log "${BLUE}[INFO]${NC} $1"; }
-log_success() { log "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn()    { log "${YELLOW}[WARN]${NC} $1"; }
-log_error()   { log "${RED}[ERROR]${NC} $1"; }
-log_debug()   { [[ "$VERBOSE" == true ]] && log "${CYAN}[DEBUG]${NC} $1"; }
+log_info()    { log_line "INFO" "$BLUE" "$1"; }
+log_success() { log_line "SUCCESS" "$GREEN" "$1"; }
+log_warn()    { log_line "WARN" "$YELLOW" "$1"; }
+log_error()   { log_line "ERROR" "$RED" "$1"; }
+log_debug()   { [[ "$VERBOSE" == true ]] && log_line "DEBUG" "$CYAN" "$1"; }
 
 usage() {
+    local exit_code="${1:-0}"
     cat << 'EOF'
 Usage: jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 
@@ -58,13 +98,17 @@ Options:
   -p, --preset <preset>     CPU preset (default: slow)
   -d, --dry-run             Preview only
   --skip-hevc               HEVC files: copy video, encode audio only (fast)
-  -v, --verbose             Verbose output
+  -f, --force               Overwrite existing output files
+  -l, --log <path>          Write plain logs to file
+  --color                   Force colored logs
+  --no-color                Disable colored logs
+  -v, --verbose             Verbose output (includes ffmpeg progress/details)
   -c, --check               System diagnostics
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio → stereo AAC 192k, keyframes every 48 frames
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> stereo AAC 192k, keyframes every 48 frames
 EOF
-    exit 0
+    exit "$exit_code"
 }
 
 parse_args() {
@@ -76,18 +120,20 @@ parse_args() {
             -p|--preset) CPU_PRESET="$2"; shift 2 ;;
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
+            --color) COLOR_MODE="always"; shift ;;
+            --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
             -c|--check) CHECK_ONLY=true; shift ;;
             -l|--log) LOG_FILE="$2"; shift 2 ;;
             -f|--force) SKIP_EXISTING=false; shift ;;
-            -h|--help) usage ;;
-            -*) log_error "Unknown: $1"; usage ;;
+            -h|--help) usage 0 ;;
+            -*) log_error "Unknown: $1"; usage 1 ;;
             *) positional+=("$1"); shift ;;
         esac
     done
     
     if [[ "$CHECK_ONLY" != true ]]; then
-        [[ ${#positional[@]} -lt 2 ]] && { log_error "Need input_dir and output_dir"; usage; }
+        [[ ${#positional[@]} -lt 2 ]] && { log_error "Need input_dir and output_dir"; usage 1; }
         INPUT_DIR="${positional[0]%/}"   # Strip trailing slash
         OUTPUT_DIR="${positional[1]%/}"  # Strip trailing slash
     fi
@@ -112,6 +158,14 @@ parse_args() {
             CPU_CRF="$QUALITY_OVERRIDE"
         fi
     fi
+
+    if [[ "$VERBOSE" == true ]]; then
+        FFMPEG_LOGLEVEL="info"
+        FFMPEG_PROGRESS_ARGS=(-stats -stats_period 1)
+    else
+        FFMPEG_LOGLEVEL="error"
+        FFMPEG_PROGRESS_ARGS=()
+    fi
 }
 
 test_vaapi_profile() {
@@ -119,7 +173,7 @@ test_vaapi_profile() {
     local profile="$2"
     local err_file="$3"
 
-    ffmpeg -hide_banner -loglevel error \
+    ffmpeg -hide_banner -nostdin -loglevel error \
         -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
         -f lavfi -i color=black:s=256x256:d=0.1 \
         -vf "format=${sw_format},hwupload" \
@@ -157,7 +211,7 @@ check_deps() {
         fi
         rm -f "$vaapi_err"
     else
-        if ! ffmpeg -hide_banner -loglevel error \
+        if ! ffmpeg -hide_banner -nostdin -loglevel error \
                 -f lavfi -i color=black:s=256x256:d=0.1 \
                 -c:v libx265 -f null - > /dev/null 2>&1; then
             log_error "CPU mode selected but libx265 is unavailable"
@@ -185,7 +239,7 @@ audio_stream_transcode_test() {
     local input="$1"
     local stream_idx="$2"
 
-    ffmpeg -hide_banner -loglevel error -xerror \
+    ffmpeg -hide_banner -nostdin -loglevel error -xerror \
         -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
         -i "$input" \
         -map "0:${stream_idx}" \
@@ -232,6 +286,17 @@ get_primary_video_codec() {
     get_codec "$1"
 }
 
+run_ffmpeg_logged() {
+    local err_file="$1"
+    shift
+
+    if [[ "$VERBOSE" == true ]]; then
+        "$@" 2> >(tee "$err_file" >&2)
+    else
+        "$@" 2>"$err_file"
+    fi
+}
+
 run_remux_with_audio_opts() {
     local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
     shift 5
@@ -243,14 +308,15 @@ run_remux_with_audio_opts() {
         metadata_opts=(-map_metadata 0 -map_chapters 0)
     fi
 
-    ffmpeg -hide_banner -y -stats \
-        -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-        -i "$input" \
-        -map "0:${video_stream_idx}" "${audio_opts[@]}" \
-        -sn -dn -max_muxing_queue_size 4096 \
-        -c:v copy \
-        "${metadata_opts[@]}" \
-        "$output" 2> >(tee "$err_file" >&2)
+    run_ffmpeg_logged "$err_file" \
+        ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+            -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+            -i "$input" \
+            -map "0:${video_stream_idx}" "${audio_opts[@]}" \
+            -sn -dn -max_muxing_queue_size 4096 \
+            -c:v copy \
+            "${metadata_opts[@]}" \
+            "$output"
 }
 
 run_remux_attempt() {
@@ -364,28 +430,29 @@ encode_file() {
         log_debug "No audio stream detected: $(basename "$input")"
     fi
     
-    # Run ffmpeg with visible progress (-stats shows frame/speed on stderr)
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
-        ffmpeg -hide_banner -y -stats \
-            -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-            -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
-            -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
-            -map "0:${video_stream_idx}" "${audio_opts[@]}" \
-            -sn -dn -max_muxing_queue_size 4096 \
-            -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
-            -map_metadata 0 -map_chapters 0 \
-            "$output" 2> >(tee "$ffmpeg_err" >&2) || result=$?
+        run_ffmpeg_logged "$ffmpeg_err" \
+            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
+                -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
+                -map "0:${video_stream_idx}" "${audio_opts[@]}" \
+                -sn -dn -max_muxing_queue_size 4096 \
+                -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
+                -map_metadata 0 -map_chapters 0 \
+                "$output" || result=$?
     else
-        ffmpeg -hide_banner -y -stats \
-            -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-            -i "$input" \
-            -map "0:${video_stream_idx}" "${audio_opts[@]}" \
-            -sn -dn -max_muxing_queue_size 4096 \
-            -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
-            -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
-            -x265-params log-level=error \
-            -map_metadata 0 -map_chapters 0 \
-            "$output" 2> >(tee "$ffmpeg_err" >&2) || result=$?
+        run_ffmpeg_logged "$ffmpeg_err" \
+            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                -i "$input" \
+                -map "0:${video_stream_idx}" "${audio_opts[@]}" \
+                -sn -dn -max_muxing_queue_size 4096 \
+                -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
+                -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
+                -x265-params log-level=error \
+                -map_metadata 0 -map_chapters 0 \
+                "$output" || result=$?
     fi
     
     local elapsed=$(( $(date +%s) - start ))
@@ -459,7 +526,7 @@ process_files() {
                     echo
                     continue
                 fi
-                log_info "Remuxing (HEVC→copy video, encode AAC): $(basename "$f")"
+                log_info "Remuxing (HEVC -> copy video, encode AAC): $(basename "$f")"
                 log_info "  -> $(basename "$out")"
                 mkdir -p "$(dirname "$out")"
                 if [[ "$DRY_RUN" == true ]]; then
@@ -572,13 +639,13 @@ run_check() {
         log_error "ffmpeg not found"
     fi
     
-    echo "HEVC encoders:"
+    log_info "HEVC encoders:"
     ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "hevc|265"
     
     local dev=$(ls /dev/dri/renderD* 2>/dev/null | head -1)
     if [[ -n "$dev" ]]; then
         log_info "Testing VAAPI on $dev..."
-        if ffmpeg -hide_banner -init_hw_device vaapi=va:"$dev" \
+        if ffmpeg -hide_banner -nostdin -init_hw_device vaapi=va:"$dev" \
                 -f lavfi -i color=black:s=256x256:d=0.1 \
                 -vf 'format=p010,hwupload' -c:v hevc_vaapi -profile:v main10 -f null - 2>/dev/null; then
             log_success "VAAPI works"
@@ -588,7 +655,7 @@ run_check() {
     fi
     
     log_info "Testing CPU x265..."
-    if ffmpeg -hide_banner -f lavfi -i color=black:s=256x256:d=0.1 -c:v libx265 -f null - 2>/dev/null; then
+    if ffmpeg -hide_banner -nostdin -f lavfi -i color=black:s=256x256:d=0.1 -c:v libx265 -f null - 2>/dev/null; then
         log_success "CPU x265 works"
     else
         log_error "CPU x265 failed"
@@ -596,7 +663,9 @@ run_check() {
 }
 
 main() {
+    init_colors
     parse_args "$@"
+    init_colors
     
     if [[ "$CHECK_ONLY" == true ]]; then
         run_check
