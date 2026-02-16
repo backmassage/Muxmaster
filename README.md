@@ -55,6 +55,7 @@ Use `scripts/helpers/extra/` for additional helper `.sh` utilities.
   - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
 - **Subtitle handling**
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
+  - If subtitle mux/copy fails, the file is retried without subtitles.
 - **Attachment handling**
   - Copies attachment streams by default (fonts/images), which helps ASS styling render correctly.
   - If an input attachment stream is missing required tags (filename/mimetype), the file is retried without attachments.
@@ -65,6 +66,9 @@ Use `scripts/helpers/extra/` for additional helper `.sh` utilities.
   - Default behavior strips container metadata and chapters for cleaner outputs.
   - Use `--keep-metadata` to preserve source container metadata/chapters.
   - If preserve mode fails for a file, that file is retried with clean metadata.
+- **Mux/timestamp resilience**
+  - Retries with a larger mux queue if FFmpeg reports packet buffer overflow.
+  - Retries with generated timestamps when FFmpeg reports non-monotonic DTS.
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**
@@ -263,6 +267,21 @@ The script attempts to classify files as TV episodes or movies from filename pat
 
 - Newer script versions automatically retry the file without attachments.
 - If you still need a manual override for a run, use `--no-attachments`.
+
+### Subtitle mux/copy errors
+
+- Newer script versions automatically retry the file without subtitles if subtitle stream muxing fails.
+- Manual override: run with `--no-subs`.
+
+### "Too many packets buffered for output stream"
+
+- Newer script versions automatically retry the file with a larger FFmpeg mux queue.
+- If issues persist, run with `-v` to inspect the full FFmpeg stream mapping and packet flow.
+
+### Non-monotonic DTS / timestamp ordering errors
+
+- Newer script versions automatically retry with generated timestamps.
+- For badly damaged sources, remuxing the source once with FFmpeg may still be required.
 
 ### Audio issues on specific files
 
