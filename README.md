@@ -32,11 +32,11 @@ This project is actively tuned and validated on:
 ```text
 .
 ├── Muxmaster.sh
-├── harleybox_auto.sh
 └── scripts/
     └── helpers/
         └── extra/
-            └── .gitkeep
+            ├── .gitkeep
+            └── harleybox_auto.sh
 ```
 
 Use `scripts/helpers/extra/` for additional helper `.sh` utilities.
