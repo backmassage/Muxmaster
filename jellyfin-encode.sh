@@ -5,42 +5,101 @@
 
 set -o pipefail
 
-# Config
+#------------------------------------------------------------------------------
+# Configuration defaults
+#------------------------------------------------------------------------------
+# Encoding defaults
 ENCODER_MODE="vaapi"
 VAAPI_DEVICE="/dev/dri/renderD128"
 VAAPI_QP=19
+VAAPI_PROFILE="main10"
+VAAPI_SW_FORMAT="p010"
 CPU_CRF=19
 CPU_PRESET="slow"
 OUTPUT_CONTAINER="mkv"
 KEYFRAME_INT=48              # Keyframes every 48 frames (~2s at 24fps)
+AUDIO_CHANNELS=2
+AUDIO_BITRATE="192k"
+FFMPEG_PROBESIZE="100M"
+FFMPEG_ANALYZEDURATION="100M"
 
+# Logging/UX defaults
+FFMPEG_LOGLEVEL="error"
+declare -a FFMPEG_PROGRESS_ARGS=()
+
+# Stream retention defaults
+KEEP_SUBTITLES=true
+KEEP_ATTACHMENTS=true
+
+# Runtime behavior defaults
 DRY_RUN=false
 SKIP_EXISTING=true
 SKIP_HEVC=false
 LOG_FILE=""
 VERBOSE=false
 CHECK_ONLY=false
+QUALITY_OVERRIDE=""
+COLOR_MODE="auto"
 
 INPUT_DIR=""
 OUTPUT_DIR=""
 
-# Colors
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
+# ANSI color palette (initialized by init_colors)
+RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
 
-log() {
-    local msg="[$(date '+%Y-%m-%d %H:%M:%S')] $1"
-    echo -e "$msg"
-    [[ -n "$LOG_FILE" ]] && echo "$msg" >> "$LOG_FILE"
+# Initialize color variables according to --color/--no-color/auto rules.
+init_colors() {
+    local enable_colors=false
+
+    case "$COLOR_MODE" in
+        always) enable_colors=true ;;
+        never)  enable_colors=false ;;
+        auto)
+            if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
+                enable_colors=true
+            fi
+            ;;
+    esac
+
+    if [[ "$enable_colors" == true ]]; then
+        RED=$'\033[0;31m'
+        GREEN=$'\033[0;32m'
+        YELLOW=$'\033[1;33m'
+        BLUE=$'\033[0;34m'
+        CYAN=$'\033[0;36m'
+        NC=$'\033[0m'
+    else
+        RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
+    fi
+}
+
+log_line() {
+    local level="$1"
+    local color="$2"
+    local text="$3"
+    local ts="[$(date '+%Y-%m-%d %H:%M:%S')]"
+
+    if [[ -n "$color" ]]; then
+        printf '%s %b[%s]%b %s\n' "$ts" "$color" "$level" "$NC" "$text"
+    else
+        printf '%s [%s] %s\n' "$ts" "$level" "$text"
+    fi
+
+    if [[ -n "$LOG_FILE" ]]; then
+        printf '%s [%s] %s\n' "$ts" "$level" "$text" >> "$LOG_FILE"
+    fi
+
     return 0
 }
-log_info()    { log "${BLUE}[INFO]${NC} $1"; }
-log_success() { log "${GREEN}[SUCCESS]${NC} $1"; }
-log_warn()    { log "${YELLOW}[WARN]${NC} $1"; }
-log_error()   { log "${RED}[ERROR]${NC} $1"; }
-log_debug()   { [[ "$VERBOSE" == true ]] && log "${CYAN}[DEBUG]${NC} $1"; }
+log_info()    { log_line "INFO" "$BLUE" "$1"; }
+log_success() { log_line "SUCCESS" "$GREEN" "$1"; }
+log_warn()    { log_line "WARN" "$YELLOW" "$1"; }
+log_error()   { log_line "ERROR" "$RED" "$1"; }
+log_debug()   { [[ "$VERBOSE" == true ]] && log_line "DEBUG" "$CYAN" "$1"; }
 
+# Print CLI help and exit with the requested code.
 usage() {
+    local exit_code="${1:-0}"
     cat << 'EOF'
 Usage: jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 
@@ -50,45 +109,98 @@ Options:
   -p, --preset <preset>     CPU preset (default: slow)
   -d, --dry-run             Preview only
   --skip-hevc               HEVC files: copy video, encode audio only (fast)
-  -v, --verbose             Verbose output
+  --no-subs                 Do not copy subtitle streams
+  --no-attachments          Do not copy attachment streams (fonts/images)
+  -f, --force               Overwrite existing output files
+  -l, --log <path>          Write plain logs to file
+  --color                   Force colored logs
+  --no-color                Disable colored logs
+  -v, --verbose             Verbose output (includes ffmpeg progress/details)
   -c, --check               System diagnostics
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio → stereo AAC 192k, keyframes every 48 frames
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 192k (copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames
 EOF
-    exit 0
+    exit "$exit_code"
 }
 
+# Parse and validate CLI arguments, then derive runtime ffmpeg log settings.
 parse_args() {
     local positional=()
     while [[ $# -gt 0 ]]; do
         case $1 in
             -m|--mode) ENCODER_MODE="$2"; shift 2 ;;
-            -q|--quality)
-                [[ "$ENCODER_MODE" == "vaapi" ]] && VAAPI_QP="$2" || CPU_CRF="$2"
-                shift 2 ;;
+            -q|--quality) QUALITY_OVERRIDE="$2"; shift 2 ;;
             -p|--preset) CPU_PRESET="$2"; shift 2 ;;
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
+            --no-subs) KEEP_SUBTITLES=false; shift ;;
+            --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
+            --color) COLOR_MODE="always"; shift ;;
+            --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
             -c|--check) CHECK_ONLY=true; shift ;;
             -l|--log) LOG_FILE="$2"; shift 2 ;;
             -f|--force) SKIP_EXISTING=false; shift ;;
-            -h|--help) usage ;;
-            -*) log_error "Unknown: $1"; usage ;;
+            -h|--help) usage 0 ;;
+            -*) log_error "Unknown: $1"; usage 1 ;;
             *) positional+=("$1"); shift ;;
         esac
     done
     
     if [[ "$CHECK_ONLY" != true ]]; then
-        [[ ${#positional[@]} -lt 2 ]] && { log_error "Need input_dir and output_dir"; usage; }
+        [[ ${#positional[@]} -lt 2 ]] && { log_error "Need input_dir and output_dir"; usage 1; }
         INPUT_DIR="${positional[0]%/}"   # Strip trailing slash
         OUTPUT_DIR="${positional[1]%/}"  # Strip trailing slash
     fi
+
+    case "$ENCODER_MODE" in
+        vaapi|cpu) ;;
+        *)
+            log_error "Invalid mode '$ENCODER_MODE' (use 'vaapi' or 'cpu')"
+            exit 1
+            ;;
+    esac
+
+    if [[ -n "$QUALITY_OVERRIDE" ]]; then
+        if ! [[ "$QUALITY_OVERRIDE" =~ ^[0-9]+$ ]]; then
+            log_error "Quality must be a whole number (got '$QUALITY_OVERRIDE')"
+            exit 1
+        fi
+
+        if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+            VAAPI_QP="$QUALITY_OVERRIDE"
+        else
+            CPU_CRF="$QUALITY_OVERRIDE"
+        fi
+    fi
+
+    if [[ "$VERBOSE" == true ]]; then
+        FFMPEG_LOGLEVEL="info"
+        FFMPEG_PROGRESS_ARGS=(-stats -stats_period 1)
+    else
+        FFMPEG_LOGLEVEL="error"
+        FFMPEG_PROGRESS_ARGS=()
+    fi
 }
 
+# Probe whether a specific VAAPI HEVC profile+format combo works.
+test_vaapi_profile() {
+    local sw_format="$1"
+    local profile="$2"
+    local err_file="$3"
+
+    ffmpeg -hide_banner -nostdin -loglevel error \
+        -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
+        -f lavfi -i color=black:s=256x256:d=0.1 \
+        -vf "format=${sw_format},hwupload" \
+        -c:v hevc_vaapi -profile:v "$profile" -f null - > /dev/null 2>"$err_file"
+}
+
+# Validate required tools and confirm selected encoder path is usable.
 check_deps() {
     command -v ffmpeg &>/dev/null || { log_error "ffmpeg not found"; exit 1; }
+    command -v ffprobe &>/dev/null || { log_error "ffprobe not found"; exit 1; }
     
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         if [[ ! -e "$VAAPI_DEVICE" ]]; then
@@ -100,24 +212,200 @@ check_deps() {
         
         local vaapi_err
         vaapi_err=$(mktemp)
-        if ! ffmpeg -hide_banner -init_hw_device vaapi=va:"$VAAPI_DEVICE" \
-                -f lavfi -i color=black:s=256x256:d=0.1 \
-                -vf 'format=p010,hwupload' -c:v hevc_vaapi -profile:v main10 -f null - 2>"$vaapi_err"; then
+        if test_vaapi_profile "p010" "main10" "$vaapi_err"; then
+            VAAPI_SW_FORMAT="p010"
+            VAAPI_PROFILE="main10"
+            log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main10)"
+        elif test_vaapi_profile "nv12" "main" "$vaapi_err"; then
+            VAAPI_SW_FORMAT="nv12"
+            VAAPI_PROFILE="main"
+            log_warn "VAAPI main10 unavailable, falling back to HEVC main (8-bit)"
+            log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main)"
+        else
             log_error "VAAPI test failed"
             [[ "$VERBOSE" == true ]] && cat "$vaapi_err"
             rm -f "$vaapi_err"
             exit 1
         fi
         rm -f "$vaapi_err"
-        log_success "VAAPI ready: $VAAPI_DEVICE (10-bit HEVC)"
+    else
+        if ! ffmpeg -hide_banner -nostdin -loglevel error \
+                -f lavfi -i color=black:s=256x256:d=0.1 \
+                -c:v libx265 -f null - > /dev/null 2>&1; then
+            log_error "CPU mode selected but libx265 is unavailable"
+            exit 1
+        fi
     fi
 }
 
+# Return codec name for the first video stream (simple fallback helper).
 get_codec() {
     ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1" 2>/dev/null | head -1
 }
 
-# Parse filename - extracts show name, season, episode
+# Return success if at least one audio stream exists.
+has_audio_stream() {
+    local has_audio
+    has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 "$1" 2>/dev/null | head -1)
+    [[ -n "$has_audio" ]]
+}
+
+# Return the first non-attached-pic video stream index.
+# This avoids selecting cover art as the "main" video stream.
+get_primary_video_stream_index() {
+    local idx codec attached
+    while IFS=',' read -r idx codec attached; do
+        [[ -z "$idx" ]] && continue
+        # Skip cover/attached-pic streams and keep the first real video stream
+        [[ "$attached" != "1" ]] && { echo "$idx"; return 0; }
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,codec_name:stream_disposition=attached_pic \
+        -of csv=p=0 "$1" 2>/dev/null)
+
+    echo "0"
+}
+
+# Return codec name for the first non-attached-pic video stream.
+get_primary_video_codec() {
+    local idx codec attached
+    while IFS=',' read -r idx codec attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" != "1" ]] && { echo "$codec"; return 0; }
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,codec_name:stream_disposition=attached_pic \
+        -of csv=p=0 "$1" 2>/dev/null)
+
+    get_codec "$1"
+}
+
+# Execute ffmpeg and capture stderr to an error file.
+# In verbose mode stderr is mirrored to terminal; otherwise it stays quiet.
+run_ffmpeg_logged() {
+    local err_file="$1"
+    shift
+
+    if [[ "$VERBOSE" == true ]]; then
+        "$@" 2> >(tee "$err_file" >&2)
+    else
+        "$@" 2>"$err_file"
+    fi
+}
+
+# Core remux executor used by skip-hevc flow.
+# - audio options are injected by caller
+# - subtitle/attachment copying follows KEEP_* toggles
+# - metadata_mode supports "keep" or "strip"
+run_remux_with_audio_opts() {
+    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
+    shift 5
+    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts
+
+    if [[ "$metadata_mode" == "strip" ]]; then
+        metadata_opts=(-map_metadata -1 -map_chapters -1)
+    else
+        metadata_opts=(-map_metadata 0 -map_chapters 0)
+    fi
+
+    if [[ "$KEEP_SUBTITLES" == true ]]; then
+        subtitle_opts=(-map 0:s? -c:s copy)
+    else
+        subtitle_opts=()
+    fi
+
+    if [[ "$KEEP_ATTACHMENTS" == true ]]; then
+        attachment_opts=(-map 0:t? -c:t copy)
+    else
+        attachment_opts=()
+    fi
+
+    run_ffmpeg_logged "$err_file" \
+        ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+            -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+            -i "$input" \
+            -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+            -dn -max_muxing_queue_size 4096 \
+            -c:v copy \
+            "${metadata_opts[@]}" \
+            "$output"
+}
+
+# Build remux audio args for the requested mode:
+# - "all"  -> all audio tracks to AAC
+# - "copy" -> copy all source audio tracks
+run_remux_attempt() {
+    local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" metadata_mode="$5" err_file="$6"
+    local -a audio_opts
+
+    if has_audio_stream "$input"; then
+        if [[ "$audio_mode" == "copy" ]]; then
+            audio_opts=(-map 0:a -c:a copy)
+        else
+            audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+        fi
+    else
+        audio_opts=(-an)
+    fi
+
+    run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$metadata_mode" "$err_file" "${audio_opts[@]}"
+}
+
+# Core transcode executor for non-remux flow.
+# Video is encoded to HEVC; audio can be AAC or copied, and subtitles/attachments
+# are preserved by default.
+run_encode_attempt() {
+    local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" err_file="$5"
+    local -a audio_opts subtitle_opts attachment_opts
+
+    if has_audio_stream "$input"; then
+        if [[ "$audio_mode" == "copy" ]]; then
+            audio_opts=(-map 0:a -c:a copy)
+        else
+            audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+        fi
+    else
+        audio_opts=(-an)
+    fi
+
+    if [[ "$KEEP_SUBTITLES" == true ]]; then
+        subtitle_opts=(-map 0:s? -c:s copy)
+    else
+        subtitle_opts=()
+    fi
+
+    if [[ "$KEEP_ATTACHMENTS" == true ]]; then
+        attachment_opts=(-map 0:t? -c:t copy)
+    else
+        attachment_opts=()
+    fi
+
+    if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+        run_ffmpeg_logged "$err_file" \
+            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
+                -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
+                -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+                -dn -max_muxing_queue_size 4096 \
+                -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
+                -map_metadata 0 -map_chapters 0 \
+                "$output"
+    else
+        run_ffmpeg_logged "$err_file" \
+            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                -i "$input" \
+                -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+                -dn -max_muxing_queue_size 4096 \
+                -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
+                -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
+                -x265-params log-level=error \
+                -map_metadata 0 -map_chapters 0 \
+                "$output"
+    fi
+}
+
+# Parse filename and infer library classification (TV vs movie) with best-effort
+# pattern matching for common release naming styles.
 parse_filename() {
     local filename="$1"
     local parent="$2"
@@ -172,6 +460,7 @@ parse_filename() {
     log_debug "Parsed: $MEDIA_TYPE | show='$SHOW_NAME' S${SEASON:-?}E${EPISODE:-?} | movie='$MOVIE_NAME' (${YEAR:-no year})"
 }
 
+# Build destination path from parsed media metadata.
 get_output_path() {
     if [[ "$MEDIA_TYPE" == "tv" ]]; then
         local s=$(printf "%02d" "$((10#${SEASON:-1}))")
@@ -184,8 +473,10 @@ get_output_path() {
     fi
 }
 
+# Transcode one source file into its output path.
+# If AAC audio conversion fails, retry once with source audio copy.
 encode_file() {
-    local input="$1" output="$2"
+    local input="$1" output="$2" video_stream_idx="${3:-0}"
     
     mkdir -p "$(dirname "$output")" || { log_error "Can't create dir"; return 1; }
     
@@ -200,25 +491,20 @@ encode_file() {
     
     local start result=0
     start=$(date +%s)
-    
-    # Run ffmpeg with visible progress (-stats shows frame/speed on stderr)
-    if [[ "$ENCODER_MODE" == "vaapi" ]]; then
-        ffmpeg -hide_banner -y -stats \
-            -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
-            -i "$input" -vf 'format=p010,hwupload' \
-            -map 0:v:0 -map 0:a -map -0:s -map -0:t \
-            -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v main10 -g "$KEYFRAME_INT" \
-            -c:a aac -ac 2 -b:a 192k -map_metadata 0 \
-            "$output" || result=$?
-    else
-        ffmpeg -hide_banner -y -stats \
-            -i "$input" \
-            -map 0:v:0 -map 0:a -map -0:s -map -0:t \
-            -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
-            -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
-            -x265-params log-level=error \
-            -c:a aac -ac 2 -b:a 192k -map_metadata 0 \
-            "$output" || result=$?
+    local ffmpeg_err
+    ffmpeg_err=$(mktemp)
+
+    if ! run_encode_attempt "$input" "$output" "$video_stream_idx" "aac" "$ffmpeg_err"; then
+        result=$?
+        if has_audio_stream "$input"; then
+            log_warn "Encode retry: copying source audio (AAC failed)"
+            rm -f "$output"
+            if run_encode_attempt "$input" "$output" "$video_stream_idx" "copy" "$ffmpeg_err"; then
+                result=0
+            else
+                result=$?
+            fi
+        fi
     fi
     
     local elapsed=$(( $(date +%s) - start ))
@@ -228,10 +514,16 @@ encode_file() {
         in_sz=$(stat -c%s "$input" 2>/dev/null) || in_sz=0
         out_sz=$(stat -c%s "$output" 2>/dev/null) || out_sz=0
         [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=0
+        rm -f "$ffmpeg_err"
         log_success "Done in ${elapsed}s (${ratio}%)"
         return 0
     else
         log_error "Failed!"
+        if [[ -s "$ffmpeg_err" ]]; then
+            log_error "Last ffmpeg output:"
+            tail -n 20 "$ffmpeg_err" | sed 's/^/  /'
+        fi
+        rm -f "$ffmpeg_err"
         rm -f "$output"
         return 1
     fi
@@ -248,11 +540,19 @@ process_files() {
     local total=${#files[@]} current=0 encoded=0 skipped=0 failed=0
     
     log_info "Found $total files"
-    log_info "Mode: $ENCODER_MODE (10-bit HEVC), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
-    log_info "Audio: All tracks → Stereo AAC 192k | Keyframes: ${KEYFRAME_INT}f"
+    local profile_label="main10"
+    [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
+    log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
+    log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (copy fallback preserves all tracks) | Keyframes: ${KEYFRAME_INT}f"
+    [[ "$KEEP_SUBTITLES" == true ]] && log_info "Subtitles: Copy all subtitle streams (ASS and others preserved)"
+    [[ "$KEEP_ATTACHMENTS" == true ]] && log_info "Attachments: Copy font/image attachments"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     echo
     
+    # Main per-file pipeline:
+    # 1) classify filename and compute output path
+    # 2) optionally remux HEVC sources in skip-hevc mode
+    # 3) otherwise transcode with encode_file
     for f in "${files[@]}"; do
         ((current++))
         
@@ -269,37 +569,72 @@ process_files() {
         # Parse filename first to get output path
         parse_filename "$(basename "$f")" "$(basename "$(dirname "$f")")"
         local out=$(get_output_path)
+        local video_idx video_codec
+        video_idx=$(get_primary_video_stream_index "$f")
+        video_codec=$(get_primary_video_codec "$f")
+        [[ -z "$video_codec" ]] && video_codec=$(get_codec "$f")
+        log_debug "Primary video stream: index=${video_idx:-0}, codec=${video_codec:-unknown}"
         
         # Check if already HEVC - copy video, but still encode audio to AAC
         if [[ "$SKIP_HEVC" == true ]]; then
-            local codec=$(get_codec "$f")
-            if [[ "$codec" == "hevc" ]]; then
+            if [[ "$video_codec" == "hevc" ]]; then
                 if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
                     log_warn "Skip (exists): $(basename "$out")"
                     ((skipped++))
                     echo
                     continue
                 fi
-                log_info "Remuxing (HEVC→copy video, encode AAC): $(basename "$f")"
+                log_info "Remuxing (HEVC -> copy video, encode AAC): $(basename "$f")"
                 log_info "  -> $(basename "$out")"
                 mkdir -p "$(dirname "$out")"
                 if [[ "$DRY_RUN" == true ]]; then
                     log_success "[DRY] Would remux"
                 else
                     local start_rm=$(date +%s)
-                    
-                    # Copy video, encode all audio to stereo AAC, exclude subs & attachments
-                    ffmpeg -hide_banner -y -stats \
-                        -i "$f" \
-                        -map 0:v:0 -map 0:a -map -0:s -map -0:t \
-                        -c:v copy \
-                        -c:a aac -ac 2 -b:a 192k \
-                        -map_metadata 0 \
-                        "$out" || { log_error "Remux failed"; ((failed++)); echo; continue; }
+                    local remux_err remux_ok=false
+                    remux_err=$(mktemp)
+
+                    # Attempt 1: all audio tracks + preserve metadata/chapters.
+                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "all" "keep" "$remux_err"; then
+                        remux_ok=true
+                    else
+                        log_warn "Remux retry: stripping metadata and chapters"
+                        rm -f "$out"
+
+                        # Attempt 2: all audio tracks + stripped metadata/chapters.
+                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "all" "strip" "$remux_err"; then
+                            remux_ok=true
+                        fi
+                    fi
+
+                    if [[ "$remux_ok" != true ]] && has_audio_stream "$f"; then
+                        # Final fallback keeps all tracks intact if AAC encode path
+                        # is incompatible with this source.
+                        log_warn "Remux fallback: copying source audio (AAC failed)"
+                        rm -f "$out"
+                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "copy" "strip" "$remux_err"; then
+                            remux_ok=true
+                        fi
+                    fi
+
+                    if [[ "$remux_ok" != true ]]; then
+                        log_error "Remux failed"
+                        if [[ -s "$remux_err" ]]; then
+                            log_error "Last ffmpeg output:"
+                            tail -n 20 "$remux_err" | sed 's/^/  /'
+                        fi
+                        rm -f "$remux_err"
+                        rm -f "$out"
+                        ((failed++))
+                        echo
+                        continue
+                    fi
+                    rm -f "$remux_err"
                     
                     local elapsed_rm=$(( $(date +%s) - start_rm ))
-                    local in_sz=$(stat -c%s "$f" 2>/dev/null) || in_sz=0
-                    local out_sz=$(stat -c%s "$out" 2>/dev/null) || out_sz=0
+                    local in_sz out_sz ratio
+                    in_sz=$(stat -c%s "$f" 2>/dev/null) || in_sz=0
+                    out_sz=$(stat -c%s "$out" 2>/dev/null) || out_sz=0
                     [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=100
                     log_success "Remuxed in ${elapsed_rm}s (${ratio}% of original)"
                 fi
@@ -316,7 +651,7 @@ process_files() {
             continue
         fi
         
-        if encode_file "$f" "$out"; then
+        if encode_file "$f" "$out" "${video_idx:-0}"; then
             ((encoded++))
         else
             ((failed++))
@@ -328,6 +663,7 @@ process_files() {
     log_info "Done: $encoded encoded, $skipped skipped, $failed failed"
 }
 
+# Lightweight environment diagnostics for quick troubleshooting.
 run_check() {
     log_info "=== System Check ==="
     
@@ -337,13 +673,13 @@ run_check() {
         log_error "ffmpeg not found"
     fi
     
-    echo "HEVC encoders:"
+    log_info "HEVC encoders:"
     ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "hevc|265"
     
     local dev=$(ls /dev/dri/renderD* 2>/dev/null | head -1)
     if [[ -n "$dev" ]]; then
         log_info "Testing VAAPI on $dev..."
-        if ffmpeg -hide_banner -init_hw_device vaapi=va:"$dev" \
+        if ffmpeg -hide_banner -nostdin -init_hw_device vaapi=va:"$dev" \
                 -f lavfi -i color=black:s=256x256:d=0.1 \
                 -vf 'format=p010,hwupload' -c:v hevc_vaapi -profile:v main10 -f null - 2>/dev/null; then
             log_success "VAAPI works"
@@ -353,15 +689,18 @@ run_check() {
     fi
     
     log_info "Testing CPU x265..."
-    if ffmpeg -hide_banner -f lavfi -i color=black:s=256x256:d=0.1 -c:v libx265 -f null - 2>/dev/null; then
+    if ffmpeg -hide_banner -nostdin -f lavfi -i color=black:s=256x256:d=0.1 -c:v libx265 -f null - 2>/dev/null; then
         log_success "CPU x265 works"
     else
         log_error "CPU x265 failed"
     fi
 }
 
+# Entrypoint
 main() {
+    init_colors
     parse_args "$@"
+    init_colors
     
     if [[ "$CHECK_ONLY" == true ]]; then
         run_check
