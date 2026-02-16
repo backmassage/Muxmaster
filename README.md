@@ -10,8 +10,11 @@ Current version: **1.1**
 
 - Added FFmpeg hardening retries for attachment tag issues, subtitle mux failures, mux queue overflow, and timestamp discontinuities.
 - Added `--strict` mode to disable automatic per-file retry fallbacks.
+- Preserved original audio/subtitle stream metadata (track titles/language tags).
 - Reorganized helper script structure and moved `harleybox_auto.sh` to `scripts/helpers/`.
 - Updated HarleyBox helper mount settings to remove `umask=000` and add `nofail` to fstab options.
+
+Full release notes: [`CHANGELOG.md`](./CHANGELOG.md)
 
 ## At a Glance
 
