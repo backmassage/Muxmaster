@@ -19,7 +19,7 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
 - **10-bit first**
   - VAAPI probes main10 first and falls back to main (8-bit) if needed.
 - **Audio handling**
-  - Tries to convert **all audio tracks** to AAC stereo 192k.
+  - Tries to convert **all audio tracks** to AAC stereo 214k.
   - If AAC fails for a file, falls back to **copying all original audio tracks**.
 - **Subtitle handling**
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
@@ -96,7 +96,7 @@ jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 
 - Output container: **MKV**
 - Keyframe interval: **48**
-- Audio target: **AAC stereo 192k** (all tracks)
+- Audio target: **AAC stereo 214k** (all tracks)
 - If AAC fails on a file: fallback to **copy all source audio tracks**
 - Subtitles: copied by default (ASS and others preserved)
 - Attachments: copied by default
