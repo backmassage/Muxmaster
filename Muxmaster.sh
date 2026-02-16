@@ -360,6 +360,14 @@ has_audio_stream() {
     [[ -n "$has_audio" ]]
 }
 
+# Return success if at least one subtitle stream exists.
+has_subtitle_stream() {
+    local has_sub
+    has_sub=$(ffprobe -v error -select_streams s:0 -show_entries stream=index \
+        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | sed -n '1p')
+    [[ -n "$has_sub" ]]
+}
+
 # Return the first non-attached-pic video stream index.
 # This avoids selecting cover art as the "main" video stream.
 get_primary_video_stream_index() {
@@ -494,7 +502,7 @@ ffmpeg_error_has_timestamp_discontinuity() {
 run_remux_with_audio_opts() {
     local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_subtitles="$6" include_attachments="$7" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     shift 9
-    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts
+    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts
 
     if [[ "$timestamp_fix" == true ]]; then
         pre_input_opts=(-fflags +genpts)
@@ -522,6 +530,15 @@ run_remux_with_audio_opts() {
         attachment_opts=()
     fi
 
+    # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
+    stream_metadata_opts=()
+    if has_audio_stream "$input"; then
+        stream_metadata_opts+=(-map_metadata:s:a 0:s:a)
+    fi
+    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]] && has_subtitle_stream "$input"; then
+        stream_metadata_opts+=(-map_metadata:s:s 0:s:s)
+    fi
+
     run_ffmpeg_logged "$err_file" \
         ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
             -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
@@ -531,6 +548,7 @@ run_remux_with_audio_opts() {
             -dn -max_muxing_queue_size "$muxing_queue_size" \
             -c:v copy \
             "${metadata_opts[@]}" \
+            "${stream_metadata_opts[@]}" \
             "${timestamp_opts[@]}" \
             "$output"
 }
@@ -555,7 +573,7 @@ run_remux_attempt() {
 # subtitles/attachments are preserved by default.
 run_encode_attempt() {
     local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" metadata_mode="${6:-}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
-    local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts
+    local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts
 
     if has_audio_stream "$input"; then
         audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
@@ -593,6 +611,15 @@ run_encode_attempt() {
         timestamp_opts=()
     fi
 
+    # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
+    stream_metadata_opts=()
+    if has_audio_stream "$input"; then
+        stream_metadata_opts+=(-map_metadata:s:a 0:s:a)
+    fi
+    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]] && has_subtitle_stream "$input"; then
+        stream_metadata_opts+=(-map_metadata:s:s 0:s:s)
+    fi
+
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         run_ffmpeg_logged "$err_file" \
             ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
@@ -604,6 +631,7 @@ run_encode_attempt() {
                 -dn -max_muxing_queue_size "$muxing_queue_size" \
                 -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
                 "${metadata_opts[@]}" \
+                "${stream_metadata_opts[@]}" \
                 "${timestamp_opts[@]}" \
                 "$output"
     else
@@ -618,6 +646,7 @@ run_encode_attempt() {
                 -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
                 -x265-params log-level=error \
                 "${metadata_opts[@]}" \
+                "${stream_metadata_opts[@]}" \
                 "${timestamp_opts[@]}" \
                 "$output"
     fi

@@ -62,9 +62,11 @@ Use `scripts/helpers/` for helper `.sh` utilities.
 - **Audio handling**
   - Tries to convert **all audio tracks** to AAC stereo 224k.
   - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
+  - Preserves original audio track metadata (title/language tags).
 - **Subtitle handling**
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
   - If subtitle mux/copy fails, the file is retried without subtitles.
+  - Preserves original subtitle track metadata (title/language tags).
 - **Attachment handling**
   - Copies attachment streams by default (fonts/images), which helps ASS styling render correctly.
   - If an input attachment stream is missing required tags (filename/mimetype), the file is retried without attachments.
@@ -75,6 +77,7 @@ Use `scripts/helpers/` for helper `.sh` utilities.
   - Default behavior strips container metadata and chapters for cleaner outputs.
   - Use `--keep-metadata` to preserve source container metadata/chapters.
   - If preserve mode fails for a file, that file is retried with clean metadata.
+  - Stream-level audio/subtitle metadata is preserved in both clean and keep modes.
 - **Mux/timestamp resilience**
   - Retries with a larger mux queue if FFmpeg reports packet buffer overflow.
   - Retries with generated timestamps when FFmpeg reports non-monotonic DTS.
