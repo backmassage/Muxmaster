@@ -48,7 +48,7 @@ STRICT_MODE=false
 INPUT_DIR=""
 OUTPUT_DIR=""
 SCRIPT_NAME="$(basename "$0")"
-SCRIPT_VERSION="1.0"
+SCRIPT_VERSION="1.1"
 
 # ANSI color palette (initialized by init_colors)
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""

@@ -2,7 +2,16 @@
 
 > A fast, resilient batch encoder/remuxer for Jellyfin-style libraries.
 
-Current version: **1.0**
+Current version: **1.1**
+
+## Quick Changelog
+
+### v1.1 (2026-02-16)
+
+- Added FFmpeg hardening retries for attachment tag issues, subtitle mux failures, mux queue overflow, and timestamp discontinuities.
+- Added `--strict` mode to disable automatic per-file retry fallbacks.
+- Reorganized helper script structure and moved `harleybox_auto.sh` to `scripts/helpers/`.
+- Updated HarleyBox helper mount settings to remove `umask=000` and add `nofail` to fstab options.
 
 ## At a Glance
 
