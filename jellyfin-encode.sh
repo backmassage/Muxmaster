@@ -17,6 +17,8 @@ OUTPUT_CONTAINER="mkv"
 KEYFRAME_INT=48              # Keyframes every 48 frames (~2s at 24fps)
 AUDIO_CHANNELS=2
 AUDIO_BITRATE="192k"
+FFMPEG_PROBESIZE="100M"
+FFMPEG_ANALYZEDURATION="100M"
 
 DRY_RUN=false
 SKIP_EXISTING=true
@@ -173,6 +175,61 @@ has_audio_stream() {
     [[ -n "$has_audio" ]]
 }
 
+get_primary_video_stream_index() {
+    local idx codec attached
+    while IFS=',' read -r idx codec attached; do
+        [[ -z "$idx" ]] && continue
+        # Skip cover/attached-pic streams and keep the first real video stream
+        [[ "$attached" != "1" ]] && { echo "$idx"; return 0; }
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,codec_name:stream_disposition=attached_pic \
+        -of csv=p=0 "$1" 2>/dev/null)
+
+    echo "0"
+}
+
+get_primary_video_codec() {
+    local idx codec attached
+    while IFS=',' read -r idx codec attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" != "1" ]] && { echo "$codec"; return 0; }
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,codec_name:stream_disposition=attached_pic \
+        -of csv=p=0 "$1" 2>/dev/null)
+
+    get_codec "$1"
+}
+
+run_remux_attempt() {
+    local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" metadata_mode="$5" err_file="$6"
+    local -a audio_opts metadata_opts
+
+    if has_audio_stream "$input"; then
+        if [[ "$audio_mode" == "first" ]]; then
+            audio_opts=(-map 0:a:0? -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
+        else
+            audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
+        fi
+    else
+        audio_opts=(-an)
+    fi
+
+    if [[ "$metadata_mode" == "strip" ]]; then
+        metadata_opts=(-map_metadata -1 -map_chapters -1)
+    else
+        metadata_opts=(-map_metadata 0 -map_chapters 0)
+    fi
+
+    ffmpeg -hide_banner -y -stats \
+        -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+        -i "$input" \
+        -map "0:${video_stream_idx}" "${audio_opts[@]}" \
+        -sn -dn -max_muxing_queue_size 4096 \
+        -c:v copy \
+        "${metadata_opts[@]}" \
+        "$output" 2> >(tee "$err_file" >&2)
+}
+
 # Parse filename - extracts show name, season, episode
 parse_filename() {
     local filename="$1"
@@ -241,7 +298,7 @@ get_output_path() {
 }
 
 encode_file() {
-    local input="$1" output="$2"
+    local input="$1" output="$2" video_stream_idx="${3:-0}"
     
     mkdir -p "$(dirname "$output")" || { log_error "Can't create dir"; return 1; }
     
@@ -270,20 +327,24 @@ encode_file() {
     # Run ffmpeg with visible progress (-stats shows frame/speed on stderr)
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         ffmpeg -hide_banner -y -stats \
+            -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
             -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
             -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
-            -map 0:v:0 "${audio_opts[@]}" \
+            -map "0:${video_stream_idx}" "${audio_opts[@]}" \
+            -sn -dn -max_muxing_queue_size 4096 \
             -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
-            -map_metadata 0 \
+            -map_metadata 0 -map_chapters 0 \
             "$output" 2> >(tee "$ffmpeg_err" >&2) || result=$?
     else
         ffmpeg -hide_banner -y -stats \
+            -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
             -i "$input" \
-            -map 0:v:0 "${audio_opts[@]}" \
+            -map "0:${video_stream_idx}" "${audio_opts[@]}" \
+            -sn -dn -max_muxing_queue_size 4096 \
             -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
             -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
             -x265-params log-level=error \
-            -map_metadata 0 \
+            -map_metadata 0 -map_chapters 0 \
             "$output" 2> >(tee "$ffmpeg_err" >&2) || result=$?
     fi
     
@@ -320,7 +381,9 @@ process_files() {
     local total=${#files[@]} current=0 encoded=0 skipped=0 failed=0
     
     log_info "Found $total files"
-    log_info "Mode: $ENCODER_MODE (10-bit HEVC), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
+    local profile_label="main10"
+    [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
+    log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
     log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} | Keyframes: ${KEYFRAME_INT}f"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     echo
@@ -341,11 +404,15 @@ process_files() {
         # Parse filename first to get output path
         parse_filename "$(basename "$f")" "$(basename "$(dirname "$f")")"
         local out=$(get_output_path)
+        local video_idx video_codec
+        video_idx=$(get_primary_video_stream_index "$f")
+        video_codec=$(get_primary_video_codec "$f")
+        [[ -z "$video_codec" ]] && video_codec=$(get_codec "$f")
+        log_debug "Primary video stream: index=${video_idx:-0}, codec=${video_codec:-unknown}"
         
         # Check if already HEVC - copy video, but still encode audio to AAC
         if [[ "$SKIP_HEVC" == true ]]; then
-            local codec=$(get_codec "$f")
-            if [[ "$codec" == "hevc" ]]; then
+            if [[ "$video_codec" == "hevc" ]]; then
                 if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
                     log_warn "Skip (exists): $(basename "$out")"
                     ((skipped++))
@@ -359,22 +426,43 @@ process_files() {
                     log_success "[DRY] Would remux"
                 else
                     local start_rm=$(date +%s)
-                    local -a remux_audio_opts
+                    local remux_err remux_ok=false
+                    remux_err=$(mktemp)
 
-                    if has_audio_stream "$f"; then
-                        remux_audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
+                    # Attempt 1: all audio tracks + preserve metadata/chapters
+                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "all" "keep" "$remux_err"; then
+                        remux_ok=true
                     else
-                        remux_audio_opts=(-an)
-                        log_debug "No audio stream detected for remux: $(basename "$f")"
+                        log_warn "Remux retry: stripping metadata and chapters"
+                        rm -f "$out"
+
+                        # Attempt 2: all audio tracks + stripped metadata/chapters
+                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "all" "strip" "$remux_err"; then
+                            remux_ok=true
+                        elif has_audio_stream "$f"; then
+                            log_warn "Remux retry: first audio track only"
+                            rm -f "$out"
+
+                            # Attempt 3: first audio only + stripped metadata/chapters
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "first" "strip" "$remux_err"; then
+                                remux_ok=true
+                            fi
+                        fi
                     fi
-                    
-                    # Copy video, encode all audio to stereo AAC, exclude subs & attachments
-                    ffmpeg -hide_banner -y -stats \
-                        -i "$f" \
-                        -map 0:v:0 "${remux_audio_opts[@]}" \
-                        -c:v copy \
-                        -map_metadata 0 \
-                        "$out" || { log_error "Remux failed"; ((failed++)); echo; continue; }
+
+                    if [[ "$remux_ok" != true ]]; then
+                        log_error "Remux failed"
+                        if [[ -s "$remux_err" ]]; then
+                            log_error "Last ffmpeg output:"
+                            tail -n 20 "$remux_err" | sed 's/^/  /'
+                        fi
+                        rm -f "$remux_err"
+                        rm -f "$out"
+                        ((failed++))
+                        echo
+                        continue
+                    fi
+                    rm -f "$remux_err"
                     
                     local elapsed_rm=$(( $(date +%s) - start_rm ))
                     local in_sz out_sz ratio
@@ -396,7 +484,7 @@ process_files() {
             continue
         fi
         
-        if encode_file "$f" "$out"; then
+        if encode_file "$f" "$out" "${video_idx:-0}"; then
             ((encoded++))
         else
             ((failed++))
