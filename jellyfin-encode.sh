@@ -19,6 +19,7 @@ AUDIO_CHANNELS=2
 AUDIO_BITRATE="192k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
+AUDIO_PROBE_DURATION="30"
 
 DRY_RUN=false
 SKIP_EXISTING=true
@@ -175,6 +176,37 @@ has_audio_stream() {
     [[ -n "$has_audio" ]]
 }
 
+get_audio_stream_indices() {
+    ffprobe -v error -select_streams a \
+        -show_entries stream=index -of csv=p=0 "$1" 2>/dev/null
+}
+
+audio_stream_transcode_test() {
+    local input="$1"
+    local stream_idx="$2"
+
+    ffmpeg -hide_banner -loglevel error -xerror \
+        -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+        -i "$input" \
+        -map "0:${stream_idx}" \
+        -vn -sn -dn \
+        -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE" \
+        -t "$AUDIO_PROBE_DURATION" \
+        -f null - > /dev/null 2>&1
+}
+
+get_transcodable_audio_stream_indices() {
+    local input="$1"
+    local idx
+
+    while IFS= read -r idx; do
+        [[ -z "$idx" ]] && continue
+        if audio_stream_transcode_test "$input" "$idx"; then
+            echo "$idx"
+        fi
+    done < <(get_audio_stream_indices "$input")
+}
+
 get_primary_video_stream_index() {
     local idx codec attached
     while IFS=',' read -r idx codec attached; do
@@ -200,19 +232,10 @@ get_primary_video_codec() {
     get_codec "$1"
 }
 
-run_remux_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" metadata_mode="$5" err_file="$6"
-    local -a audio_opts metadata_opts
-
-    if has_audio_stream "$input"; then
-        if [[ "$audio_mode" == "first" ]]; then
-            audio_opts=(-map 0:a:0? -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
-        else
-            audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
-        fi
-    else
-        audio_opts=(-an)
-    fi
+run_remux_with_audio_opts() {
+    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
+    shift 5
+    local -a audio_opts=("$@") metadata_opts
 
     if [[ "$metadata_mode" == "strip" ]]; then
         metadata_opts=(-map_metadata -1 -map_chapters -1)
@@ -228,6 +251,23 @@ run_remux_attempt() {
         -c:v copy \
         "${metadata_opts[@]}" \
         "$output" 2> >(tee "$err_file" >&2)
+}
+
+run_remux_attempt() {
+    local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" metadata_mode="$5" err_file="$6"
+    local -a audio_opts
+
+    if has_audio_stream "$input"; then
+        if [[ "$audio_mode" == "first" ]]; then
+            audio_opts=(-map 0:a:0? -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+        else
+            audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+        fi
+    else
+        audio_opts=(-an)
+    fi
+
+    run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$metadata_mode" "$err_file" "${audio_opts[@]}"
 }
 
 # Parse filename - extracts show name, season, episode
@@ -427,6 +467,7 @@ process_files() {
                 else
                     local start_rm=$(date +%s)
                     local remux_err remux_ok=false
+                    local -a good_audio_idxs good_audio_opts
                     remux_err=$(mktemp)
 
                     # Attempt 1: all audio tracks + preserve metadata/chapters
@@ -447,6 +488,32 @@ process_files() {
                             if run_remux_attempt "$f" "$out" "${video_idx:-0}" "first" "strip" "$remux_err"; then
                                 remux_ok=true
                             fi
+                        fi
+                    fi
+
+                    if [[ "$remux_ok" != true ]] && has_audio_stream "$f"; then
+                        mapfile -t good_audio_idxs < <(get_transcodable_audio_stream_indices "$f")
+                        if (( ${#good_audio_idxs[@]} > 0 )); then
+                            log_warn "Remux retry: only AAC-safe audio streams (${#good_audio_idxs[@]})"
+                            rm -f "$out"
+
+                            good_audio_opts=()
+                            for aidx in "${good_audio_idxs[@]}"; do
+                                good_audio_opts+=(-map "0:${aidx}")
+                            done
+                            good_audio_opts+=(-c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+
+                            if run_remux_with_audio_opts "$f" "$out" "${video_idx:-0}" "strip" "$remux_err" "${good_audio_opts[@]}"; then
+                                remux_ok=true
+                            fi
+                        fi
+                    fi
+
+                    if [[ "$remux_ok" != true ]] && has_audio_stream "$f"; then
+                        log_warn "Remux fallback: copying source audio (AAC failed)"
+                        rm -f "$out"
+                        if run_remux_with_audio_opts "$f" "$out" "${video_idx:-0}" "strip" "$remux_err" -map 0:a? -c:a copy; then
+                            remux_ok=true
                         fi
                     fi
 
