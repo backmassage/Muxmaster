@@ -1,13 +1,26 @@
-# Jellyfin Media Library Encoder
+# Muxmaster Media Library Encoder
 
-Batch-convert media for a Jellyfin-style library with:
+> A fast, resilient batch encoder/remuxer for Jellyfin-style libraries.
 
-- HEVC video (VAAPI or CPU/x265)
-- AAC audio (all tracks by default)
-- Optional HEVC remux mode (copy video, process audio)
-- Clean output folder structure for TV and movies
+## At a Glance
 
-The script is designed to be resilient with mixed anime/TV/movie files, including dual-audio releases, ASS subtitles, and attachment fonts.
+- HEVC video encoding via VAAPI or CPU/x265
+- Strict AAC audio processing for all tracks (214k target)
+- Optional HEVC remux mode (copy video + process audio)
+- Automatic TV/movie folder structure normalization
+- Stream-safe defaults for subtitles and attachment fonts
+
+The script is designed to handle mixed anime/TV/movie files, including dual-audio releases, ASS subtitles, and attachment fonts.
+
+## Mini PC Profile (Tuned/Tested)
+
+This project is actively tuned and validated on:
+
+| Component | Spec |
+|---|---|
+| CPU | AMD Ryzen 6600H |
+| RAM | 20 GB |
+| OS | Arch Linux |
 
 ---
 
@@ -19,8 +32,8 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
 - **10-bit first**
   - VAAPI probes main10 first and falls back to main (8-bit) if needed.
 - **Audio handling**
-  - Tries to convert **all audio tracks** to AAC stereo 192k.
-  - If AAC fails for a file, falls back to **copying all original audio tracks**.
+  - Tries to convert **all audio tracks** to AAC stereo 214k.
+  - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
 - **Subtitle handling**
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
 - **Attachment handling**
@@ -30,9 +43,13 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**
-  - Quiet FFmpeg output by default, detailed FFmpeg output with `-v`.
+  - Live FFmpeg FPS/speed progress by default, detailed FFmpeg output with `-v`.
 - **Color support**
   - Auto color in TTY, plus `--color` / `--no-color`.
+- **File stats section**
+  - Shows source video resolution and bitrate for each file.
+- **CSV result reporting**
+  - Writes per-file results (encoded/remuxed/skipped/failed) with rename tracking.
 
 ---
 
@@ -51,22 +68,33 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
 ## Quick Start
 
 ```bash
-chmod +x jellyfin-encode.sh
-./jellyfin-encode.sh -m vaapi -q 19 "/path/to/input" "/path/to/output"
+chmod +x Muxmaster.sh
+./Muxmaster.sh -m vaapi -q 19 "/path/to/input" "/path/to/output"
 ```
 
 Typical anime/dual-audio remux workflow:
 
 ```bash
-./jellyfin-encode.sh -m vaapi --skip-hevc -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
+./Muxmaster.sh -m vaapi --skip-hevc -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
 ```
+
+### Quick Command Cheat Sheet
+
+| Goal | Command |
+|---|---|
+| Standard encode pass | `./Muxmaster.sh -m vaapi "/input" "/output"` |
+| CPU encode | `./Muxmaster.sh -m cpu "/input" "/output"` |
+| Keep HEVC video, process audio | `./Muxmaster.sh --skip-hevc "/input" "/output"` |
+| Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
+| Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
+| System diagnostics | `./Muxmaster.sh --check` |
 
 ---
 
 ## Command Usage
 
 ```text
-jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
+Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 ```
 
 ### Options
@@ -78,10 +106,17 @@ jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 | `-p, --preset <preset>` | CPU preset for x265 (default: `slow`) |
 | `-d, --dry-run` | Preview planned operations only |
 | `--skip-hevc` | HEVC files: copy video, process audio |
+| `--include-extras` | Include files from `NC`/`Extras`/`Sample` folders |
+| `--show-fps` | Show live FFmpeg encoding FPS/speed progress (default: on) |
+| `--no-fps` | Disable live FFmpeg FPS/speed progress |
+| `--no-stats` | Hide per-file source video stats (resolution/bitrate) |
 | `--no-subs` | Do not copy subtitle streams |
 | `--no-attachments` | Do not copy attachment streams |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
+| `--csv-log <path>` | Write per-file results CSV to a custom path |
+| `--no-csv-log` | Disable CSV result logging |
+| `--` | End options parsing (use before paths starting with `-`) |
 | `--color` | Force colored logs |
 | `--no-color` | Disable colored logs |
 | `-v, --verbose` | Verbose mode (includes FFmpeg details/progress) |
@@ -94,17 +129,21 @@ jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 
 - Output container: **MKV**
 - Keyframe interval: **48**
-- Audio target: **AAC stereo 192k** (all tracks)
-- If AAC fails on a file: fallback to **copy all source audio tracks**
+- Audio target: **AAC stereo 214k** (all tracks)
+- If AAC fails on a file: file processing fails (**no audio-copy fallback**)
 - Subtitles: copied by default (ASS and others preserved)
 - Attachments: copied by default
+- Extras folders (`NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`) are skipped by default (`--include-extras` to include)
+- FFmpeg FPS/speed live progress is on by default (`--no-fps` to disable)
+- Per-file source video stats are shown by default (`--no-stats` to hide)
+- CSV results: written by default to `<output>/encode-results-YYYYmmdd-HHMMSS.csv`
 - Existing output files: skipped by default (`--force` to overwrite)
 
 Supported input extensions:
 
 - `mkv`, `mp4`, `avi`, `m4v`, `mov`, `wmv`, `flv`, `webm`, `ts`, `m2ts`
 
-The script also skips common extras/sample folders like:
+By default, the script skips common extras/sample folders like:
 
 - `NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`
 
@@ -133,43 +172,61 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### VAAPI encode
 
 ```bash
-./jellyfin-encode.sh -m vaapi -q 19 "/media/input" "/media/output"
+./Muxmaster.sh -m vaapi -q 19 "/media/input" "/media/output"
 ```
 
 ### CPU encode
 
 ```bash
-./jellyfin-encode.sh -m cpu -q 20 -p medium "/media/input" "/media/output"
+./Muxmaster.sh -m cpu -q 20 -p medium "/media/input" "/media/output"
 ```
 
 ### Keep existing outputs untouched (default)
 
 ```bash
-./jellyfin-encode.sh "/media/input" "/media/output"
+./Muxmaster.sh "/media/input" "/media/output"
 ```
 
 ### Force overwrite existing outputs
 
 ```bash
-./jellyfin-encode.sh -f "/media/input" "/media/output"
+./Muxmaster.sh -f "/media/input" "/media/output"
 ```
 
 ### Disable subtitle and attachment copying
 
 ```bash
-./jellyfin-encode.sh --no-subs --no-attachments "/media/input" "/media/output"
+./Muxmaster.sh --no-subs --no-attachments "/media/input" "/media/output"
 ```
 
 ### Verbose FFmpeg diagnostics
 
 ```bash
-./jellyfin-encode.sh -v -m cpu "/media/input" "/media/output"
+./Muxmaster.sh -v -m cpu "/media/input" "/media/output"
+```
+
+### Show live FFmpeg FPS/speed progress (default behavior)
+
+```bash
+./Muxmaster.sh --show-fps -m cpu "/media/input" "/media/output"
+```
+
+### Disable live FFmpeg FPS/speed progress
+
+```bash
+./Muxmaster.sh --no-fps -m cpu "/media/input" "/media/output"
+```
+
+### Custom CSV results path
+
+```bash
+./Muxmaster.sh --csv-log "/media/output/encode-report.csv" "/media/input" "/media/output"
 ```
 
 ### System diagnostics only
 
 ```bash
-./jellyfin-encode.sh --check
+./Muxmaster.sh --check
 ```
 
 ---
@@ -190,7 +247,7 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### Audio issues on specific files
 
 - Run with `-v` to capture detailed FFmpeg output.
-- The script already retries with audio-copy fallback if AAC fails.
+- AAC is strict for all tracks; unsupported inputs will fail for that file.
 
 ### Output already exists and file is skipped
 
@@ -201,5 +258,6 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ## Notes
 
 - Logs printed with colors are for terminal readability; log files remain plain text.
+- CSV rows include action (`encode`/`remux`), status, source/destination paths, `renamed`, and source video resolution/bitrate columns.
 - For large libraries, start with a small subset or `--dry-run` first.
 
