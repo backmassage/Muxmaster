@@ -20,7 +20,7 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
   - VAAPI probes main10 first and falls back to main (8-bit) if needed.
 - **Audio handling**
   - Tries to convert **all audio tracks** to AAC stereo 214k.
-  - If AAC fails for a file, falls back to **copying all original audio tracks**.
+  - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
 - **Subtitle handling**
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
 - **Attachment handling**
@@ -97,7 +97,7 @@ jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 - Output container: **MKV**
 - Keyframe interval: **48**
 - Audio target: **AAC stereo 214k** (all tracks)
-- If AAC fails on a file: fallback to **copy all source audio tracks**
+- If AAC fails on a file: file processing fails (**no audio-copy fallback**)
 - Subtitles: copied by default (ASS and others preserved)
 - Attachments: copied by default
 - Extras folders (`NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`) are skipped by default (`--include-extras` to include)
@@ -193,7 +193,7 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### Audio issues on specific files
 
 - Run with `-v` to capture detailed FFmpeg output.
-- The script already retries with audio-copy fallback if AAC fails.
+- AAC is strict for all tracks; unsupported inputs will fail for that file.
 
 ### Output already exists and file is skipped
 

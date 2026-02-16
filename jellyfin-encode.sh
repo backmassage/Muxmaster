@@ -122,7 +122,7 @@ Options:
   -c, --check               System diagnostics
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 214k (copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 214k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames
 EOF
     exit "$exit_code"
 }
@@ -379,19 +379,14 @@ run_remux_with_audio_opts() {
             "$output"
 }
 
-# Build remux audio args for the requested mode:
-# - "all"  -> all audio tracks to AAC
-# - "copy" -> copy all source audio tracks
+# Build remux audio args for strict AAC mode:
+# - all audio tracks -> AAC
 run_remux_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" metadata_mode="$5" err_file="$6"
+    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
     local -a audio_opts
 
     if has_audio_stream "$input"; then
-        if [[ "$audio_mode" == "copy" ]]; then
-            audio_opts=(-map 0:a -c:a copy)
-        else
-            audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
-        fi
+        audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
     else
         audio_opts=(-an)
     fi
@@ -400,18 +395,14 @@ run_remux_attempt() {
 }
 
 # Core transcode executor for non-remux flow.
-# Video is encoded to HEVC; audio can be AAC or copied, and subtitles/attachments
-# are preserved by default.
+# Video is encoded to HEVC; audio is encoded to AAC for all tracks, and
+# subtitles/attachments are preserved by default.
 run_encode_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" err_file="$5"
+    local input="$1" output="$2" video_stream_idx="$3" err_file="$4"
     local -a audio_opts subtitle_opts attachment_opts
 
     if has_audio_stream "$input"; then
-        if [[ "$audio_mode" == "copy" ]]; then
-            audio_opts=(-map 0:a -c:a copy)
-        else
-            audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
-        fi
+        audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
     else
         audio_opts=(-an)
     fi
@@ -524,7 +515,7 @@ get_output_path() {
 }
 
 # Transcode one source file into its output path.
-# If AAC audio conversion fails, retry once with source audio copy.
+# AAC conversion is strict: no source-audio copy fallback on failure.
 encode_file() {
     local input="$1" output="$2" video_stream_idx="${3:-0}"
     
@@ -539,22 +530,15 @@ encode_file() {
     log_info "Encoding: $(basename "$input")"
     log_info "  -> $(basename "$output")"
     
-    local start result=0
+    local start result
     start=$(date +%s)
     local ffmpeg_err
     ffmpeg_err=$(mktemp)
 
-    if ! run_encode_attempt "$input" "$output" "$video_stream_idx" "aac" "$ffmpeg_err"; then
+    if ! run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err"; then
         result=$?
-        if has_audio_stream "$input"; then
-            log_warn "Encode retry: copying source audio (AAC failed)"
-            rm -f "$output"
-            if run_encode_attempt "$input" "$output" "$video_stream_idx" "copy" "$ffmpeg_err"; then
-                result=0
-            else
-                result=$?
-            fi
-        fi
+    else
+        result=0
     fi
     
     local elapsed=$(( $(date +%s) - start ))
@@ -593,7 +577,7 @@ process_files() {
     local profile_label="main10"
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
-    log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (copy fallback preserves all tracks) | Keyframes: ${KEYFRAME_INT}f"
+    log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (strict AAC, no source-audio fallback) | Keyframes: ${KEYFRAME_INT}f"
     [[ "$KEEP_SUBTITLES" == true ]] && log_info "Subtitles: Copy all subtitle streams (ASS and others preserved)"
     [[ "$KEEP_ATTACHMENTS" == true ]] && log_info "Attachments: Copy font/image attachments"
     [[ "$SKIP_EXTRAS" == true ]] && log_info "Folder filter: skipping NC/Extras/Sample/Featurettes directories"
@@ -649,24 +633,14 @@ process_files() {
                     remux_err=$(mktemp)
 
                     # Attempt 1: all audio tracks + preserve metadata/chapters.
-                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "all" "keep" "$remux_err"; then
+                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "keep" "$remux_err"; then
                         remux_ok=true
                     else
                         log_warn "Remux retry: stripping metadata and chapters"
                         rm -f "$out"
 
                         # Attempt 2: all audio tracks + stripped metadata/chapters.
-                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "all" "strip" "$remux_err"; then
-                            remux_ok=true
-                        fi
-                    fi
-
-                    if [[ "$remux_ok" != true ]] && has_audio_stream "$f"; then
-                        # Final fallback keeps all tracks intact if AAC encode path
-                        # is incompatible with this source.
-                        log_warn "Remux fallback: copying source audio (AAC failed)"
-                        rm -f "$out"
-                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "copy" "strip" "$remux_err"; then
+                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "strip" "$remux_err"; then
                             remux_ok=true
                         fi
                     fi
