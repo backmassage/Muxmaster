@@ -37,7 +37,7 @@ SKIP_EXISTING=true
 SKIP_HEVC=false
 SKIP_EXTRAS=true
 SHOW_FILE_STATS=true
-SHOW_FFMPEG_FPS=false
+SHOW_FFMPEG_FPS=true
 LOG_FILE=""
 CSV_LOG_ENABLED=true
 CSV_LOG_FILE=""
@@ -198,7 +198,7 @@ Options:
   -d, --dry-run             Preview only
   --skip-hevc               HEVC files: copy video, encode audio only (fast)
   --include-extras          Include NC/Extras/Sample/Featurettes folders
-  --show-fps                Show live ffmpeg encoding FPS/speed
+  --show-fps                Show live ffmpeg encoding FPS/speed (default: on)
   --no-stats                Hide per-file source video stats section
   --no-subs                 Do not copy subtitle streams
   --no-attachments          Do not copy attachment streams (fonts/images)
