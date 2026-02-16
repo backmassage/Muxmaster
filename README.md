@@ -1,4 +1,4 @@
-# Jellyfin Media Library Encoder
+# Muxmaster Media Library Encoder
 
 Batch-convert media for a Jellyfin-style library with:
 
@@ -53,14 +53,14 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
 ## Quick Start
 
 ```bash
-chmod +x jellyfin-encode.sh
-./jellyfin-encode.sh -m vaapi -q 19 "/path/to/input" "/path/to/output"
+chmod +x Muxmaster
+./Muxmaster -m vaapi -q 19 "/path/to/input" "/path/to/output"
 ```
 
 Typical anime/dual-audio remux workflow:
 
 ```bash
-./jellyfin-encode.sh -m vaapi --skip-hevc -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
+./Muxmaster -m vaapi --skip-hevc -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
 ```
 
 ---
@@ -68,7 +68,7 @@ Typical anime/dual-audio remux workflow:
 ## Command Usage
 
 ```text
-jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
+Muxmaster [OPTIONS] <input_dir> <output_dir>
 ```
 
 ### Options
@@ -141,49 +141,49 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### VAAPI encode
 
 ```bash
-./jellyfin-encode.sh -m vaapi -q 19 "/media/input" "/media/output"
+./Muxmaster -m vaapi -q 19 "/media/input" "/media/output"
 ```
 
 ### CPU encode
 
 ```bash
-./jellyfin-encode.sh -m cpu -q 20 -p medium "/media/input" "/media/output"
+./Muxmaster -m cpu -q 20 -p medium "/media/input" "/media/output"
 ```
 
 ### Keep existing outputs untouched (default)
 
 ```bash
-./jellyfin-encode.sh "/media/input" "/media/output"
+./Muxmaster "/media/input" "/media/output"
 ```
 
 ### Force overwrite existing outputs
 
 ```bash
-./jellyfin-encode.sh -f "/media/input" "/media/output"
+./Muxmaster -f "/media/input" "/media/output"
 ```
 
 ### Disable subtitle and attachment copying
 
 ```bash
-./jellyfin-encode.sh --no-subs --no-attachments "/media/input" "/media/output"
+./Muxmaster --no-subs --no-attachments "/media/input" "/media/output"
 ```
 
 ### Verbose FFmpeg diagnostics
 
 ```bash
-./jellyfin-encode.sh -v -m cpu "/media/input" "/media/output"
+./Muxmaster -v -m cpu "/media/input" "/media/output"
 ```
 
 ### Custom CSV results path
 
 ```bash
-./jellyfin-encode.sh --csv-log "/media/output/encode-report.csv" "/media/input" "/media/output"
+./Muxmaster --csv-log "/media/output/encode-report.csv" "/media/input" "/media/output"
 ```
 
 ### System diagnostics only
 
 ```bash
-./jellyfin-encode.sh --check
+./Muxmaster --check
 ```
 
 ---

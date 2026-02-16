@@ -1,6 +1,6 @@
 #!/bin/bash
 #===============================================================================
-# Jellyfin Media Library Encoder
+# Muxmaster Media Library Encoder
 #===============================================================================
 
 set -o pipefail
@@ -46,6 +46,7 @@ COLOR_MODE="auto"
 
 INPUT_DIR=""
 OUTPUT_DIR=""
+SCRIPT_NAME="$(basename "$0")"
 
 # ANSI color palette (initialized by init_colors)
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
@@ -74,6 +75,25 @@ init_colors() {
         NC=$'\033[0m'
     else
         RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
+    fi
+}
+
+# Print startup banner.
+print_banner() {
+    if [[ -n "$CYAN" ]]; then
+        printf '%b\n' "$CYAN"
+    fi
+
+    cat << 'EOF'
+ __  __            __  __           _            
+|  \/  |_   ___  _|  \/  | __ _ ___| |_ ___ _ __ 
+| |\/| | | | \ \/ / |\/| |/ _` / __| __/ _ \ '__|
+| |  | | |_| |>  <| |  | | (_| \__ \ ||  __/ |   
+|_|  |_|\__,_/_/\_\_|  |_|\__,_|___/\__\___|_|   
+EOF
+
+    if [[ -n "$CYAN" ]]; then
+        printf '%b\n' "$NC"
     fi
 }
 
@@ -159,8 +179,8 @@ csv_log_result() {
 # Print CLI help and exit with the requested code.
 usage() {
     local exit_code="${1:-0}"
-    cat << 'EOF'
-Usage: jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
+    cat << EOF
+Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
 
 Options:
   -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi)
@@ -813,6 +833,7 @@ main() {
     init_colors
     parse_args "$@"
     init_colors
+    print_banner
     
     if [[ "$CHECK_ONLY" == true ]]; then
         run_check
@@ -822,7 +843,7 @@ main() {
     [[ ! -d "$INPUT_DIR" ]] && { log_error "Input not found: $INPUT_DIR"; exit 1; }
     mkdir -p "$OUTPUT_DIR"
     
-    log_info "=== Jellyfin Encoder ==="
+    log_info "=== Muxmaster ==="
     log_info "In:  $INPUT_DIR"
     log_info "Out: $OUTPUT_DIR"
     [[ "$DRY_RUN" == true ]] && log_warn "DRY RUN"
