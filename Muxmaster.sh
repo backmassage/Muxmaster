@@ -35,7 +35,7 @@ KEEP_ATTACHMENTS=true
 DRY_RUN=false
 SKIP_EXISTING=true
 SKIP_HEVC=true
-SKIP_EXTRAS=true
+CLEAN_METADATA=true
 SHOW_FILE_STATS=true
 SHOW_FFMPEG_FPS=true
 LOG_FILE=""
@@ -201,7 +201,8 @@ Options:
   -d, --dry-run             Preview only
   --skip-hevc               HEVC files: copy video, encode audio only (default: on)
   --no-skip-hevc            Re-encode HEVC video instead of remuxing it
-  --include-extras          Include NC/Extras/Sample/Featurettes folders
+  --clean-metadata          Strip container metadata/chapters (default: on)
+  --keep-metadata           Preserve source container metadata/chapters
   --show-fps                Show live ffmpeg encoding FPS/speed (default: on)
   --no-fps                  Disable live ffmpeg FPS/speed progress
   --no-stats                Hide per-file source video stats section
@@ -219,7 +220,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 214k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 214k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata
 EOF
     exit "$exit_code"
 }
@@ -281,7 +282,8 @@ parse_args() {
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
             --no-skip-hevc) SKIP_HEVC=false; shift ;;
-            --include-extras) SKIP_EXTRAS=false; shift ;;
+            --clean-metadata) CLEAN_METADATA=true; shift ;;
+            --keep-metadata) CLEAN_METADATA=false; shift ;;
             --show-fps) SHOW_FFMPEG_FPS=true; shift ;;
             --no-fps) SHOW_FFMPEG_FPS=false; shift ;;
             --no-stats) SHOW_FILE_STATS=false; shift ;;
@@ -573,7 +575,7 @@ run_remux_attempt() {
 # subtitles/attachments are preserved by default.
 run_encode_attempt() {
     local input="$1" output="$2" video_stream_idx="$3" err_file="$4"
-    local -a audio_opts subtitle_opts attachment_opts
+    local -a audio_opts subtitle_opts attachment_opts metadata_opts
 
     if has_audio_stream "$input"; then
         audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
@@ -593,6 +595,12 @@ run_encode_attempt() {
         attachment_opts=()
     fi
 
+    if [[ "$CLEAN_METADATA" == true ]]; then
+        metadata_opts=(-map_metadata -1 -map_chapters -1)
+    else
+        metadata_opts=(-map_metadata 0 -map_chapters 0)
+    fi
+
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         run_ffmpeg_logged "$err_file" \
             ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
@@ -602,7 +610,7 @@ run_encode_attempt() {
                 -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
                 -dn -max_muxing_queue_size 4096 \
                 -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
-                -map_metadata 0 -map_chapters 0 \
+                "${metadata_opts[@]}" \
                 "$output"
     else
         run_ffmpeg_logged "$err_file" \
@@ -614,7 +622,7 @@ run_encode_attempt() {
                 -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
                 -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
                 -x265-params log-level=error \
-                -map_metadata 0 -map_chapters 0 \
+                "${metadata_opts[@]}" \
                 "$output"
     fi
 }
@@ -754,8 +762,8 @@ process_files() {
     log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (strict AAC, no source-audio fallback) | Keyframes: ${KEYFRAME_INT}f"
     [[ "$KEEP_SUBTITLES" == true ]] && log_info "Subtitles: Copy all subtitle streams (ASS and others preserved)"
     [[ "$KEEP_ATTACHMENTS" == true ]] && log_info "Attachments: Copy font/image attachments"
-    [[ "$SKIP_EXTRAS" == true ]] && log_info "Folder filter: skipping NC/Extras/Sample/Featurettes directories"
-    [[ "$SKIP_EXTRAS" == false ]] && log_info "Folder filter: including all directories"
+    [[ "$CLEAN_METADATA" == true ]] && log_info "Metadata: clean container metadata and chapters"
+    [[ "$CLEAN_METADATA" == false ]] && log_info "Metadata: preserve source container metadata and chapters"
     [[ "$SHOW_FFMPEG_FPS" == true ]] && log_info "FFmpeg progress: live FPS/speed enabled"
     [[ "$SHOW_FILE_STATS" == true ]] && log_info "File stats: source video resolution/bitrate section enabled"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
@@ -767,17 +775,6 @@ process_files() {
     # 3) otherwise transcode with encode_file
     for f in "${files[@]}"; do
         ((current++))
-        
-        # Skip files in NC/extras/sample folders
-        local dirpath
-        dirpath=$(dirname "$f")
-        local dirpath_lower="${dirpath,,}"
-        if [[ "$SKIP_EXTRAS" == true && "$dirpath_lower" =~ /(nc|ncop|nced|extras?|samples?|featurettes?)(/|$) ]]; then
-            log_debug "Skip (extras): $(basename "$f")"
-            ((skipped++))
-            csv_log_result "skipped" "skip" "extras_folder" "$f" "" "" "unknown" "unknown" "unknown"
-            continue
-        fi
         
         log_info "[$current/$total] $(basename "$f")"
         
@@ -817,15 +814,17 @@ process_files() {
                     local start_rm=$(date +%s)
                     local remux_err remux_ok=false
                     remux_err=$(mktemp)
+                    local remux_metadata_mode="strip"
+                    [[ "$CLEAN_METADATA" == false ]] && remux_metadata_mode="keep"
 
-                    # Attempt 1: all audio tracks + preserve metadata/chapters.
-                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "keep" "$remux_err"; then
+                    # Primary attempt follows the selected metadata mode.
+                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err"; then
                         remux_ok=true
-                    else
-                        log_warn "Remux retry: stripping metadata and chapters"
+                    elif [[ "$remux_metadata_mode" == "keep" ]]; then
+                        log_warn "Remux retry: switching to clean metadata mode"
                         rm -f "$out"
 
-                        # Attempt 2: all audio tracks + stripped metadata/chapters.
+                        # Fallback to clean metadata mode if preserve mode fails.
                         if run_remux_attempt "$f" "$out" "${video_idx:-0}" "strip" "$remux_err"; then
                             remux_ok=true
                         fi

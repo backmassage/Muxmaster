@@ -9,6 +9,7 @@ Current version: **1.0**
 - HEVC video encoding via VAAPI or CPU/x265
 - Strict AAC audio processing for all tracks (214k target)
 - HEVC remux mode by default (copy video + process audio)
+- Clean container metadata/chapters by default
 - Automatic TV/movie folder structure normalization
 - Stream-safe defaults for subtitles and attachment fonts
 
@@ -43,6 +44,9 @@ This project is actively tuned and validated on:
 - **HEVC skip mode**
   - Default behavior remuxes HEVC sources (copy video + process audio).
   - Use `--no-skip-hevc` to force HEVC re-encode.
+- **Metadata handling**
+  - Default behavior strips container metadata and chapters for cleaner outputs.
+  - Use `--keep-metadata` to preserve source container metadata/chapters.
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**
@@ -88,6 +92,7 @@ Typical anime/dual-audio remux workflow:
 | Standard encode pass (HEVC remux default) | `./Muxmaster.sh -m vaapi "/input" "/output"` |
 | CPU encode | `./Muxmaster.sh -m cpu "/input" "/output"` |
 | Force HEVC re-encode | `./Muxmaster.sh --no-skip-hevc "/input" "/output"` |
+| Preserve source metadata/chapters | `./Muxmaster.sh --keep-metadata "/input" "/output"` |
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
 | System diagnostics | `./Muxmaster.sh --check` |
@@ -110,7 +115,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `-d, --dry-run` | Preview planned operations only |
 | `--skip-hevc` | HEVC files: copy video, process audio (default behavior) |
 | `--no-skip-hevc` | Re-encode HEVC video instead of remuxing it |
-| `--include-extras` | Include files from `NC`/`Extras`/`Sample` folders |
+| `--clean-metadata` | Strip container metadata and chapters (default behavior) |
+| `--keep-metadata` | Preserve source container metadata and chapters |
 | `--show-fps` | Show live FFmpeg encoding FPS/speed progress (default: on) |
 | `--no-fps` | Disable live FFmpeg FPS/speed progress |
 | `--no-stats` | Hide per-file source video stats (resolution/bitrate) |
@@ -138,7 +144,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - If AAC fails on a file: file processing fails (**no audio-copy fallback**)
 - Subtitles: copied by default (ASS and others preserved)
 - Attachments: copied by default
-- Extras folders (`NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`) are skipped by default (`--include-extras` to include)
+- Container metadata/chapters: stripped by default (`--keep-metadata` to preserve)
 - FFmpeg FPS/speed live progress is on by default (`--no-fps` to disable)
 - Per-file source video stats are shown by default (`--no-stats` to hide)
 - CSV results: written by default to `<output>/encode-results-YYYYmmdd-HHMMSS.csv`
@@ -148,10 +154,6 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 Supported input extensions:
 
 - `mkv`, `mp4`, `avi`, `m4v`, `mov`, `wmv`, `flv`, `webm`, `ts`, `m2ts`
-
-By default, the script skips common extras/sample folders like:
-
-- `NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`
 
 ---
 
