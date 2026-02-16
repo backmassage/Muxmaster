@@ -19,9 +19,10 @@ AUDIO_CHANNELS=2
 AUDIO_BITRATE="192k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
-AUDIO_PROBE_DURATION="30"
 FFMPEG_LOGLEVEL="error"
 declare -a FFMPEG_PROGRESS_ARGS=()
+KEEP_SUBTITLES=true
+KEEP_ATTACHMENTS=true
 
 DRY_RUN=false
 SKIP_EXISTING=true
@@ -98,6 +99,8 @@ Options:
   -p, --preset <preset>     CPU preset (default: slow)
   -d, --dry-run             Preview only
   --skip-hevc               HEVC files: copy video, encode audio only (fast)
+  --no-subs                 Do not copy subtitle streams
+  --no-attachments          Do not copy attachment streams (fonts/images)
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
   --color                   Force colored logs
@@ -106,7 +109,7 @@ Options:
   -c, --check               System diagnostics
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> stereo AAC 192k, keyframes every 48 frames
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 192k (copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames
 EOF
     exit "$exit_code"
 }
@@ -120,6 +123,8 @@ parse_args() {
             -p|--preset) CPU_PRESET="$2"; shift 2 ;;
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
+            --no-subs) KEEP_SUBTITLES=false; shift ;;
+            --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
             --color) COLOR_MODE="always"; shift ;;
             --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
@@ -230,37 +235,6 @@ has_audio_stream() {
     [[ -n "$has_audio" ]]
 }
 
-get_audio_stream_indices() {
-    ffprobe -v error -select_streams a \
-        -show_entries stream=index -of csv=p=0 "$1" 2>/dev/null
-}
-
-audio_stream_transcode_test() {
-    local input="$1"
-    local stream_idx="$2"
-
-    ffmpeg -hide_banner -nostdin -loglevel error -xerror \
-        -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-        -i "$input" \
-        -map "0:${stream_idx}" \
-        -vn -sn -dn \
-        -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE" \
-        -t "$AUDIO_PROBE_DURATION" \
-        -f null - > /dev/null 2>&1
-}
-
-get_transcodable_audio_stream_indices() {
-    local input="$1"
-    local idx
-
-    while IFS= read -r idx; do
-        [[ -z "$idx" ]] && continue
-        if audio_stream_transcode_test "$input" "$idx"; then
-            echo "$idx"
-        fi
-    done < <(get_audio_stream_indices "$input")
-}
-
 get_primary_video_stream_index() {
     local idx codec attached
     while IFS=',' read -r idx codec attached; do
@@ -300,7 +274,7 @@ run_ffmpeg_logged() {
 run_remux_with_audio_opts() {
     local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
     shift 5
-    local -a audio_opts=("$@") metadata_opts
+    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts
 
     if [[ "$metadata_mode" == "strip" ]]; then
         metadata_opts=(-map_metadata -1 -map_chapters -1)
@@ -308,12 +282,24 @@ run_remux_with_audio_opts() {
         metadata_opts=(-map_metadata 0 -map_chapters 0)
     fi
 
+    if [[ "$KEEP_SUBTITLES" == true ]]; then
+        subtitle_opts=(-map 0:s? -c:s copy)
+    else
+        subtitle_opts=()
+    fi
+
+    if [[ "$KEEP_ATTACHMENTS" == true ]]; then
+        attachment_opts=(-map 0:t? -c:t copy)
+    else
+        attachment_opts=()
+    fi
+
     run_ffmpeg_logged "$err_file" \
         ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
             -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
             -i "$input" \
-            -map "0:${video_stream_idx}" "${audio_opts[@]}" \
-            -sn -dn -max_muxing_queue_size 4096 \
+            -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+            -dn -max_muxing_queue_size 4096 \
             -c:v copy \
             "${metadata_opts[@]}" \
             "$output"
@@ -324,8 +310,8 @@ run_remux_attempt() {
     local -a audio_opts
 
     if has_audio_stream "$input"; then
-        if [[ "$audio_mode" == "first" ]]; then
-            audio_opts=(-map 0:a:0? -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+        if [[ "$audio_mode" == "copy" ]]; then
+            audio_opts=(-map 0:a -c:a copy)
         else
             audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
         fi
@@ -334,6 +320,58 @@ run_remux_attempt() {
     fi
 
     run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$metadata_mode" "$err_file" "${audio_opts[@]}"
+}
+
+run_encode_attempt() {
+    local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" err_file="$5"
+    local -a audio_opts subtitle_opts attachment_opts
+
+    if has_audio_stream "$input"; then
+        if [[ "$audio_mode" == "copy" ]]; then
+            audio_opts=(-map 0:a -c:a copy)
+        else
+            audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+        fi
+    else
+        audio_opts=(-an)
+    fi
+
+    if [[ "$KEEP_SUBTITLES" == true ]]; then
+        subtitle_opts=(-map 0:s? -c:s copy)
+    else
+        subtitle_opts=()
+    fi
+
+    if [[ "$KEEP_ATTACHMENTS" == true ]]; then
+        attachment_opts=(-map 0:t? -c:t copy)
+    else
+        attachment_opts=()
+    fi
+
+    if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+        run_ffmpeg_logged "$err_file" \
+            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
+                -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
+                -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+                -dn -max_muxing_queue_size 4096 \
+                -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
+                -map_metadata 0 -map_chapters 0 \
+                "$output"
+    else
+        run_ffmpeg_logged "$err_file" \
+            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                -i "$input" \
+                -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+                -dn -max_muxing_queue_size 4096 \
+                -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
+                -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
+                -x265-params log-level=error \
+                -map_metadata 0 -map_chapters 0 \
+                "$output"
+    fi
 }
 
 # Parse filename - extracts show name, season, episode
@@ -421,38 +459,18 @@ encode_file() {
     start=$(date +%s)
     local ffmpeg_err
     ffmpeg_err=$(mktemp)
-    local -a audio_opts
 
-    if has_audio_stream "$input"; then
-        audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
-    else
-        audio_opts=(-an)
-        log_debug "No audio stream detected: $(basename "$input")"
-    fi
-    
-    if [[ "$ENCODER_MODE" == "vaapi" ]]; then
-        run_ffmpeg_logged "$ffmpeg_err" \
-            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
-                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-                -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
-                -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
-                -map "0:${video_stream_idx}" "${audio_opts[@]}" \
-                -sn -dn -max_muxing_queue_size 4096 \
-                -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
-                -map_metadata 0 -map_chapters 0 \
-                "$output" || result=$?
-    else
-        run_ffmpeg_logged "$ffmpeg_err" \
-            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
-                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-                -i "$input" \
-                -map "0:${video_stream_idx}" "${audio_opts[@]}" \
-                -sn -dn -max_muxing_queue_size 4096 \
-                -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
-                -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
-                -x265-params log-level=error \
-                -map_metadata 0 -map_chapters 0 \
-                "$output" || result=$?
+    if ! run_encode_attempt "$input" "$output" "$video_stream_idx" "aac" "$ffmpeg_err"; then
+        result=$?
+        if has_audio_stream "$input"; then
+            log_warn "Encode retry: copying source audio (AAC failed)"
+            rm -f "$output"
+            if run_encode_attempt "$input" "$output" "$video_stream_idx" "copy" "$ffmpeg_err"; then
+                result=0
+            else
+                result=$?
+            fi
+        fi
     fi
     
     local elapsed=$(( $(date +%s) - start ))
@@ -491,7 +509,9 @@ process_files() {
     local profile_label="main10"
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
-    log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} | Keyframes: ${KEYFRAME_INT}f"
+    log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (copy fallback preserves all tracks) | Keyframes: ${KEYFRAME_INT}f"
+    [[ "$KEEP_SUBTITLES" == true ]] && log_info "Subtitles: Copy all subtitle streams (ASS and others preserved)"
+    [[ "$KEEP_ATTACHMENTS" == true ]] && log_info "Attachments: Copy font/image attachments"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     echo
     
@@ -534,7 +554,6 @@ process_files() {
                 else
                     local start_rm=$(date +%s)
                     local remux_err remux_ok=false
-                    local -a good_audio_idxs good_audio_opts
                     remux_err=$(mktemp)
 
                     # Attempt 1: all audio tracks + preserve metadata/chapters
@@ -547,39 +566,13 @@ process_files() {
                         # Attempt 2: all audio tracks + stripped metadata/chapters
                         if run_remux_attempt "$f" "$out" "${video_idx:-0}" "all" "strip" "$remux_err"; then
                             remux_ok=true
-                        elif has_audio_stream "$f"; then
-                            log_warn "Remux retry: first audio track only"
-                            rm -f "$out"
-
-                            # Attempt 3: first audio only + stripped metadata/chapters
-                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "first" "strip" "$remux_err"; then
-                                remux_ok=true
-                            fi
-                        fi
-                    fi
-
-                    if [[ "$remux_ok" != true ]] && has_audio_stream "$f"; then
-                        mapfile -t good_audio_idxs < <(get_transcodable_audio_stream_indices "$f")
-                        if (( ${#good_audio_idxs[@]} > 0 )); then
-                            log_warn "Remux retry: only AAC-safe audio streams (${#good_audio_idxs[@]})"
-                            rm -f "$out"
-
-                            good_audio_opts=()
-                            for aidx in "${good_audio_idxs[@]}"; do
-                                good_audio_opts+=(-map "0:${aidx}")
-                            done
-                            good_audio_opts+=(-c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
-
-                            if run_remux_with_audio_opts "$f" "$out" "${video_idx:-0}" "strip" "$remux_err" "${good_audio_opts[@]}"; then
-                                remux_ok=true
-                            fi
                         fi
                     fi
 
                     if [[ "$remux_ok" != true ]] && has_audio_stream "$f"; then
                         log_warn "Remux fallback: copying source audio (AAC failed)"
                         rm -f "$out"
-                        if run_remux_with_audio_opts "$f" "$out" "${video_idx:-0}" "strip" "$remux_err" -map 0:a? -c:a copy; then
+                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "copy" "strip" "$remux_err"; then
                             remux_ok=true
                         fi
                     fi
