@@ -354,18 +354,28 @@ get_codec() {
 
 # Return success if at least one audio stream exists.
 has_audio_stream() {
-    local has_audio
-    has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=index \
-        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | sed -n '1p')
-    [[ -n "$has_audio" ]]
+    local count
+    count=$(get_stream_count "a" "$1")
+    [[ "$count" -gt 0 ]]
 }
 
 # Return success if at least one subtitle stream exists.
 has_subtitle_stream() {
-    local has_sub
-    has_sub=$(ffprobe -v error -select_streams s:0 -show_entries stream=index \
-        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | sed -n '1p')
-    [[ -n "$has_sub" ]]
+    local count
+    count=$(get_stream_count "s" "$1")
+    [[ "$count" -gt 0 ]]
+}
+
+# Return stream count for a selector (e.g., a, s, v).
+get_stream_count() {
+    local selector="$1"
+    local input="$2"
+    local count
+
+    count=$(ffprobe -v error -select_streams "$selector" -show_entries stream=index \
+        -of csv=p=0 "$input" 2>/dev/null | sed '/^[[:space:]]*$/d' | wc -l | tr -d '[:space:]')
+    [[ "$count" =~ ^[0-9]+$ ]] || count=0
+    printf '%s\n' "$count"
 }
 
 # Return the first non-attached-pic video stream index.
@@ -503,6 +513,7 @@ run_remux_with_audio_opts() {
     local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_subtitles="$6" include_attachments="$7" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     shift 9
     local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts
+    local audio_stream_count subtitle_stream_count i
 
     if [[ "$timestamp_fix" == true ]]; then
         pre_input_opts=(-fflags +genpts)
@@ -532,11 +543,20 @@ run_remux_with_audio_opts() {
 
     # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
     stream_metadata_opts=()
-    if has_audio_stream "$input"; then
-        stream_metadata_opts+=(-map_metadata:s:a 0:s:a)
+    audio_stream_count=$(get_stream_count "a" "$input")
+    if [[ "$audio_stream_count" -gt 0 ]]; then
+        for ((i=0; i<audio_stream_count; i++)); do
+            stream_metadata_opts+=(-map_metadata:s:a:"$i" 0:s:a:"$i")
+        done
     fi
-    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]] && has_subtitle_stream "$input"; then
-        stream_metadata_opts+=(-map_metadata:s:s 0:s:s)
+
+    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
+        subtitle_stream_count=$(get_stream_count "s" "$input")
+        if [[ "$subtitle_stream_count" -gt 0 ]]; then
+            for ((i=0; i<subtitle_stream_count; i++)); do
+                stream_metadata_opts+=(-map_metadata:s:s:"$i" 0:s:s:"$i")
+            done
+        fi
     fi
 
     run_ffmpeg_logged "$err_file" \
@@ -574,6 +594,7 @@ run_remux_attempt() {
 run_encode_attempt() {
     local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" metadata_mode="${6:-}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts
+    local audio_stream_count subtitle_stream_count i
 
     if has_audio_stream "$input"; then
         audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
@@ -613,11 +634,20 @@ run_encode_attempt() {
 
     # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
     stream_metadata_opts=()
-    if has_audio_stream "$input"; then
-        stream_metadata_opts+=(-map_metadata:s:a 0:s:a)
+    audio_stream_count=$(get_stream_count "a" "$input")
+    if [[ "$audio_stream_count" -gt 0 ]]; then
+        for ((i=0; i<audio_stream_count; i++)); do
+            stream_metadata_opts+=(-map_metadata:s:a:"$i" 0:s:a:"$i")
+        done
     fi
-    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]] && has_subtitle_stream "$input"; then
-        stream_metadata_opts+=(-map_metadata:s:s 0:s:s)
+
+    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
+        subtitle_stream_count=$(get_stream_count "s" "$input")
+        if [[ "$subtitle_stream_count" -gt 0 ]]; then
+            for ((i=0; i<subtitle_stream_count; i++)); do
+                stream_metadata_opts+=(-map_metadata:s:s:"$i" 0:s:s:"$i")
+            done
+        fi
     fi
 
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then

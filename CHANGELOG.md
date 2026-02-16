@@ -25,3 +25,4 @@ All notable changes to this project are documented in this file.
   - mux queue overflow (`Too many packets buffered for output stream`),
   - timestamp discontinuity / non-monotonic DTS issues.
 - Added keep-metadata to clean-metadata fallback for per-file robustness.
+- Preserved distinct audio/subtitle track titles per stream index (fixes dual-audio name loss).

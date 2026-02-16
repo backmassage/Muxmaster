@@ -65,7 +65,7 @@ Use `scripts/helpers/` for helper `.sh` utilities.
 - **Audio handling**
   - Tries to convert **all audio tracks** to AAC stereo 224k.
   - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
-  - Preserves original audio track metadata (title/language tags).
+  - Preserves original audio track metadata per track (title/language tags), including multi/dual-audio releases.
 - **Subtitle handling**
   - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
   - If subtitle mux/copy fails, the file is retried without subtitles.
