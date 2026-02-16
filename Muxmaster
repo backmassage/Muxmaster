@@ -37,6 +37,7 @@ SKIP_EXISTING=true
 SKIP_HEVC=false
 SKIP_EXTRAS=true
 SHOW_FILE_STATS=true
+SHOW_FFMPEG_FPS=false
 LOG_FILE=""
 CSV_LOG_ENABLED=true
 CSV_LOG_FILE=""
@@ -197,6 +198,7 @@ Options:
   -d, --dry-run             Preview only
   --skip-hevc               HEVC files: copy video, encode audio only (fast)
   --include-extras          Include NC/Extras/Sample/Featurettes folders
+  --show-fps                Show live ffmpeg encoding FPS/speed
   --no-stats                Hide per-file source video stats section
   --no-subs                 Do not copy subtitle streams
   --no-attachments          Do not copy attachment streams (fonts/images)
@@ -269,6 +271,7 @@ parse_args() {
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
             --include-extras) SKIP_EXTRAS=false; shift ;;
+            --show-fps) SHOW_FFMPEG_FPS=true; shift ;;
             --no-stats) SHOW_FILE_STATS=false; shift ;;
             --no-subs) KEEP_SUBTITLES=false; shift ;;
             --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
@@ -324,9 +327,13 @@ parse_args() {
 
     if [[ "$VERBOSE" == true ]]; then
         FFMPEG_LOGLEVEL="info"
-        FFMPEG_PROGRESS_ARGS=(-stats -stats_period 1)
     else
         FFMPEG_LOGLEVEL="error"
+    fi
+
+    if [[ "$VERBOSE" == true || "$SHOW_FFMPEG_FPS" == true ]]; then
+        FFMPEG_PROGRESS_ARGS=(-stats -stats_period 1)
+    else
         FFMPEG_PROGRESS_ARGS=()
     fi
 }
@@ -483,12 +490,12 @@ get_primary_video_bitrate_label() {
 }
 
 # Execute ffmpeg and capture stderr to an error file.
-# In verbose mode stderr is mirrored to terminal; otherwise it stays quiet.
+# In verbose mode (or --show-fps), stderr is mirrored to terminal.
 run_ffmpeg_logged() {
     local err_file="$1"
     shift
 
-    if [[ "$VERBOSE" == true ]]; then
+    if [[ "$VERBOSE" == true || "$SHOW_FFMPEG_FPS" == true ]]; then
         "$@" 2> >(tee "$err_file" >&2)
     else
         "$@" 2>"$err_file"
@@ -736,6 +743,7 @@ process_files() {
     [[ "$KEEP_ATTACHMENTS" == true ]] && log_info "Attachments: Copy font/image attachments"
     [[ "$SKIP_EXTRAS" == true ]] && log_info "Folder filter: skipping NC/Extras/Sample/Featurettes directories"
     [[ "$SKIP_EXTRAS" == false ]] && log_info "Folder filter: including all directories"
+    [[ "$SHOW_FFMPEG_FPS" == true ]] && log_info "FFmpeg progress: live FPS/speed enabled"
     [[ "$SHOW_FILE_STATS" == true ]] && log_info "File stats: source video resolution/bitrate section enabled"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     echo
