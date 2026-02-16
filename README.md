@@ -33,6 +33,8 @@ The script is designed to be resilient with mixed anime/TV/movie files, includin
   - Quiet FFmpeg output by default, detailed FFmpeg output with `-v`.
 - **Color support**
   - Auto color in TTY, plus `--color` / `--no-color`.
+- **CSV result reporting**
+  - Writes per-file results (encoded/remuxed/skipped/failed) with rename tracking.
 
 ---
 
@@ -83,6 +85,8 @@ jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-attachments` | Do not copy attachment streams |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
+| `--csv-log <path>` | Write per-file results CSV to a custom path |
+| `--no-csv-log` | Disable CSV result logging |
 | `--` | End options parsing (use before paths starting with `-`) |
 | `--color` | Force colored logs |
 | `--no-color` | Disable colored logs |
@@ -101,6 +105,7 @@ jellyfin-encode.sh [OPTIONS] <input_dir> <output_dir>
 - Subtitles: copied by default (ASS and others preserved)
 - Attachments: copied by default
 - Extras folders (`NC`, `NCOP`, `NCED`, `Extras`, `Sample`, `Featurettes`) are skipped by default (`--include-extras` to include)
+- CSV results: written by default to `<output>/encode-results-YYYYmmdd-HHMMSS.csv`
 - Existing output files: skipped by default (`--force` to overwrite)
 
 Supported input extensions:
@@ -169,6 +174,12 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ./jellyfin-encode.sh -v -m cpu "/media/input" "/media/output"
 ```
 
+### Custom CSV results path
+
+```bash
+./jellyfin-encode.sh --csv-log "/media/output/encode-report.csv" "/media/input" "/media/output"
+```
+
 ### System diagnostics only
 
 ```bash
@@ -204,5 +215,6 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ## Notes
 
 - Logs printed with colors are for terminal readability; log files remain plain text.
+- CSV rows include action (`encode`/`remux`), status, source/destination paths, and a `renamed` column.
 - For large libraries, start with a small subset or `--dry-run` first.
 

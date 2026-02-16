@@ -37,6 +37,8 @@ SKIP_EXISTING=true
 SKIP_HEVC=false
 SKIP_EXTRAS=true
 LOG_FILE=""
+CSV_LOG_ENABLED=true
+CSV_LOG_FILE=""
 VERBOSE=false
 CHECK_ONLY=false
 QUALITY_OVERRIDE=""
@@ -47,6 +49,7 @@ OUTPUT_DIR=""
 
 # ANSI color palette (initialized by init_colors)
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
+CSV_LOG_ACTIVE=false
 
 # Initialize color variables according to --color/--no-color/auto rules.
 init_colors() {
@@ -98,6 +101,61 @@ log_warn()    { log_line "WARN" "$YELLOW" "$1"; }
 log_error()   { log_line "ERROR" "$RED" "$1"; }
 log_debug()   { [[ "$VERBOSE" == true ]] && log_line "DEBUG" "$CYAN" "$1"; }
 
+# Escape one CSV field and wrap it in quotes.
+csv_escape_field() {
+    local value="$1"
+    value="${value//$'\r'/ }"
+    value="${value//$'\n'/ }"
+    value="${value//\"/\"\"}"
+    printf '"%s"' "$value"
+}
+
+# Initialize CSV report output.
+init_csv_log() {
+    [[ "$CSV_LOG_ENABLED" != true ]] && return 0
+
+    if [[ -z "$CSV_LOG_FILE" ]]; then
+        CSV_LOG_FILE="$OUTPUT_DIR/encode-results-$(date '+%Y%m%d-%H%M%S').csv"
+    fi
+
+    local csv_dir
+    csv_dir="$(dirname "$CSV_LOG_FILE")"
+    mkdir -p "$csv_dir" || { log_error "Cannot create CSV directory: $csv_dir"; exit 1; }
+
+    : > "$CSV_LOG_FILE" || { log_error "Cannot write CSV log file: $CSV_LOG_FILE"; exit 1; }
+    printf '%s\n' "timestamp,status,action,reason,input_path,output_path,input_name,output_name,renamed,input_video_codec,media_type" >> "$CSV_LOG_FILE"
+    CSV_LOG_ACTIVE=true
+}
+
+# Append one per-file result row to the CSV report.
+csv_log_result() {
+    [[ "$CSV_LOG_ACTIVE" == true ]] || return 0
+
+    local status="$1" action="$2" reason="$3" input_path="$4" output_path="$5" input_codec="$6" media_type="$7"
+    local timestamp input_name="" output_name="" renamed="no"
+    timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
+
+    [[ -n "$input_path" ]] && input_name="$(basename "$input_path")"
+    [[ -n "$output_path" ]] && output_name="$(basename "$output_path")"
+    [[ -n "$input_name" && -n "$output_name" && "$input_name" != "$output_name" ]] && renamed="yes"
+    [[ -z "$media_type" ]] && media_type="unknown"
+    [[ -z "$input_codec" ]] && input_codec="unknown"
+
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+        "$(csv_escape_field "$timestamp")" \
+        "$(csv_escape_field "$status")" \
+        "$(csv_escape_field "$action")" \
+        "$(csv_escape_field "$reason")" \
+        "$(csv_escape_field "$input_path")" \
+        "$(csv_escape_field "$output_path")" \
+        "$(csv_escape_field "$input_name")" \
+        "$(csv_escape_field "$output_name")" \
+        "$(csv_escape_field "$renamed")" \
+        "$(csv_escape_field "$input_codec")" \
+        "$(csv_escape_field "$media_type")" \
+        >> "$CSV_LOG_FILE"
+}
+
 # Print CLI help and exit with the requested code.
 usage() {
     local exit_code="${1:-0}"
@@ -115,6 +173,8 @@ Options:
   --no-attachments          Do not copy attachment streams (fonts/images)
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
+  --csv-log <path>          Write per-file results CSV (default: output dir)
+  --no-csv-log              Disable CSV result logging
   --                        End options parsing
   --color                   Force colored logs
   --no-color                Disable colored logs
@@ -191,6 +251,13 @@ parse_args() {
                 LOG_FILE="$2"
                 shift 2
                 ;;
+            --csv-log)
+                require_option_value "$1" "${2-}"
+                CSV_LOG_FILE="$2"
+                CSV_LOG_ENABLED=true
+                shift 2
+                ;;
+            --no-csv-log) CSV_LOG_ENABLED=false; shift ;;
             -f|--force) SKIP_EXISTING=false; shift ;;
             -h|--help) usage 0 ;;
             -*) log_error "Unknown: $1"; usage 1 ;;
@@ -599,6 +666,7 @@ process_files() {
         if [[ "$SKIP_EXTRAS" == true && "$dirpath_lower" =~ /(nc|ncop|nced|extras?|samples?|featurettes?)(/|$) ]]; then
             log_debug "Skip (extras): $(basename "$f")"
             ((skipped++))
+            csv_log_result "skipped" "skip" "extras_folder" "$f" "" "" "unknown"
             continue
         fi
         
@@ -619,6 +687,7 @@ process_files() {
                 if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
                     log_warn "Skip (exists): $(basename "$out")"
                     ((skipped++))
+                    csv_log_result "skipped" "remux" "output_exists" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
                     echo
                     continue
                 fi
@@ -627,6 +696,7 @@ process_files() {
                 mkdir -p "$(dirname "$out")"
                 if [[ "$DRY_RUN" == true ]]; then
                     log_success "[DRY] Would remux"
+                    csv_log_result "dry_run" "remux" "planned" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
                 else
                     local start_rm=$(date +%s)
                     local remux_err remux_ok=false
@@ -654,6 +724,7 @@ process_files() {
                         rm -f "$remux_err"
                         rm -f "$out"
                         ((failed++))
+                        csv_log_result "failed" "remux" "ffmpeg_error" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
                         echo
                         continue
                     fi
@@ -665,6 +736,7 @@ process_files() {
                     out_sz=$(stat -c%s "$out" 2>/dev/null) || out_sz=0
                     [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=100
                     log_success "Remuxed in ${elapsed_rm}s (${ratio}% of original)"
+                    csv_log_result "success" "remux" "completed" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
                 fi
                 ((encoded++))
                 echo
@@ -675,20 +747,28 @@ process_files() {
         if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
             log_warn "Skip (exists)"
             ((skipped++))
+            csv_log_result "skipped" "encode" "output_exists" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
             echo
             continue
         fi
         
         if encode_file "$f" "$out" "${video_idx:-0}"; then
             ((encoded++))
+            if [[ "$DRY_RUN" == true ]]; then
+                csv_log_result "dry_run" "encode" "planned" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+            else
+                csv_log_result "success" "encode" "completed" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
+            fi
         else
             ((failed++))
+            csv_log_result "failed" "encode" "ffmpeg_error" "$f" "$out" "$video_codec" "$MEDIA_TYPE"
         fi
         echo
     done
     
     log_info "=============================="
     log_info "Done: $encoded encoded, $skipped skipped, $failed failed"
+    [[ "$CSV_LOG_ACTIVE" == true ]] && log_info "CSV results: $CSV_LOG_FILE"
 }
 
 # Lightweight environment diagnostics for quick troubleshooting.
@@ -745,6 +825,7 @@ main() {
     echo
     
     check_deps
+    init_csv_log
     process_files
 }
 
