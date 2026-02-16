@@ -43,6 +43,7 @@ VERBOSE=false
 CHECK_ONLY=false
 QUALITY_OVERRIDE=""
 COLOR_MODE="auto"
+STRICT_MODE=false
 
 INPUT_DIR=""
 OUTPUT_DIR=""
@@ -153,6 +154,7 @@ Options:
   --no-stats                Hide per-file source video stats section
   --no-subs                 Do not copy subtitle streams
   --no-attachments          Do not copy attachment streams (fonts/images)
+  --strict                  Disable automatic ffmpeg retry fallbacks
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
   --                        End options parsing
@@ -232,6 +234,7 @@ parse_args() {
             --no-stats) SHOW_FILE_STATS=false; shift ;;
             --no-subs) KEEP_SUBTITLES=false; shift ;;
             --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
+            --strict) STRICT_MODE=true; shift ;;
             --color) COLOR_MODE="always"; shift ;;
             --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
@@ -721,62 +724,64 @@ encode_file() {
     else
         result=$?
 
-        if [[ "$encode_metadata_mode" == "keep" ]]; then
-            log_warn "Encode retry: switching to clean metadata mode"
-            encode_metadata_mode="strip"
-            rm -f "$output"
-            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                result=0
-            else
-                result=$?
+        if [[ "$STRICT_MODE" != true ]]; then
+            if [[ "$encode_metadata_mode" == "keep" ]]; then
+                log_warn "Encode retry: switching to clean metadata mode"
+                encode_metadata_mode="strip"
+                rm -f "$output"
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
             fi
-        fi
 
-        if [[ "$result" -ne 0 && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$ffmpeg_err"; then
-            log_warn "Encode retry: source attachment tag issue; retrying without attachments"
-            rm -f "$output"
-            encode_include_attachments=false
+            if [[ "$result" -ne 0 && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$ffmpeg_err"; then
+                log_warn "Encode retry: source attachment tag issue; retrying without attachments"
+                rm -f "$output"
+                encode_include_attachments=false
 
-            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                result=0
-            else
-                result=$?
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
             fi
-        fi
 
-        if [[ "$result" -ne 0 && "$KEEP_SUBTITLES" == true && "$encode_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$ffmpeg_err"; then
-            log_warn "Encode retry: subtitle stream mux issue; retrying without subtitles"
-            rm -f "$output"
-            encode_include_subtitles=false
+            if [[ "$result" -ne 0 && "$KEEP_SUBTITLES" == true && "$encode_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$ffmpeg_err"; then
+                log_warn "Encode retry: subtitle stream mux issue; retrying without subtitles"
+                rm -f "$output"
+                encode_include_subtitles=false
 
-            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                result=0
-            else
-                result=$?
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
             fi
-        fi
 
-        if [[ "$result" -ne 0 && "$encode_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$ffmpeg_err"; then
-            log_warn "Encode retry: increasing mux queue size to 16384"
-            rm -f "$output"
-            encode_muxing_queue_size=16384
+            if [[ "$result" -ne 0 && "$encode_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$ffmpeg_err"; then
+                log_warn "Encode retry: increasing mux queue size to 16384"
+                rm -f "$output"
+                encode_muxing_queue_size=16384
 
-            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                result=0
-            else
-                result=$?
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
             fi
-        fi
 
-        if [[ "$result" -ne 0 && "$encode_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$ffmpeg_err"; then
-            log_warn "Encode retry: timestamp discontinuity detected; retrying with genpts"
-            rm -f "$output"
-            encode_timestamp_fix=true
+            if [[ "$result" -ne 0 && "$encode_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$ffmpeg_err"; then
+                log_warn "Encode retry: timestamp discontinuity detected; retrying with genpts"
+                rm -f "$output"
+                encode_timestamp_fix=true
 
-            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                result=0
-            else
-                result=$?
+                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+                    result=0
+                else
+                    result=$?
+                fi
             fi
         fi
     fi
@@ -825,6 +830,7 @@ process_files() {
     [[ "$SHOW_FFMPEG_FPS" == true ]] && log_info "FFmpeg progress: live FPS/speed enabled"
     [[ "$SHOW_FILE_STATS" == true ]] && log_info "File stats: source video resolution/bitrate section enabled"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
+    [[ "$STRICT_MODE" == true ]] && log_info "Retry policy: strict mode enabled (automatic retries disabled)"
     echo
     
     # Main per-file pipeline:
@@ -882,54 +888,56 @@ process_files() {
                         remux_ok=true
                     fi
 
-                    if [[ "$remux_ok" != true && "$remux_metadata_mode" == "keep" ]]; then
-                        log_warn "Remux retry: switching to clean metadata mode"
-                        remux_metadata_mode="strip"
-                        rm -f "$out"
+                    if [[ "$STRICT_MODE" != true ]]; then
+                        if [[ "$remux_ok" != true && "$remux_metadata_mode" == "keep" ]]; then
+                            log_warn "Remux retry: switching to clean metadata mode"
+                            remux_metadata_mode="strip"
+                            rm -f "$out"
 
-                        # Fallback to clean metadata mode if preserve mode fails.
-                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                            remux_ok=true
+                            # Fallback to clean metadata mode if preserve mode fails.
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
                         fi
-                    fi
 
-                    if [[ "$remux_ok" != true && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$remux_err"; then
-                        log_warn "Remux retry: source attachment tag issue; retrying without attachments"
-                        rm -f "$out"
-                        remux_include_attachments=false
+                        if [[ "$remux_ok" != true && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$remux_err"; then
+                            log_warn "Remux retry: source attachment tag issue; retrying without attachments"
+                            rm -f "$out"
+                            remux_include_attachments=false
 
-                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                            remux_ok=true
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
                         fi
-                    fi
 
-                    if [[ "$remux_ok" != true && "$KEEP_SUBTITLES" == true && "$remux_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$remux_err"; then
-                        log_warn "Remux retry: subtitle stream mux issue; retrying without subtitles"
-                        rm -f "$out"
-                        remux_include_subtitles=false
+                        if [[ "$remux_ok" != true && "$KEEP_SUBTITLES" == true && "$remux_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$remux_err"; then
+                            log_warn "Remux retry: subtitle stream mux issue; retrying without subtitles"
+                            rm -f "$out"
+                            remux_include_subtitles=false
 
-                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                            remux_ok=true
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
                         fi
-                    fi
 
-                    if [[ "$remux_ok" != true && "$remux_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$remux_err"; then
-                        log_warn "Remux retry: increasing mux queue size to 16384"
-                        rm -f "$out"
-                        remux_muxing_queue_size=16384
+                        if [[ "$remux_ok" != true && "$remux_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$remux_err"; then
+                            log_warn "Remux retry: increasing mux queue size to 16384"
+                            rm -f "$out"
+                            remux_muxing_queue_size=16384
 
-                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                            remux_ok=true
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
                         fi
-                    fi
 
-                    if [[ "$remux_ok" != true && "$remux_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$remux_err"; then
-                        log_warn "Remux retry: timestamp discontinuity detected; retrying with genpts"
-                        rm -f "$out"
-                        remux_timestamp_fix=true
+                        if [[ "$remux_ok" != true && "$remux_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$remux_err"; then
+                            log_warn "Remux retry: timestamp discontinuity detected; retrying with genpts"
+                            rm -f "$out"
+                            remux_timestamp_fix=true
 
-                        if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                            remux_ok=true
+                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                                remux_ok=true
+                            fi
                         fi
                     fi
 

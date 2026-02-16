@@ -1,6 +1,6 @@
 #!/bin/bash
 # Arch Linux - Setup /dev/sda as HarleyBox SSD dump drive
-# EXT4, SSD optimized, world-writable
+# EXT4, SSD optimized, nofail auto-mount
 # WARNING: This will erase ALL data on /dev/sda
 
 DRIVE="/dev/sda"
@@ -32,16 +32,16 @@ echo "Formatting $PART as EXT4 (SSD optimized)..."
 sudo mkfs.ext4 -F -L $LABEL -E stride=128,stripe-width=128 -O ^has_journal -m 0 $PART
 
 # 5️⃣ Create mount point and mount
-echo "Mounting $PART at $MOUNTPOINT with world-writable permissions..."
+echo "Mounting $PART at $MOUNTPOINT..."
 sudo mkdir -p $MOUNTPOINT
-sudo mount -o rw,umask=000,discard $PART $MOUNTPOINT
+sudo mount -o rw,discard $PART $MOUNTPOINT
 
 # 6️⃣ Add to /etc/fstab for auto-mount
-FSTAB_ENTRY="LABEL=$LABEL  $MOUNTPOINT  ext4  defaults,umask=000,discard  0 2"
+FSTAB_ENTRY="LABEL=$LABEL  $MOUNTPOINT  ext4  defaults,nofail,discard  0 2"
 if ! grep -q "$LABEL" /etc/fstab; then
     echo "Adding to /etc/fstab for auto-mount..."
     echo "$FSTAB_ENTRY" | sudo tee -a /etc/fstab
 fi
 
 echo "✅ HarleyBox setup complete!"
-echo "📂 Mounted at $MOUNTPOINT, world-writable, SSD optimized EXT4."
+echo "📂 Mounted at $MOUNTPOINT, SSD optimized EXT4 (nofail in /etc/fstab)."

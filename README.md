@@ -34,12 +34,12 @@ This project is actively tuned and validated on:
 ├── Muxmaster.sh
 └── scripts/
     └── helpers/
+        ├── harleybox_auto.sh
         └── extra/
-            ├── .gitkeep
-            └── harleybox_auto.sh
+            └── .gitkeep
 ```
 
-Use `scripts/helpers/extra/` for additional helper `.sh` utilities.
+Use `scripts/helpers/` for helper `.sh` utilities.
 
 ---
 
@@ -69,6 +69,7 @@ Use `scripts/helpers/extra/` for additional helper `.sh` utilities.
 - **Mux/timestamp resilience**
   - Retries with a larger mux queue if FFmpeg reports packet buffer overflow.
   - Retries with generated timestamps when FFmpeg reports non-monotonic DTS.
+  - Use `--strict` to disable all automatic per-file retry fallbacks.
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**
@@ -113,6 +114,7 @@ Typical anime/dual-audio remux workflow:
 | CPU encode | `./Muxmaster.sh -m cpu "/input" "/output"` |
 | Force HEVC re-encode | `./Muxmaster.sh --no-skip-hevc "/input" "/output"` |
 | Preserve source metadata/chapters | `./Muxmaster.sh --keep-metadata "/input" "/output"` |
+| Disable automatic retry fallbacks | `./Muxmaster.sh --strict "/input" "/output"` |
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
 | System diagnostics | `./Muxmaster.sh --check` |
@@ -142,6 +144,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-stats` | Hide per-file source video stats (resolution/bitrate) |
 | `--no-subs` | Do not copy subtitle streams |
 | `--no-attachments` | Do not copy attachment streams |
+| `--strict` | Disable automatic FFmpeg retry fallbacks (fail fast per file) |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
 | `--` | End options parsing (use before paths starting with `-`) |
@@ -167,6 +170,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - Per-file source video stats are shown by default (`--no-stats` to hide)
 - Existing output files: skipped by default (`--force` to overwrite)
 - HEVC sources: remux by default (`--no-skip-hevc` to force HEVC re-encode)
+- Automatic FFmpeg fallback retries are enabled by default (`--strict` disables them)
 
 Supported input extensions:
 
@@ -251,6 +255,11 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ---
 
 ## Troubleshooting
+
+### Need hard-fail behavior for debugging
+
+- Use `--strict` to disable all automatic per-file retry fallbacks.
+- This is useful when you want the first FFmpeg failure to be the only failure shown.
 
 ### "No VAAPI device"
 
