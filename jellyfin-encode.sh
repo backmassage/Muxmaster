@@ -167,6 +167,12 @@ get_codec() {
     ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1" 2>/dev/null | head -1
 }
 
+has_audio_stream() {
+    local has_audio
+    has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 "$1" 2>/dev/null | head -1)
+    [[ -n "$has_audio" ]]
+}
+
 # Parse filename - extracts show name, season, episode
 parse_filename() {
     local filename="$1"
@@ -252,24 +258,32 @@ encode_file() {
     start=$(date +%s)
     local ffmpeg_err
     ffmpeg_err=$(mktemp)
+    local -a audio_opts
+
+    if has_audio_stream "$input"; then
+        audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
+    else
+        audio_opts=(-an)
+        log_debug "No audio stream detected: $(basename "$input")"
+    fi
     
     # Run ffmpeg with visible progress (-stats shows frame/speed on stderr)
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         ffmpeg -hide_banner -y -stats \
             -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
             -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
-            -map 0:v:0 -map 0:a? \
+            -map 0:v:0 "${audio_opts[@]}" \
             -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
-            -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE" -map_metadata 0 \
+            -map_metadata 0 \
             "$output" 2> >(tee "$ffmpeg_err" >&2) || result=$?
     else
         ffmpeg -hide_banner -y -stats \
             -i "$input" \
-            -map 0:v:0 -map 0:a? \
+            -map 0:v:0 "${audio_opts[@]}" \
             -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
             -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
             -x265-params log-level=error \
-            -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE" -map_metadata 0 \
+            -map_metadata 0 \
             "$output" 2> >(tee "$ffmpeg_err" >&2) || result=$?
     fi
     
@@ -345,13 +359,20 @@ process_files() {
                     log_success "[DRY] Would remux"
                 else
                     local start_rm=$(date +%s)
+                    local -a remux_audio_opts
+
+                    if has_audio_stream "$f"; then
+                        remux_audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE")
+                    else
+                        remux_audio_opts=(-an)
+                        log_debug "No audio stream detected for remux: $(basename "$f")"
+                    fi
                     
                     # Copy video, encode all audio to stereo AAC, exclude subs & attachments
                     ffmpeg -hide_banner -y -stats \
                         -i "$f" \
-                        -map 0:v:0 -map 0:a? \
+                        -map 0:v:0 "${remux_audio_opts[@]}" \
                         -c:v copy \
-                        -c:a aac -ac "$AUDIO_CHANNELS" -b:a "$AUDIO_BITRATE" \
                         -map_metadata 0 \
                         "$out" || { log_error "Remux failed"; ((failed++)); echo; continue; }
                     
