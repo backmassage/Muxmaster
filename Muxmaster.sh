@@ -105,11 +105,15 @@ log_line() {
     local color="$2"
     local text="$3"
     local ts="[$(date '+%Y-%m-%d %H:%M:%S')]"
+    local stream_fd=1
+
+    # Emit errors on stderr for better CLI/pipeline behavior.
+    [[ "$level" == "ERROR" ]] && stream_fd=2
 
     if [[ -n "$color" ]]; then
-        printf '%s %b[%s]%b %s\n' "$ts" "$color" "$level" "$NC" "$text"
+        printf '%s %b[%s]%b %s\n' "$ts" "$color" "$level" "$NC" "$text" >&"$stream_fd"
     else
-        printf '%s [%s] %s\n' "$ts" "$level" "$text"
+        printf '%s [%s] %s\n' "$ts" "$level" "$text" >&"$stream_fd"
     fi
 
     if [[ -n "$LOG_FILE" ]]; then
@@ -127,7 +131,10 @@ log_debug()   { [[ "$VERBOSE" == true ]] && log_line "DEBUG" "$CYAN" "$1"; }
 # Print CLI help and exit with the requested code.
 usage() {
     local exit_code="${1:-0}"
-    cat << EOF
+    local usage_stream=1
+    [[ "$exit_code" -ne 0 ]] && usage_stream=2
+
+    cat >&"$usage_stream" << EOF
 Muxmaster v$SCRIPT_VERSION
 
 Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
