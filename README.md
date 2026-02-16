@@ -55,8 +55,6 @@ This project is actively tuned and validated on:
   - Auto color in TTY, plus `--color` / `--no-color`.
 - **File stats section**
   - Shows source video resolution and bitrate for each file.
-- **CSV result reporting**
-  - Writes per-file results (encoded/remuxed/skipped/failed) with rename tracking.
 
 ---
 
@@ -124,8 +122,6 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-attachments` | Do not copy attachment streams |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
-| `--csv-log <path>` | Write per-file results CSV to a custom path |
-| `--no-csv-log` | Disable CSV result logging |
 | `--` | End options parsing (use before paths starting with `-`) |
 | `--color` | Force colored logs |
 | `--no-color` | Disable colored logs |
@@ -147,7 +143,6 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - Container metadata/chapters: stripped by default (`--keep-metadata` to preserve)
 - FFmpeg FPS/speed live progress is on by default (`--no-fps` to disable)
 - Per-file source video stats are shown by default (`--no-stats` to hide)
-- CSV results: written by default to `<output>/encode-results-YYYYmmdd-HHMMSS.csv`
 - Existing output files: skipped by default (`--force` to overwrite)
 - HEVC sources: remux by default (`--no-skip-hevc` to force HEVC re-encode)
 
@@ -225,12 +220,6 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ./Muxmaster.sh --no-fps -m cpu "/media/input" "/media/output"
 ```
 
-### Custom CSV results path
-
-```bash
-./Muxmaster.sh --csv-log "/media/output/encode-report.csv" "/media/input" "/media/output"
-```
-
 ### System diagnostics only
 
 ```bash
@@ -266,6 +255,5 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ## Notes
 
 - Logs printed with colors are for terminal readability; log files remain plain text.
-- CSV rows include action (`encode`/`remux`), status, source/destination paths, `renamed`, and source video resolution/bitrate columns.
 - For large libraries, start with a small subset or `--dry-run` first.
 
