@@ -5,7 +5,10 @@
 
 set -o pipefail
 
-# Config
+#------------------------------------------------------------------------------
+# Configuration defaults
+#------------------------------------------------------------------------------
+# Encoding defaults
 ENCODER_MODE="vaapi"
 VAAPI_DEVICE="/dev/dri/renderD128"
 VAAPI_QP=19
@@ -19,11 +22,16 @@ AUDIO_CHANNELS=2
 AUDIO_BITRATE="192k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
+
+# Logging/UX defaults
 FFMPEG_LOGLEVEL="error"
 declare -a FFMPEG_PROGRESS_ARGS=()
+
+# Stream retention defaults
 KEEP_SUBTITLES=true
 KEEP_ATTACHMENTS=true
 
+# Runtime behavior defaults
 DRY_RUN=false
 SKIP_EXISTING=true
 SKIP_HEVC=false
@@ -36,9 +44,10 @@ COLOR_MODE="auto"
 INPUT_DIR=""
 OUTPUT_DIR=""
 
-# Colors
+# ANSI color palette (initialized by init_colors)
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
 
+# Initialize color variables according to --color/--no-color/auto rules.
 init_colors() {
     local enable_colors=false
 
@@ -88,6 +97,7 @@ log_warn()    { log_line "WARN" "$YELLOW" "$1"; }
 log_error()   { log_line "ERROR" "$RED" "$1"; }
 log_debug()   { [[ "$VERBOSE" == true ]] && log_line "DEBUG" "$CYAN" "$1"; }
 
+# Print CLI help and exit with the requested code.
 usage() {
     local exit_code="${1:-0}"
     cat << 'EOF'
@@ -114,6 +124,7 @@ EOF
     exit "$exit_code"
 }
 
+# Parse and validate CLI arguments, then derive runtime ffmpeg log settings.
 parse_args() {
     local positional=()
     while [[ $# -gt 0 ]]; do
@@ -173,6 +184,7 @@ parse_args() {
     fi
 }
 
+# Probe whether a specific VAAPI HEVC profile+format combo works.
 test_vaapi_profile() {
     local sw_format="$1"
     local profile="$2"
@@ -185,6 +197,7 @@ test_vaapi_profile() {
         -c:v hevc_vaapi -profile:v "$profile" -f null - > /dev/null 2>"$err_file"
 }
 
+# Validate required tools and confirm selected encoder path is usable.
 check_deps() {
     command -v ffmpeg &>/dev/null || { log_error "ffmpeg not found"; exit 1; }
     command -v ffprobe &>/dev/null || { log_error "ffprobe not found"; exit 1; }
@@ -225,16 +238,20 @@ check_deps() {
     fi
 }
 
+# Return codec name for the first video stream (simple fallback helper).
 get_codec() {
     ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$1" 2>/dev/null | head -1
 }
 
+# Return success if at least one audio stream exists.
 has_audio_stream() {
     local has_audio
     has_audio=$(ffprobe -v error -select_streams a:0 -show_entries stream=index -of csv=p=0 "$1" 2>/dev/null | head -1)
     [[ -n "$has_audio" ]]
 }
 
+# Return the first non-attached-pic video stream index.
+# This avoids selecting cover art as the "main" video stream.
 get_primary_video_stream_index() {
     local idx codec attached
     while IFS=',' read -r idx codec attached; do
@@ -248,6 +265,7 @@ get_primary_video_stream_index() {
     echo "0"
 }
 
+# Return codec name for the first non-attached-pic video stream.
 get_primary_video_codec() {
     local idx codec attached
     while IFS=',' read -r idx codec attached; do
@@ -260,6 +278,8 @@ get_primary_video_codec() {
     get_codec "$1"
 }
 
+# Execute ffmpeg and capture stderr to an error file.
+# In verbose mode stderr is mirrored to terminal; otherwise it stays quiet.
 run_ffmpeg_logged() {
     local err_file="$1"
     shift
@@ -271,6 +291,10 @@ run_ffmpeg_logged() {
     fi
 }
 
+# Core remux executor used by skip-hevc flow.
+# - audio options are injected by caller
+# - subtitle/attachment copying follows KEEP_* toggles
+# - metadata_mode supports "keep" or "strip"
 run_remux_with_audio_opts() {
     local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5"
     shift 5
@@ -305,6 +329,9 @@ run_remux_with_audio_opts() {
             "$output"
 }
 
+# Build remux audio args for the requested mode:
+# - "all"  -> all audio tracks to AAC
+# - "copy" -> copy all source audio tracks
 run_remux_attempt() {
     local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" metadata_mode="$5" err_file="$6"
     local -a audio_opts
@@ -322,6 +349,9 @@ run_remux_attempt() {
     run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$metadata_mode" "$err_file" "${audio_opts[@]}"
 }
 
+# Core transcode executor for non-remux flow.
+# Video is encoded to HEVC; audio can be AAC or copied, and subtitles/attachments
+# are preserved by default.
 run_encode_attempt() {
     local input="$1" output="$2" video_stream_idx="$3" audio_mode="$4" err_file="$5"
     local -a audio_opts subtitle_opts attachment_opts
@@ -374,7 +404,8 @@ run_encode_attempt() {
     fi
 }
 
-# Parse filename - extracts show name, season, episode
+# Parse filename and infer library classification (TV vs movie) with best-effort
+# pattern matching for common release naming styles.
 parse_filename() {
     local filename="$1"
     local parent="$2"
@@ -429,6 +460,7 @@ parse_filename() {
     log_debug "Parsed: $MEDIA_TYPE | show='$SHOW_NAME' S${SEASON:-?}E${EPISODE:-?} | movie='$MOVIE_NAME' (${YEAR:-no year})"
 }
 
+# Build destination path from parsed media metadata.
 get_output_path() {
     if [[ "$MEDIA_TYPE" == "tv" ]]; then
         local s=$(printf "%02d" "$((10#${SEASON:-1}))")
@@ -441,6 +473,8 @@ get_output_path() {
     fi
 }
 
+# Transcode one source file into its output path.
+# If AAC audio conversion fails, retry once with source audio copy.
 encode_file() {
     local input="$1" output="$2" video_stream_idx="${3:-0}"
     
@@ -515,6 +549,10 @@ process_files() {
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     echo
     
+    # Main per-file pipeline:
+    # 1) classify filename and compute output path
+    # 2) optionally remux HEVC sources in skip-hevc mode
+    # 3) otherwise transcode with encode_file
     for f in "${files[@]}"; do
         ((current++))
         
@@ -556,20 +594,22 @@ process_files() {
                     local remux_err remux_ok=false
                     remux_err=$(mktemp)
 
-                    # Attempt 1: all audio tracks + preserve metadata/chapters
+                    # Attempt 1: all audio tracks + preserve metadata/chapters.
                     if run_remux_attempt "$f" "$out" "${video_idx:-0}" "all" "keep" "$remux_err"; then
                         remux_ok=true
                     else
                         log_warn "Remux retry: stripping metadata and chapters"
                         rm -f "$out"
 
-                        # Attempt 2: all audio tracks + stripped metadata/chapters
+                        # Attempt 2: all audio tracks + stripped metadata/chapters.
                         if run_remux_attempt "$f" "$out" "${video_idx:-0}" "all" "strip" "$remux_err"; then
                             remux_ok=true
                         fi
                     fi
 
                     if [[ "$remux_ok" != true ]] && has_audio_stream "$f"; then
+                        # Final fallback keeps all tracks intact if AAC encode path
+                        # is incompatible with this source.
                         log_warn "Remux fallback: copying source audio (AAC failed)"
                         rm -f "$out"
                         if run_remux_attempt "$f" "$out" "${video_idx:-0}" "copy" "strip" "$remux_err"; then
@@ -623,6 +663,7 @@ process_files() {
     log_info "Done: $encoded encoded, $skipped skipped, $failed failed"
 }
 
+# Lightweight environment diagnostics for quick troubleshooting.
 run_check() {
     log_info "=== System Check ==="
     
@@ -655,6 +696,7 @@ run_check() {
     fi
 }
 
+# Entrypoint
 main() {
     init_colors
     parse_args "$@"
