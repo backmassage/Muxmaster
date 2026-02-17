@@ -27,6 +27,7 @@ All notable changes to this project are documented in this file.
 - Strengthened MP4 stream flags for playback/metadata compatibility (`-tag:v hvc1`, `-movflags +faststart+use_metadata_tags`).
 - Preserved only intended per-track metadata keys (language/title) for audio/subtitle streams to avoid noisy encoder/duration tag carryover.
 - Mapped track titles to MP4 `handler_name` so audio/subtitle names remain visible after remux/encode.
+- Added fallback title extraction from non-generic source `handler_name` values when explicit track titles are absent.
 
 ## [1.1] - 2026-02-16
 

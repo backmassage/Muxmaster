@@ -416,6 +416,18 @@ get_stream_tag_value() {
         -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | sed -n '1p'
 }
 
+# Return success when handler_name is a generic container default.
+is_generic_handler_name() {
+    case "$1" in
+        ""|SoundHandler|VideoHandler|SubtitleHandler)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 # Return the first non-attached-pic video stream index.
 # This avoids selecting cover art as the "main" video stream.
 get_primary_video_stream_index() {
@@ -551,7 +563,7 @@ run_remux_with_audio_opts() {
     local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_subtitles="$6" include_attachments="$7" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     shift 9
     local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts container_opts video_tag_opts
-    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false language_tag title_tag
+    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false language_tag title_tag handler_name_tag
 
     if output_container_is_mp4; then
         mp4_output=true
@@ -601,6 +613,10 @@ run_remux_with_audio_opts() {
         for ((i=0; i<audio_stream_count; i++)); do
             language_tag=$(get_stream_tag_value "$input" "a" "$i" "language")
             title_tag=$(get_stream_tag_value "$input" "a" "$i" "title")
+            handler_name_tag=$(get_stream_tag_value "$input" "a" "$i" "handler_name")
+            if [[ -z "$title_tag" && -n "$handler_name_tag" ]] && ! is_generic_handler_name "$handler_name_tag"; then
+                title_tag="$handler_name_tag"
+            fi
             [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "language=$language_tag")
             if [[ -n "$title_tag" ]]; then
                 if [[ "$mp4_output" == true ]]; then
@@ -618,6 +634,10 @@ run_remux_with_audio_opts() {
             for ((i=0; i<subtitle_stream_count; i++)); do
                 language_tag=$(get_stream_tag_value "$input" "s" "$i" "language")
                 title_tag=$(get_stream_tag_value "$input" "s" "$i" "title")
+                handler_name_tag=$(get_stream_tag_value "$input" "s" "$i" "handler_name")
+                if [[ -z "$title_tag" && -n "$handler_name_tag" ]] && ! is_generic_handler_name "$handler_name_tag"; then
+                    title_tag="$handler_name_tag"
+                fi
                 [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "language=$language_tag")
                 if [[ -n "$title_tag" ]]; then
                     if [[ "$mp4_output" == true ]]; then
@@ -671,7 +691,7 @@ run_remux_attempt() {
 run_encode_attempt() {
     local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" metadata_mode="${6:-}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts container_opts video_tag_opts
-    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false language_tag title_tag
+    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false language_tag title_tag handler_name_tag
 
     if output_container_is_mp4; then
         mp4_output=true
@@ -735,6 +755,10 @@ run_encode_attempt() {
         for ((i=0; i<audio_stream_count; i++)); do
             language_tag=$(get_stream_tag_value "$input" "a" "$i" "language")
             title_tag=$(get_stream_tag_value "$input" "a" "$i" "title")
+            handler_name_tag=$(get_stream_tag_value "$input" "a" "$i" "handler_name")
+            if [[ -z "$title_tag" && -n "$handler_name_tag" ]] && ! is_generic_handler_name "$handler_name_tag"; then
+                title_tag="$handler_name_tag"
+            fi
             [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "language=$language_tag")
             if [[ -n "$title_tag" ]]; then
                 if [[ "$mp4_output" == true ]]; then
@@ -752,6 +776,10 @@ run_encode_attempt() {
             for ((i=0; i<subtitle_stream_count; i++)); do
                 language_tag=$(get_stream_tag_value "$input" "s" "$i" "language")
                 title_tag=$(get_stream_tag_value "$input" "s" "$i" "title")
+                handler_name_tag=$(get_stream_tag_value "$input" "s" "$i" "handler_name")
+                if [[ -z "$title_tag" && -n "$handler_name_tag" ]] && ! is_generic_handler_name "$handler_name_tag"; then
+                    title_tag="$handler_name_tag"
+                fi
                 [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "language=$language_tag")
                 if [[ -n "$title_tag" ]]; then
                     if [[ "$mp4_output" == true ]]; then

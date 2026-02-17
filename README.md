@@ -68,7 +68,7 @@ Use `scripts/helpers/` for helper `.sh` utilities.
   - Tries to convert **all audio tracks** to AAC stereo 224k.
   - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
   - Preserves original audio track metadata per track (title/language tags), including multi/dual-audio releases.
-  - For MP4 outputs, track titles are written as `handler_name` for better player visibility.
+  - For MP4 outputs, track titles are written as `handler_name` for better player visibility (with fallback from meaningful source handler names).
   - Avoids copying noisy per-stream encoder/duration tags into clean outputs.
 - **Subtitle handling**
   - For MP4 output, subtitles are converted to `mov_text` when compatible.
