@@ -1,6 +1,7 @@
 #!/bin/bash
 #===============================================================================
-# Muxmaster Media Library Encoder
+# Muxmaster Media Library Encoder v2.1.0
+# Comprehensive HEVC/AAC encoding for Jellyfin optimization
 #===============================================================================
 
 set -o pipefail
@@ -16,10 +17,12 @@ VAAPI_PROFILE="main10"
 VAAPI_SW_FORMAT="p010"
 CPU_CRF=19
 CPU_PRESET="slow"
+CPU_HEVC_PROFILE="main10"
+CPU_PIX_FMT="yuv420p10le"
 OUTPUT_CONTAINER="mkv"
-KEYFRAME_INT=48              # Keyframes every 48 frames (~2s at 24fps)
+KEYFRAME_INT=48
 AUDIO_CHANNELS=2
-AUDIO_BITRATE="224k"
+AUDIO_BITRATE="192k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
 
@@ -35,7 +38,6 @@ KEEP_ATTACHMENTS=true
 DRY_RUN=false
 SKIP_EXISTING=true
 SKIP_HEVC=true
-CLEAN_METADATA=true
 SHOW_FILE_STATS=true
 SHOW_FFMPEG_FPS=true
 LOG_FILE=""
@@ -44,16 +46,44 @@ CHECK_ONLY=false
 QUALITY_OVERRIDE=""
 COLOR_MODE="auto"
 STRICT_MODE=false
+CLEAN_TIMESTAMPS=true
+MATCH_AUDIO_LAYOUT=true
+HANDLE_HDR="preserve"
+DEINTERLACE_AUTO=true
 
 INPUT_DIR=""
 OUTPUT_DIR=""
 SCRIPT_NAME="$(basename "$0")"
-SCRIPT_VERSION="1.1"
+SCRIPT_VERSION="2.1.0"
 
-# ANSI color palette (initialized by init_colors)
+# Temp file tracking for cleanup
+declare -a TEMP_FILES=()
+
+# ANSI color palette
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
 
-# Initialize color variables according to --color/--no-color/auto rules.
+#------------------------------------------------------------------------------
+# Cleanup trap - ensures temp files are removed on exit/interrupt
+#------------------------------------------------------------------------------
+cleanup_temp_files() {
+    local f
+    for f in "${TEMP_FILES[@]}"; do
+        [[ -f "$f" ]] && rm -f "$f"
+    done
+}
+trap cleanup_temp_files EXIT INT TERM
+
+# Create tracked temp file
+make_temp_file() {
+    local tmp
+    tmp=$(mktemp)
+    TEMP_FILES+=("$tmp")
+    printf '%s\n' "$tmp"
+}
+
+#------------------------------------------------------------------------------
+# Color initialization
+#------------------------------------------------------------------------------
 init_colors() {
     local enable_colors=false
 
@@ -68,7 +98,6 @@ init_colors() {
     esac
 
     if [[ "$enable_colors" == true ]]; then
-        # Use bright variants for stronger terminal contrast/visibility.
         RED=$'\033[1;91m'
         GREEN=$'\033[1;92m'
         YELLOW=$'\033[1;93m'
@@ -80,20 +109,20 @@ init_colors() {
     fi
 }
 
-# Print startup banner.
+#------------------------------------------------------------------------------
+# Banner
+#------------------------------------------------------------------------------
 print_banner() {
-    local banner_color="$CYAN"
     if [[ -n "$CYAN" ]]; then
-        banner_color=$'\033[1;95m'
-        printf '%b\n' "$banner_color"
+        printf '%b' $'\033[1;95m'
     fi
 
     cat << 'EOF'
- __  __            __  __           _            
-|  \/  |_   ___  _|  \/  | __ _ ___| |_ ___ _ __ 
+ __  __            __  __           _
+|  \/  |_   ___  _|  \/  | __ _ ___| |_ ___ _ __
 | |\/| | | | \ \/ / |\/| |/ _` / __| __/ _ \ '__|
-| |  | | |_| |>  <| |  | | (_| \__ \ ||  __/ |   
-|_|  |_|\__,_/_/\_\_|  |_|\__,_|___/\__\___|_|   
+| |  | | |_| |>  <| |  | | (_| \__ \ ||  __/ |
+|_|  |_|\__,_/_/\_\_|  |_|\__,_|___/\__\___|_|
 EOF
 
     if [[ -n "$CYAN" ]]; then
@@ -101,6 +130,9 @@ EOF
     fi
 }
 
+#------------------------------------------------------------------------------
+# Logging functions
+#------------------------------------------------------------------------------
 log_line() {
     local level="$1"
     local color="$2"
@@ -108,7 +140,6 @@ log_line() {
     local ts="[$(date '+%Y-%m-%d %H:%M:%S')]"
     local stream_fd=1
 
-    # Emit errors on stderr for better CLI/pipeline behavior.
     [[ "$level" == "ERROR" ]] && stream_fd=2
 
     if [[ -n "$color" ]]; then
@@ -127,45 +158,62 @@ log_info()    { log_line "INFO" "$BLUE" "$1"; }
 log_success() { log_line "SUCCESS" "$GREEN" "$1"; }
 log_warn()    { log_line "WARN" "$YELLOW" "$1"; }
 log_error()   { log_line "ERROR" "$RED" "$1"; }
-log_debug()   { [[ "$VERBOSE" == true ]] && log_line "DEBUG" "$CYAN" "$1"; }
+log_debug()   { [[ "$VERBOSE" == true ]] && log_line "DEBUG" "$CYAN" "$1"; return 0; }
 
-# Print CLI help and exit with the requested code.
+#------------------------------------------------------------------------------
+# CLI help
+#------------------------------------------------------------------------------
 usage() {
     local exit_code="${1:-0}"
     local usage_stream=1
     [[ "$exit_code" -ne 0 ]] && usage_stream=2
 
     cat >&"$usage_stream" << EOF
-Muxmaster v$SCRIPT_VERSION
+Muxmaster v$SCRIPT_VERSION - Jellyfin-Optimized Media Encoder
 
 Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
 
-Options:
+Encoding Options:
   -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi)
-  -q, --quality <value>     QP for VAAPI, CRF for CPU (default: 19, lower=better)
+  -q, --quality <value>     QP for VAAPI, CRF for CPU (default: 19)
   -p, --preset <preset>     CPU preset (default: slow)
-  -d, --dry-run             Preview only
-  --skip-hevc               HEVC files: copy video, encode audio only (default: on)
-  --no-skip-hevc            Re-encode HEVC video instead of remuxing it
-  --clean-metadata          Strip container metadata/chapters (default: on)
-  --keep-metadata           Preserve source container metadata/chapters
-  --show-fps                Show live ffmpeg encoding FPS/speed (default: on)
-  --no-fps                  Disable live ffmpeg FPS/speed progress
-  --no-stats                Hide per-file source video stats section
-  --no-subs                 Do not copy subtitle streams
-  --no-attachments          Do not copy attachment streams (fonts/images)
-  --strict                  Disable automatic ffmpeg retry fallbacks
+
+HDR/Color Options:
+  --hdr <preserve|tonemap>  HDR handling (default: preserve)
+  --no-deinterlace          Disable automatic deinterlace detection
+
+Stream Options:
+  --skip-hevc               Copy HEVC video, encode audio only (default: on)
+  --no-skip-hevc            Re-encode HEVC video
+  --no-subs                 Do not process subtitle streams
+  --no-attachments          Do not include attachments (fonts/images)
+
+Output Options:
+  --container <mkv|mp4>     Output container (default: mkv)
   -f, --force               Overwrite existing output files
-  -l, --log <path>          Write plain logs to file
-  --                        End options parsing
+
+Behavior Options:
+  -d, --dry-run             Preview only
+  --strict                  Disable automatic ffmpeg retry fallbacks
+  --clean-timestamps        Enable timestamp regeneration (default: on)
+  --no-clean-timestamps     Disable timestamp regeneration
+  --match-audio-layout      Force stereo normalization (default: on)
+
+Display Options:
+  --show-fps                Show live ffmpeg FPS/speed (default: on)
+  --no-fps                  Disable live FPS progress
+  --no-stats                Hide per-file source stats
   --color                   Force colored logs
   --no-color                Disable colored logs
-  -v, --verbose             Verbose output (includes ffmpeg progress/details)
+  -v, --verbose             Verbose output
+
+Utility:
+  -l, --log <path>          Write logs to file
   -c, --check               System diagnostics
-  -V, --version             Print script version and exit
+  -V, --version             Print version
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 224k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata
+Encoding: 10-bit HEVC, AAC stereo, MKV container, metadata preserved
 EOF
     exit "$exit_code"
 }
@@ -174,7 +222,6 @@ show_version() {
     printf '%s v%s\n' "$SCRIPT_NAME" "$SCRIPT_VERSION"
 }
 
-# Ensure options that require values never trigger a shift-loop.
 require_option_value() {
     local opt="$1"
     local value="${2-}"
@@ -184,7 +231,6 @@ require_option_value() {
     fi
 }
 
-# Remove trailing slashes from directory args while preserving root (/).
 normalize_dir_arg() {
     local path="$1"
     if [[ "$path" == "/" ]]; then
@@ -199,7 +245,9 @@ normalize_dir_arg() {
     printf '%s\n' "$path"
 }
 
-# Parse and validate CLI arguments, then derive runtime ffmpeg log settings.
+#------------------------------------------------------------------------------
+# Argument parsing
+#------------------------------------------------------------------------------
 parse_args() {
     local positional=()
     while [[ $# -gt 0 ]]; do
@@ -224,17 +272,33 @@ parse_args() {
                 CPU_PRESET="$2"
                 shift 2
                 ;;
+            --container)
+                require_option_value "$1" "${2-}"
+                OUTPUT_CONTAINER="${2,,}"
+                shift 2
+                ;;
+            --hdr)
+                require_option_value "$1" "${2-}"
+                HANDLE_HDR="$2"
+                shift 2
+                ;;
+            --no-deinterlace)
+                DEINTERLACE_AUTO=false
+                shift
+                ;;
             -d|--dry-run) DRY_RUN=true; shift ;;
             --skip-hevc) SKIP_HEVC=true; shift ;;
             --no-skip-hevc) SKIP_HEVC=false; shift ;;
-            --clean-metadata) CLEAN_METADATA=true; shift ;;
-            --keep-metadata) CLEAN_METADATA=false; shift ;;
             --show-fps) SHOW_FFMPEG_FPS=true; shift ;;
             --no-fps) SHOW_FFMPEG_FPS=false; shift ;;
             --no-stats) SHOW_FILE_STATS=false; shift ;;
             --no-subs) KEEP_SUBTITLES=false; shift ;;
             --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
             --strict) STRICT_MODE=true; shift ;;
+            --clean-timestamps) CLEAN_TIMESTAMPS=true; shift ;;
+            --no-clean-timestamps) CLEAN_TIMESTAMPS=false; shift ;;
+            --match-audio-layout) MATCH_AUDIO_LAYOUT=true; shift ;;
+            --no-match-audio-layout) MATCH_AUDIO_LAYOUT=false; shift ;;
             --color) COLOR_MODE="always"; shift ;;
             --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
@@ -247,11 +311,11 @@ parse_args() {
                 ;;
             -f|--force) SKIP_EXISTING=false; shift ;;
             -h|--help) usage 0 ;;
-            -*) log_error "Unknown: $1"; usage 1 ;;
+            -*) log_error "Unknown option: $1"; usage 1 ;;
             *) positional+=("$1"); shift ;;
         esac
     done
-    
+
     if [[ "$CHECK_ONLY" != true ]]; then
         [[ ${#positional[@]} -ne 2 ]] && { log_error "Need exactly input_dir and output_dir"; usage 1; }
         INPUT_DIR="$(normalize_dir_arg "${positional[0]}")"
@@ -292,7 +356,21 @@ parse_args() {
     fi
 }
 
-# Probe whether a specific VAAPI HEVC profile+format combo works.
+#------------------------------------------------------------------------------
+# Portable file size function (Linux + macOS)
+#------------------------------------------------------------------------------
+get_file_size() {
+    local file="$1"
+    if [[ "$(uname)" == "Darwin" ]]; then
+        stat -f%z "$file" 2>/dev/null || echo 0
+    else
+        stat -c%s "$file" 2>/dev/null || echo 0
+    fi
+}
+
+#------------------------------------------------------------------------------
+# VAAPI device and encoder tests
+#------------------------------------------------------------------------------
 test_vaapi_profile() {
     local sw_format="$1"
     local profile="$2"
@@ -305,21 +383,37 @@ test_vaapi_profile() {
         -c:v hevc_vaapi -profile:v "$profile" -f null - > /dev/null 2>"$err_file"
 }
 
-# Validate required tools and confirm selected encoder path is usable.
+get_first_render_device() {
+    local dev
+    for dev in /dev/dri/renderD*; do
+        [[ -e "$dev" ]] || continue
+        printf '%s\n' "$dev"
+        return 0
+    done
+    return 1
+}
+
+output_container_is_mp4() {
+    [[ "${OUTPUT_CONTAINER,,}" == "mp4" ]]
+}
+
+#------------------------------------------------------------------------------
+# Dependency and encoder validation
+#------------------------------------------------------------------------------
 check_deps() {
     command -v ffmpeg &>/dev/null || { log_error "ffmpeg not found"; exit 1; }
     command -v ffprobe &>/dev/null || { log_error "ffprobe not found"; exit 1; }
-    
+
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         if [[ ! -e "$VAAPI_DEVICE" ]]; then
-            VAAPI_DEVICE=$(ls /dev/dri/renderD* 2>/dev/null | head -1)
+            VAAPI_DEVICE=$(get_first_render_device || true)
         fi
-        [[ -z "$VAAPI_DEVICE" ]] && { log_error "No VAAPI device"; exit 1; }
-        
+        [[ -z "$VAAPI_DEVICE" || ! -e "$VAAPI_DEVICE" ]] && { log_error "No VAAPI device"; exit 1; }
+
         log_debug "Testing VAAPI device: $VAAPI_DEVICE"
-        
+
         local vaapi_err
-        vaapi_err=$(mktemp)
+        vaapi_err=$(make_temp_file)
         if test_vaapi_profile "p010" "main10" "$vaapi_err"; then
             VAAPI_SW_FORMAT="p010"
             VAAPI_PROFILE="main10"
@@ -331,11 +425,9 @@ check_deps() {
             log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main)"
         else
             log_error "VAAPI test failed"
-            [[ "$VERBOSE" == true ]] && cat "$vaapi_err"
-            rm -f "$vaapi_err"
+            [[ "$VERBOSE" == true ]] && sed 's/^/  /' "$vaapi_err"
             exit 1
         fi
-        rm -f "$vaapi_err"
     else
         if ! ffmpeg -hide_banner -nostdin -loglevel error \
                 -f lavfi -i color=black:s=256x256:d=0.1 \
@@ -346,27 +438,20 @@ check_deps() {
     fi
 }
 
-# Return codec name for the first video stream (simple fallback helper).
+#------------------------------------------------------------------------------
+# Stream analysis functions
+#------------------------------------------------------------------------------
 get_codec() {
     ffprobe -v error -select_streams v:0 -show_entries stream=codec_name \
-        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | sed -n '1p'
+        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | head -1
 }
 
-# Return success if at least one audio stream exists.
 has_audio_stream() {
     local count
     count=$(get_stream_count "a" "$1")
     [[ "$count" -gt 0 ]]
 }
 
-# Return success if at least one subtitle stream exists.
-has_subtitle_stream() {
-    local count
-    count=$(get_stream_count "s" "$1")
-    [[ "$count" -gt 0 ]]
-}
-
-# Return stream count for a selector (e.g., a, s, v).
 get_stream_count() {
     local selector="$1"
     local input="$2"
@@ -378,22 +463,20 @@ get_stream_count() {
     printf '%s\n' "$count"
 }
 
-# Return the first non-attached-pic video stream index.
-# This avoids selecting cover art as the "main" video stream.
+# Get primary video stream index (skip cover art/attached pics)
 get_primary_video_stream_index() {
     local idx codec attached
     while IFS='|' read -r idx codec attached; do
         [[ -z "$idx" ]] && continue
-        # Skip cover/attached-pic streams and keep the first real video stream
         [[ "$attached" != "1" ]] && { echo "$idx"; return 0; }
     done < <(ffprobe -v error -select_streams v \
         -show_entries stream=index,codec_name:stream_disposition=attached_pic \
         -of compact=p=0:nk=1 "$1" 2>/dev/null)
 
-    echo "0"
+    # Return empty string if no valid video stream found
+    echo ""
 }
 
-# Return codec name for the first non-attached-pic video stream.
 get_primary_video_codec() {
     local idx codec attached
     while IFS='|' read -r idx codec attached; do
@@ -406,18 +489,30 @@ get_primary_video_codec() {
     get_codec "$1"
 }
 
-# Format bitrate in bits/s as a readable label.
-format_bitrate_label() {
-    local bitrate_bps="$1"
+get_primary_video_profile() {
+    local idx profile attached
+    while IFS='|' read -r idx profile attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" != "1" ]] && { echo "$profile"; return 0; }
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,profile:stream_disposition=attached_pic \
+        -of compact=p=0:nk=1 "$1" 2>/dev/null)
 
-    if [[ "$bitrate_bps" =~ ^[0-9]+$ && "$bitrate_bps" -gt 0 ]]; then
-        printf '%d kb/s\n' "$(((bitrate_bps + 500) / 1000))"
-    else
-        printf 'unknown\n'
-    fi
+    echo ""
 }
 
-# Return WxH for the first non-attached-pic video stream.
+get_primary_video_pix_fmt() {
+    local idx pix_fmt attached
+    while IFS='|' read -r idx pix_fmt attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" != "1" ]] && { echo "$pix_fmt"; return 0; }
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,pix_fmt:stream_disposition=attached_pic \
+        -of compact=p=0:nk=1 "$1" 2>/dev/null)
+
+    echo ""
+}
+
 get_primary_video_resolution() {
     local idx width height attached
     while IFS='|' read -r idx width height attached; do
@@ -437,8 +532,6 @@ get_primary_video_resolution() {
     printf 'unknown\n'
 }
 
-# Return bitrate (bits/s) for first non-attached-pic video stream, with
-# fallback to container bitrate when stream bitrate is unavailable.
 get_primary_video_bitrate_bps() {
     local idx bit_rate attached
     while IFS='|' read -r idx bit_rate attached; do
@@ -451,21 +544,179 @@ get_primary_video_bitrate_bps() {
 
     local format_bitrate
     format_bitrate=$(ffprobe -v error -show_entries format=bit_rate \
-        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | sed -n '1p')
+        -of default=noprint_wrappers=1:nokey=1 "$1" 2>/dev/null | head -1)
     [[ "$format_bitrate" =~ ^[0-9]+$ && "$format_bitrate" -gt 0 ]] && { echo "$format_bitrate"; return 0; }
 
     echo ""
 }
 
-# Return readable video bitrate label for the primary video stream.
+format_bitrate_label() {
+    local bitrate_bps="$1"
+
+    if [[ "$bitrate_bps" =~ ^[0-9]+$ && "$bitrate_bps" -gt 0 ]]; then
+        printf '%d kb/s\n' "$(((bitrate_bps + 500) / 1000))"
+    else
+        printf 'unknown\n'
+    fi
+}
+
 get_primary_video_bitrate_label() {
     local bitrate_bps
     bitrate_bps=$(get_primary_video_bitrate_bps "$1")
     format_bitrate_label "$bitrate_bps"
 }
 
-# Execute ffmpeg and capture stderr to an error file.
-# In verbose mode (or --show-fps), stderr is mirrored to terminal.
+#------------------------------------------------------------------------------
+# HDR and color space detection
+#------------------------------------------------------------------------------
+detect_hdr_type() {
+    local input="$1"
+    local color_transfer color_primaries color_space
+
+    # Get color metadata from the video stream
+    read -r color_transfer color_primaries color_space < <(
+        ffprobe -v error -select_streams v:0 \
+            -show_entries stream=color_transfer,color_primaries,color_space \
+            -of csv=p=0 "$input" 2>/dev/null | head -1 | tr ',' ' '
+    )
+
+    # Check for HDR indicators
+    case "$color_transfer" in
+        smpte2084|arib-std-b67)
+            echo "hdr10"
+            return 0
+            ;;
+    esac
+
+    case "$color_primaries" in
+        bt2020)
+            echo "hdr10"
+            return 0
+            ;;
+    esac
+
+    echo "sdr"
+}
+
+get_color_metadata() {
+    local input="$1"
+    local color_transfer color_primaries color_space
+
+    read -r color_transfer color_primaries color_space < <(
+        ffprobe -v error -select_streams v:0 \
+            -show_entries stream=color_transfer,color_primaries,color_space \
+            -of csv=p=0 "$input" 2>/dev/null | head -1 | tr ',' ' '
+    )
+
+    # Return as colon-separated values
+    printf '%s:%s:%s\n' "${color_transfer:-unknown}" "${color_primaries:-unknown}" "${color_space:-unknown}"
+}
+
+#------------------------------------------------------------------------------
+# Interlace detection
+#------------------------------------------------------------------------------
+is_interlaced() {
+    local input="$1"
+    local field_order
+
+    field_order=$(ffprobe -v error -select_streams v:0 \
+        -show_entries stream=field_order \
+        -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
+
+    case "$field_order" in
+        tt|bb|tb|bt)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+#------------------------------------------------------------------------------
+# Audio channel detection
+#------------------------------------------------------------------------------
+get_audio_channels() {
+    local input="$1"
+    local stream_idx="${2:-0}"
+    local channels
+
+    channels=$(ffprobe -v error -select_streams "a:$stream_idx" \
+        -show_entries stream=channels \
+        -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
+
+    [[ "$channels" =~ ^[0-9]+$ ]] || channels=2
+    printf '%s\n' "$channels"
+}
+
+#------------------------------------------------------------------------------
+# Subtitle format detection
+#------------------------------------------------------------------------------
+get_subtitle_codecs() {
+    local input="$1"
+    ffprobe -v error -select_streams s \
+        -show_entries stream=codec_name \
+        -of csv=p=0 "$input" 2>/dev/null
+}
+
+has_bitmap_subtitles() {
+    local input="$1"
+    local codec
+    while read -r codec; do
+        case "$codec" in
+            hdmv_pgs_subtitle|dvd_subtitle|dvb_subtitle|xsub)
+                return 0
+                ;;
+        esac
+    done < <(get_subtitle_codecs "$input")
+    return 1
+}
+
+#------------------------------------------------------------------------------
+# HEVC stream safety check for browser/Jellyfin compatibility
+#------------------------------------------------------------------------------
+is_edge_safe_hevc_stream() {
+    local profile_lower pix_fmt_lower
+    profile_lower=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+    pix_fmt_lower=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+
+    case "$profile_lower" in
+        main|main\ 10|main10) ;;
+        *) return 1 ;;
+    esac
+
+    case "$pix_fmt_lower" in
+        yuv420p|yuv420p10le) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+#------------------------------------------------------------------------------
+# File validation
+#------------------------------------------------------------------------------
+validate_input_file() {
+    local input="$1"
+
+    # Check file exists and is readable
+    [[ ! -f "$input" ]] && { log_error "File not found: $input"; return 1; }
+    [[ ! -r "$input" ]] && { log_error "File not readable: $input"; return 1; }
+
+    # Check file has content
+    local size
+    size=$(get_file_size "$input")
+    [[ "$size" -lt 1000 ]] && { log_error "File too small (possibly corrupt): $input"; return 1; }
+
+    # Check file is a valid media container
+    if ! ffprobe -v error -show_entries format=duration "$input" &>/dev/null; then
+        log_error "Cannot probe file (possibly corrupt): $input"
+        return 1
+    fi
+
+    return 0
+}
+
+#------------------------------------------------------------------------------
+# FFmpeg execution helpers
+#------------------------------------------------------------------------------
 run_ffmpeg_logged() {
     local err_file="$1"
     shift
@@ -477,228 +728,373 @@ run_ffmpeg_logged() {
     fi
 }
 
-# Return success when ffmpeg output reports attachment metadata/tag issues.
+#------------------------------------------------------------------------------
+# Error pattern matchers for retry logic
+#------------------------------------------------------------------------------
 ffmpeg_error_has_attachment_tag_issue() {
     local err_file="$1"
     [[ -s "$err_file" ]] || return 1
     grep -Eq 'Attachment stream [0-9]+ has no (filename|mimetype) tag' "$err_file"
 }
 
-# Return success when ffmpeg output reports subtitle stream mux/copy issues.
 ffmpeg_error_has_subtitle_mux_issue() {
     local err_file="$1"
     [[ -s "$err_file" ]] || return 1
-    grep -Eqi 'Subtitle codec .* is not supported|Could not find tag for codec .* in stream .*subtitle|Error initializing output stream .*subtitle' "$err_file"
+    grep -Eqi 'Subtitle codec .* is not supported|Could not find tag for codec .* in stream .*subtitle|Error initializing output stream .*subtitle|Error while opening encoder for output stream .*subtitle|Subtitle encoding currently only possible from text to text or bitmap to bitmap|Unknown encoder|Codec .* is not supported' "$err_file"
 }
 
-# Return success when ffmpeg reports mux queue overflow.
 ffmpeg_error_has_mux_queue_overflow() {
     local err_file="$1"
     [[ -s "$err_file" ]] || return 1
     grep -Eq 'Too many packets buffered for output stream' "$err_file"
 }
 
-# Return success when ffmpeg reports non-monotonic timestamp issues.
 ffmpeg_error_has_timestamp_discontinuity() {
     local err_file="$1"
     [[ -s "$err_file" ]] || return 1
-    grep -Eqi 'Non-monotonous DTS|non monotonically increasing dts|DTS .*out of order' "$err_file"
+    grep -Eqi 'Non-monotonous DTS|non monotonically increasing dts|invalid, non monotonically increasing dts|DTS .*out of order|PTS .*out of order|pts has no value|missing PTS|Timestamps are unset' "$err_file"
 }
 
-# Core remux executor used by skip-hevc flow.
-# - audio options are injected by caller
-# - subtitle/attachment copying follows KEEP_* toggles
-# - metadata_mode supports "keep" or "strip"
+#------------------------------------------------------------------------------
+# Build video filter chain
+#------------------------------------------------------------------------------
+build_video_filter() {
+    local input="$1"
+    local encoder_mode="$2"
+    local -a filters=()
+
+    # Deinterlace if needed
+    if [[ "$DEINTERLACE_AUTO" == true ]] && is_interlaced "$input"; then
+        log_info "  Detected interlaced content, applying yadif deinterlacer"
+        filters+=("yadif=mode=send_frame:parity=auto:deint=interlaced")
+    fi
+
+    # HDR handling
+    local hdr_type
+    hdr_type=$(detect_hdr_type "$input")
+
+    if [[ "$hdr_type" == "hdr10" && "$HANDLE_HDR" == "tonemap" ]]; then
+        log_info "  HDR detected, applying tonemapping to SDR"
+        filters+=("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
+    fi
+
+    if [[ "$encoder_mode" == "vaapi" ]]; then
+        # VAAPI needs hwupload
+        filters+=("format=${VAAPI_SW_FORMAT},hwupload")
+    fi
+
+    # Join filters with comma
+    local IFS=','
+    echo "${filters[*]}"
+}
+
+#------------------------------------------------------------------------------
+# Build audio encoding options
+#------------------------------------------------------------------------------
+
+# Check if all audio streams are already AAC with compatible channels
+all_audio_is_compatible_aac() {
+    local input="$1"
+    local max_channels="$2"
+    local stream_count codec channels i
+
+    stream_count=$(get_stream_count "a" "$input")
+    [[ "$stream_count" -eq 0 ]] && return 1
+
+    for ((i=0; i<stream_count; i++)); do
+        codec=$(ffprobe -v error -select_streams "a:$i" \
+            -show_entries stream=codec_name \
+            -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
+        [[ "$codec" != "aac" ]] && return 1
+
+        channels=$(get_audio_channels "$input" "$i")
+        [[ "$channels" -gt "$max_channels" ]] && return 1
+    done
+
+    return 0
+}
+
+build_audio_opts() {
+    local input="$1"
+    local -a opts=()
+
+    if ! has_audio_stream "$input"; then
+        opts=(-an)
+    elif all_audio_is_compatible_aac "$input" "$AUDIO_CHANNELS"; then
+        # Source audio is already AAC with compatible channels — copy to avoid
+        # lossy re-encoding and potential size increase
+        log_debug "All audio tracks are AAC with ≤${AUDIO_CHANNELS}ch, copying"
+        opts=(-map 0:a -c:a copy)
+    else
+        # Get source channel count to handle mono properly
+        local source_channels
+        source_channels=$(get_audio_channels "$input" 0)
+
+        # Determine target channels: don't upmix mono to stereo unnecessarily
+        local target_channels="$AUDIO_CHANNELS"
+        if [[ "$source_channels" -eq 1 && "$AUDIO_CHANNELS" -gt 1 ]]; then
+            target_channels=1
+            log_debug "Preserving mono audio (source has 1 channel)"
+        fi
+
+        opts=(-map 0:a -c:a aac -ac "$target_channels" -ar 48000 -b:a "$AUDIO_BITRATE")
+
+        if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
+            local layout="stereo"
+            [[ "$target_channels" -eq 1 ]] && layout="mono"
+            opts+=(-filter:a "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000:channel_layouts=${layout}")
+        fi
+    fi
+
+    printf '%s\n' "${opts[*]}"
+}
+
+#------------------------------------------------------------------------------
+# Build subtitle options
+#------------------------------------------------------------------------------
+build_subtitle_opts() {
+    local input="$1"
+    local include_subtitles="$2"
+    local -a opts=()
+    local subtitle_codec="copy"
+
+    if [[ "$KEEP_SUBTITLES" != true || "$include_subtitles" != true ]]; then
+        return
+    fi
+
+    if output_container_is_mp4; then
+        if has_bitmap_subtitles "$input"; then
+            log_warn "  Bitmap subtitles cannot be included in MP4 container"
+            return
+        fi
+        subtitle_codec="mov_text"
+    fi
+
+    opts=(-map 0:s? -c:s "$subtitle_codec")
+    printf '%s\n' "${opts[*]}"
+}
+
+#------------------------------------------------------------------------------
+# Remux HEVC sources (copy video, encode audio)
+#------------------------------------------------------------------------------
 run_remux_with_audio_opts() {
-    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_subtitles="$6" include_attachments="$7" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
-    shift 9
-    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts
-    local audio_stream_count subtitle_stream_count i
+    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_subtitles="$5" include_attachments="$6" muxing_queue_size="${7:-4096}" timestamp_fix="${8:-false}"
+    shift 8
+    local -a audio_opts_array=() subtitle_opts_array=() attachment_opts=() pre_input_opts=() timestamp_opts=() stream_disposition_opts=() container_opts=() tag_opts=()
+    local audio_stream_count=0 i mp4_output=false
+
+    # Parse audio opts from remaining args
+    read -ra audio_opts_array <<< "$*"
+
+    if output_container_is_mp4; then
+        mp4_output=true
+        container_opts=(-movflags +faststart)
+    else
+        container_opts=()
+    fi
+
+    # hvc1 tag for compatibility (MP4 only; MKV uses codec IDs natively)
+    if [[ "$mp4_output" == true ]]; then
+        tag_opts=(-tag:v hvc1)
+    else
+        tag_opts=()
+    fi
 
     if [[ "$timestamp_fix" == true ]]; then
-        pre_input_opts=(-fflags +genpts)
+        pre_input_opts=(-fflags +genpts+discardcorrupt)
         timestamp_opts=(-avoid_negative_ts make_zero)
     else
         pre_input_opts=()
         timestamp_opts=()
     fi
 
-    if [[ "$metadata_mode" == "strip" ]]; then
-        metadata_opts=(-map_metadata -1 -map_chapters -1)
-    else
-        metadata_opts=(-map_metadata 0 -map_chapters 0)
-    fi
-
-    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
-        subtitle_opts=(-map 0:s? -c:s copy)
-    else
-        subtitle_opts=()
-    fi
+    # Build subtitle options
+    local sub_opts_str
+    sub_opts_str=$(build_subtitle_opts "$input" "$include_subtitles")
+    [[ -n "$sub_opts_str" ]] && read -ra subtitle_opts_array <<< "$sub_opts_str"
 
     if [[ "$KEEP_ATTACHMENTS" == true && "$include_attachments" == true ]]; then
-        attachment_opts=(-map 0:t? -c:t copy)
+        if [[ "$mp4_output" == true ]]; then
+            attachment_opts=()
+        else
+            attachment_opts=(-map 0:t? -c:t copy)
+        fi
     else
         attachment_opts=()
     fi
 
-    # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
-    stream_metadata_opts=()
     audio_stream_count=$(get_stream_count "a" "$input")
+    stream_disposition_opts=(-disposition:v:0 default)
     if [[ "$audio_stream_count" -gt 0 ]]; then
-        for ((i=0; i<audio_stream_count; i++)); do
-            stream_metadata_opts+=(-map_metadata:s:a:"$i" 0:s:a:"$i")
+        stream_disposition_opts+=(-disposition:a:0 default)
+        for ((i=1; i<audio_stream_count; i++)); do
+            stream_disposition_opts+=(-disposition:a:"$i" 0)
         done
-    fi
-
-    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
-        subtitle_stream_count=$(get_stream_count "s" "$input")
-        if [[ "$subtitle_stream_count" -gt 0 ]]; then
-            for ((i=0; i<subtitle_stream_count; i++)); do
-                stream_metadata_opts+=(-map_metadata:s:s:"$i" 0:s:s:"$i")
-            done
-        fi
     fi
 
     run_ffmpeg_logged "$err_file" \
-        ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+        ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" ${FFMPEG_PROGRESS_ARGS[@]+"${FFMPEG_PROGRESS_ARGS[@]}"} \
             -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-            "${pre_input_opts[@]}" \
+            ${pre_input_opts[@]+"${pre_input_opts[@]}"} \
             -i "$input" \
-            -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-            -dn -max_muxing_queue_size "$muxing_queue_size" \
+            -map "0:${video_stream_idx}" ${audio_opts_array[@]+"${audio_opts_array[@]}"} ${subtitle_opts_array[@]+"${subtitle_opts_array[@]}"} ${attachment_opts[@]+"${attachment_opts[@]}"} \
+            -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
             -c:v copy \
-            "${metadata_opts[@]}" \
-            "${stream_metadata_opts[@]}" \
-            "${timestamp_opts[@]}" \
+            ${tag_opts[@]+"${tag_opts[@]}"} \
+            ${stream_disposition_opts[@]+"${stream_disposition_opts[@]}"} \
+            -map_metadata 0 -map_chapters 0 \
+            ${timestamp_opts[@]+"${timestamp_opts[@]}"} \
+            ${container_opts[@]+"${container_opts[@]}"} \
             "$output"
 }
 
-# Build remux audio args for strict AAC mode:
-# - all audio tracks -> AAC
 run_remux_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_attachments="${6:-true}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
-    local -a audio_opts
+    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" include_subtitles="${6:-true}" muxing_queue_size="${7:-4096}" timestamp_fix="${8:-false}"
+    local audio_opts
 
-    if has_audio_stream "$input"; then
-        audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
-    else
-        audio_opts=(-an)
-    fi
+    audio_opts=$(build_audio_opts "$input")
 
-    run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$metadata_mode" "$err_file" "$include_subtitles" "$include_attachments" "$muxing_queue_size" "$timestamp_fix" "${audio_opts[@]}"
+    run_remux_with_audio_opts "$input" "$output" "$video_stream_idx" "$err_file" "$include_subtitles" "$include_attachments" "$muxing_queue_size" "$timestamp_fix" $audio_opts
 }
 
-# Core transcode executor for non-remux flow.
-# Video is encoded to HEVC; audio is encoded to AAC for all tracks, and
-# subtitles/attachments are preserved by default.
+#------------------------------------------------------------------------------
+# Full transcode (video + audio encode)
+#------------------------------------------------------------------------------
 run_encode_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" metadata_mode="${6:-}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
-    local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts
-    local audio_stream_count subtitle_stream_count i
+    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" include_subtitles="${6:-true}" muxing_queue_size="${7:-4096}" timestamp_fix="${8:-false}"
+    local -a audio_opts_array=() subtitle_opts_array=() attachment_opts=() pre_input_opts=() timestamp_opts=() stream_disposition_opts=() container_opts=() tag_opts=() color_opts=()
+    local audio_stream_count=0 i mp4_output=false vf_chain
 
-    if has_audio_stream "$input"; then
-        audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+    if output_container_is_mp4; then
+        mp4_output=true
+        container_opts=(-movflags +faststart)
     else
-        audio_opts=(-an)
+        container_opts=()
     fi
 
-    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
-        subtitle_opts=(-map 0:s? -c:s copy)
-    else
-        subtitle_opts=()
-    fi
+    # Build audio options
+    local audio_opts_str
+    audio_opts_str=$(build_audio_opts "$input")
+    [[ -n "$audio_opts_str" ]] && read -ra audio_opts_array <<< "$audio_opts_str"
+
+    # Build subtitle options
+    local sub_opts_str
+    sub_opts_str=$(build_subtitle_opts "$input" "$include_subtitles")
+    [[ -n "$sub_opts_str" ]] && read -ra subtitle_opts_array <<< "$sub_opts_str"
 
     if [[ "$KEEP_ATTACHMENTS" == true && "$include_attachments" == true ]]; then
-        attachment_opts=(-map 0:t? -c:t copy)
+        if [[ "$mp4_output" == true ]]; then
+            attachment_opts=()
+        else
+            attachment_opts=(-map 0:t? -c:t copy)
+        fi
     else
         attachment_opts=()
     fi
 
-    if [[ -z "$metadata_mode" ]]; then
-        [[ "$CLEAN_METADATA" == true ]] && metadata_mode="strip" || metadata_mode="keep"
-    fi
-
-    if [[ "$metadata_mode" == "strip" ]]; then
-        metadata_opts=(-map_metadata -1 -map_chapters -1)
-    else
-        metadata_opts=(-map_metadata 0 -map_chapters 0)
-    fi
-
     if [[ "$timestamp_fix" == true ]]; then
-        pre_input_opts=(-fflags +genpts)
+        pre_input_opts=(-fflags +genpts+discardcorrupt)
         timestamp_opts=(-avoid_negative_ts make_zero)
     else
         pre_input_opts=()
         timestamp_opts=()
     fi
 
-    # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
-    stream_metadata_opts=()
-    audio_stream_count=$(get_stream_count "a" "$input")
-    if [[ "$audio_stream_count" -gt 0 ]]; then
-        for ((i=0; i<audio_stream_count; i++)); do
-            stream_metadata_opts+=(-map_metadata:s:a:"$i" 0:s:a:"$i")
-        done
-    fi
-
-    if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
-        subtitle_stream_count=$(get_stream_count "s" "$input")
-        if [[ "$subtitle_stream_count" -gt 0 ]]; then
-            for ((i=0; i<subtitle_stream_count; i++)); do
-                stream_metadata_opts+=(-map_metadata:s:s:"$i" 0:s:s:"$i")
-            done
+    # Preserve color metadata for HDR passthrough
+    local hdr_type
+    hdr_type=$(detect_hdr_type "$input")
+    if [[ "$hdr_type" == "hdr10" && "$HANDLE_HDR" == "preserve" ]]; then
+        local color_meta
+        color_meta=$(get_color_metadata "$input")
+        IFS=':' read -r ct cp cs <<< "$color_meta"
+        if [[ "$ct" != "unknown" ]]; then
+            color_opts+=(-color_trc "$ct" -color_primaries "$cp" -colorspace "$cs")
         fi
     fi
 
+    # hvc1 tag for compatibility (MP4 only; MKV uses codec IDs natively)
+    if [[ "$mp4_output" == true ]]; then
+        tag_opts=(-tag:v hvc1)
+    else
+        tag_opts=()
+    fi
+
+    audio_stream_count=$(get_stream_count "a" "$input")
+    stream_disposition_opts=(-disposition:v:0 default)
+    if [[ "$audio_stream_count" -gt 0 ]]; then
+        stream_disposition_opts+=(-disposition:a:0 default)
+        for ((i=1; i<audio_stream_count; i++)); do
+            stream_disposition_opts+=(-disposition:a:"$i" 0)
+        done
+    fi
+
+    # Build video filter chain
+    vf_chain=$(build_video_filter "$input" "$ENCODER_MODE")
+
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+        local -a vf_opts=()
+        [[ -n "$vf_chain" ]] && vf_opts=(-vf "$vf_chain")
+
         run_ffmpeg_logged "$err_file" \
-            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" ${FFMPEG_PROGRESS_ARGS[@]+"${FFMPEG_PROGRESS_ARGS[@]}"} \
                 -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-                "${pre_input_opts[@]}" \
+                ${pre_input_opts[@]+"${pre_input_opts[@]}"} \
                 -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
-                -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
-                -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-                -dn -max_muxing_queue_size "$muxing_queue_size" \
+                -i "$input" \
+                ${vf_opts[@]+"${vf_opts[@]}"} \
+                -map "0:${video_stream_idx}" ${audio_opts_array[@]+"${audio_opts_array[@]}"} ${subtitle_opts_array[@]+"${subtitle_opts_array[@]}"} ${attachment_opts[@]+"${attachment_opts[@]}"} \
+                -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
                 -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
-                "${metadata_opts[@]}" \
-                "${stream_metadata_opts[@]}" \
-                "${timestamp_opts[@]}" \
+                ${tag_opts[@]+"${tag_opts[@]}"} \
+                ${color_opts[@]+"${color_opts[@]}"} \
+                ${stream_disposition_opts[@]+"${stream_disposition_opts[@]}"} \
+                -map_metadata 0 -map_chapters 0 \
+                ${timestamp_opts[@]+"${timestamp_opts[@]}"} \
+                ${container_opts[@]+"${container_opts[@]}"} \
                 "$output"
     else
+        local -a vf_opts=()
+        if [[ -n "$vf_chain" ]]; then
+            vf_opts=(-vf "$vf_chain")
+        fi
+
         run_ffmpeg_logged "$err_file" \
-            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" ${FFMPEG_PROGRESS_ARGS[@]+"${FFMPEG_PROGRESS_ARGS[@]}"} \
                 -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-                "${pre_input_opts[@]}" \
+                ${pre_input_opts[@]+"${pre_input_opts[@]}"} \
                 -i "$input" \
-                -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-                -dn -max_muxing_queue_size "$muxing_queue_size" \
+                ${vf_opts[@]+"${vf_opts[@]}"} \
+                -map "0:${video_stream_idx}" ${audio_opts_array[@]+"${audio_opts_array[@]}"} ${subtitle_opts_array[@]+"${subtitle_opts_array[@]}"} ${attachment_opts[@]+"${attachment_opts[@]}"} \
+                -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
                 -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
-                -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
-                -x265-params log-level=error \
-                "${metadata_opts[@]}" \
-                "${stream_metadata_opts[@]}" \
-                "${timestamp_opts[@]}" \
+                -profile:v "$CPU_HEVC_PROFILE" -pix_fmt "$CPU_PIX_FMT" -g "$KEYFRAME_INT" \
+                -x265-params "log-level=error:open-gop=0" \
+                ${tag_opts[@]+"${tag_opts[@]}"} \
+                ${color_opts[@]+"${color_opts[@]}"} \
+                ${stream_disposition_opts[@]+"${stream_disposition_opts[@]}"} \
+                -map_metadata 0 -map_chapters 0 \
+                ${timestamp_opts[@]+"${timestamp_opts[@]}"} \
+                ${container_opts[@]+"${container_opts[@]}"} \
                 "$output"
     fi
 }
 
-# Parse filename and infer library classification (TV vs movie) with best-effort
-# pattern matching for common release naming styles.
+#------------------------------------------------------------------------------
+# Filename parsing for TV/Movie classification
+#------------------------------------------------------------------------------
 parse_filename() {
     local filename="$1"
     local parent="$2"
     local base="${filename%.*}"
-    
+
     MEDIA_TYPE="" SHOW_NAME="" SEASON="" EPISODE="" MOVIE_NAME="" YEAR=""
-    
+
     # SxxExx pattern
     if [[ "$base" =~ [Ss]([0-9]{1,2})[Ee]([0-9]{1,3}) ]]; then
         MEDIA_TYPE="tv"
         SEASON="${BASH_REMATCH[1]}"
         EPISODE="${BASH_REMATCH[2]}"
-        # Remove SxxExx and everything after, then clean trailing dashes/spaces
         SHOW_NAME=$(echo "$base" | sed -E 's/[[:space:]._-]*[Ss][0-9]+[Ee][0-9]+.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
-        # Fallback to parent dir
         [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(echo "$parent" | sed -E 's/[Ss][0-9]+.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
     # Anime: [Group] Name - 05
     elif [[ "$base" =~ ^(\[.+\])?[[:space:]]*(.+)[[:space:]]+-[[:space:]]*([0-9]{1,3})([[:space:]]|\[|v[0-9]|$) ]]; then
@@ -721,24 +1117,23 @@ parse_filename() {
         MEDIA_TYPE="movie"
         MOVIE_NAME=$(echo "$base" | tr '._' ' ' | xargs)
     fi
-    
+
     # Clean tags
-    local tags='(720p|1080p|2160p|4K|WEB-DL|BluRay|x264|x265|HEVC|AAC|DTS|FLAC|10bit|HDR|Dual.Audio|EMBER|BDRip|BD|DD\+?|H\.?26[45]).*'
+    local tags='(720p|1080p|2160p|4K|UHD|WEB-DL|WEBRip|BluRay|BDRip|BD|DVDRip|HDTV|x264|x265|HEVC|H\.?264|H\.?265|AAC|AC3|DTS|DTS-HD|TrueHD|FLAC|EAC3|DD\+?|Atmos|10bit|HDR|HDR10|HDR10\+|DV|DoVi|Dual\.?Audio|MULTI|REMUX|PROPER|REPACK|EMBER|NF|AMZN|DSNP|HMAX|ATVP).*'
     SHOW_NAME=$(echo "$SHOW_NAME" | sed -E "s/$tags//i" | sed -E 's/\[[^]]*\]//g' | xargs)
     MOVIE_NAME=$(echo "$MOVIE_NAME" | sed -E "s/$tags//i" | sed -E 's/\[[^]]*\]//g' | xargs)
-    
+
     # Title case
     SHOW_NAME=$(echo "$SHOW_NAME" | sed 's/\b\(.\)/\u\1/g')
     MOVIE_NAME=$(echo "$MOVIE_NAME" | sed 's/\b\(.\)/\u\1/g')
-    
+
     # Fallbacks
     [[ "$MEDIA_TYPE" == "tv" && -z "$SHOW_NAME" ]] && SHOW_NAME="Unknown"
     [[ "$MEDIA_TYPE" == "movie" && -z "$MOVIE_NAME" ]] && MOVIE_NAME="Unknown"
-    
+
     log_debug "Parsed: $MEDIA_TYPE | show='$SHOW_NAME' S${SEASON:-?}E${EPISODE:-?} | movie='$MOVIE_NAME' (${YEAR:-no year})"
 }
 
-# Build destination path from parsed media metadata.
 get_output_path() {
     if [[ "$MEDIA_TYPE" == "tv" ]]; then
         local s=$(printf "%02d" "$((10#${SEASON:-1}))")
@@ -751,108 +1146,84 @@ get_output_path() {
     fi
 }
 
-# Transcode one source file into its output path.
-# AAC conversion is strict: no source-audio copy fallback on failure.
+#------------------------------------------------------------------------------
+# Encode a single file with retry logic
+#------------------------------------------------------------------------------
 encode_file() {
     local input="$1" output="$2" video_stream_idx="${3:-0}"
-    
+
     mkdir -p "$(dirname "$output")" || { log_error "Can't create dir"; return 1; }
-    
+
     if [[ "$DRY_RUN" == true ]]; then
         log_info "[DRY] $input"
         log_info "   -> $output"
         return 0
     fi
-    
+
     log_info "Encoding: $(basename "$input")"
     log_info "  -> $(basename "$output")"
-    
-    local start result
+
+    local start encode_result=1
     start=$(date +%s)
     local ffmpeg_err
-    ffmpeg_err=$(mktemp)
-    local encode_metadata_mode="strip"
+    ffmpeg_err=$(make_temp_file)
     local encode_include_attachments=true
     local encode_include_subtitles=true
     local encode_muxing_queue_size=4096
-    local encode_timestamp_fix=false
-    [[ "$CLEAN_METADATA" == false ]] && encode_metadata_mode="keep"
+    local encode_timestamp_fix="$CLEAN_TIMESTAMPS"
+    local retry_count=0
+    local max_retries=4
 
-    if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-        result=0
-    else
-        result=$?
-
-        if [[ "$STRICT_MODE" != true ]]; then
-            if [[ "$encode_metadata_mode" == "keep" ]]; then
-                log_warn "Encode retry: switching to clean metadata mode"
-                encode_metadata_mode="strip"
-                rm -f "$output"
-                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                    result=0
-                else
-                    result=$?
-                fi
-            fi
-
-            if [[ "$result" -ne 0 && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$ffmpeg_err"; then
-                log_warn "Encode retry: source attachment tag issue; retrying without attachments"
-                rm -f "$output"
-                encode_include_attachments=false
-
-                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                    result=0
-                else
-                    result=$?
-                fi
-            fi
-
-            if [[ "$result" -ne 0 && "$KEEP_SUBTITLES" == true && "$encode_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$ffmpeg_err"; then
-                log_warn "Encode retry: subtitle stream mux issue; retrying without subtitles"
-                rm -f "$output"
-                encode_include_subtitles=false
-
-                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                    result=0
-                else
-                    result=$?
-                fi
-            fi
-
-            if [[ "$result" -ne 0 && "$encode_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$ffmpeg_err"; then
-                log_warn "Encode retry: increasing mux queue size to 16384"
-                rm -f "$output"
-                encode_muxing_queue_size=16384
-
-                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                    result=0
-                else
-                    result=$?
-                fi
-            fi
-
-            if [[ "$result" -ne 0 && "$encode_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$ffmpeg_err"; then
-                log_warn "Encode retry: timestamp discontinuity detected; retrying with genpts"
-                rm -f "$output"
-                encode_timestamp_fix=true
-
-                if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-                    result=0
-                else
-                    result=$?
-                fi
-            fi
+    # Try encoding with progressive fallbacks
+    while [[ $retry_count -lt $max_retries ]]; do
+        if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
+            encode_result=0
+            break
         fi
-    fi
-    
+
+        [[ "$STRICT_MODE" == true ]] && break
+
+        ((retry_count++))
+
+        if [[ "$encode_include_attachments" == true ]] && ffmpeg_error_has_attachment_tag_issue "$ffmpeg_err"; then
+            log_warn "Retry $retry_count: removing attachments"
+            encode_include_attachments=false
+            rm -f "$output"
+            continue
+        fi
+
+        if [[ "$encode_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$ffmpeg_err"; then
+            log_warn "Retry $retry_count: removing subtitles"
+            encode_include_subtitles=false
+            rm -f "$output"
+            continue
+        fi
+
+        if [[ "$encode_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$ffmpeg_err"; then
+            log_warn "Retry $retry_count: increasing mux queue to 16384"
+            encode_muxing_queue_size=16384
+            rm -f "$output"
+            continue
+        fi
+
+        if [[ "$encode_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$ffmpeg_err"; then
+            log_warn "Retry $retry_count: enabling timestamp fix"
+            encode_timestamp_fix=true
+            rm -f "$output"
+            continue
+        fi
+
+        # No matching fix found, stop retrying
+        break
+    done
+
     local elapsed=$(( $(date +%s) - start ))
-    
-    if [[ $result -eq 0 && -f "$output" ]]; then
+
+    if [[ $encode_result -eq 0 && -f "$output" ]]; then
         local in_sz out_sz ratio
-        in_sz=$(stat -c%s "$input" 2>/dev/null) || in_sz=0
-        out_sz=$(stat -c%s "$output" 2>/dev/null) || out_sz=0
+        in_sz=$(get_file_size "$input")
+        out_sz=$(get_file_size "$output")
         [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=0
-        rm -f "$ffmpeg_err"
         log_success "Done in ${elapsed}s (${ratio}%)"
         return 0
     else
@@ -861,247 +1232,298 @@ encode_file() {
             log_error "Last ffmpeg output:"
             tail -n 20 "$ffmpeg_err" | sed 's/^/  /'
         fi
-        rm -f "$ffmpeg_err"
         rm -f "$output"
         return 1
     fi
 }
 
+#------------------------------------------------------------------------------
+# Process all files in input directory
+#------------------------------------------------------------------------------
 process_files() {
     local -a files=()
-    local exts="mkv|mp4|avi|m4v|mov|wmv|flv|webm|ts|m2ts"
-    
+    local exts="mkv|mp4|avi|m4v|mov|wmv|flv|webm|ts|m2ts|mpg|mpeg|vob|ogv"
+
     while IFS= read -r -d '' f; do
         files+=("$f")
     done < <(find "$INPUT_DIR" -type f -regextype posix-extended -iregex ".*\.($exts)$" -print0 | sort -z)
-    
+
     local total=${#files[@]} current=0 encoded=0 skipped=0 failed=0
-    
+
     log_info "Found $total files"
-    local profile_label="main10"
+    local profile_label="$CPU_HEVC_PROFILE"
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
-    log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (strict AAC, no source-audio fallback) | Keyframes: ${KEYFRAME_INT}f"
-    [[ "$KEEP_SUBTITLES" == true ]] && log_info "Subtitles: Copy all subtitle streams (ASS and others preserved)"
-    [[ "$KEEP_ATTACHMENTS" == true ]] && log_info "Attachments: Copy font/image attachments"
-    [[ "$CLEAN_METADATA" == true ]] && log_info "Metadata: clean container metadata and chapters"
-    [[ "$CLEAN_METADATA" == false ]] && log_info "Metadata: preserve source container metadata and chapters"
-    [[ "$SHOW_FFMPEG_FPS" == true ]] && log_info "FFmpeg progress: live FPS/speed enabled"
-    [[ "$SHOW_FILE_STATS" == true ]] && log_info "File stats: source video resolution/bitrate section enabled"
-    [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
-    [[ "$STRICT_MODE" == true ]] && log_info "Retry policy: strict mode enabled (automatic retries disabled)"
+    log_info "Container: ${OUTPUT_CONTAINER^^}"
+    log_info "Audio: AAC passthrough when compatible, otherwise encode to AAC ${AUDIO_BITRATE}"
+    if output_container_is_mp4; then
+        log_info "Compatibility: hvc1 tag for Apple/browser support"
+    fi
+    [[ "$HANDLE_HDR" == "preserve" ]] && log_info "HDR: Preserve metadata when present"
+    [[ "$HANDLE_HDR" == "tonemap" ]] && log_info "HDR: Tonemap to SDR"
+    [[ "$DEINTERLACE_AUTO" == true ]] && log_info "Deinterlace: Auto-detect and apply yadif"
+    if [[ "$KEEP_SUBTITLES" == true ]]; then
+        if output_container_is_mp4; then
+            log_info "Subtitles: Text subs only (mov_text for MP4)"
+        else
+            log_info "Subtitles: Copy all streams"
+        fi
+    fi
+    if [[ "$KEEP_ATTACHMENTS" == true ]] && ! output_container_is_mp4; then
+        log_info "Attachments: Copy fonts/images"
+    fi
+    [[ "$SKIP_HEVC" == true ]] && log_info "HEVC sources: Remux (copy video, encode audio)"
+    [[ "$STRICT_MODE" == true ]] && log_info "Retry policy: Strict mode (no auto-retry)"
     echo
-    
-    # Main per-file pipeline:
-    # 1) classify filename and compute output path
-    # 2) optionally remux HEVC sources in skip-hevc mode
-    # 3) otherwise transcode with encode_file
+
     for f in "${files[@]}"; do
         ((current++))
-        
+
         log_info "[$current/$total] $(basename "$f")"
-        
-        # Parse filename first to get output path
+
+        # Validate file before processing
+        if ! validate_input_file "$f"; then
+            log_error "Skipping invalid file"
+            ((failed++))
+            echo
+            continue
+        fi
+
+        # Check for video stream
+        local video_idx
+        video_idx=$(get_primary_video_stream_index "$f")
+        if [[ -z "$video_idx" ]]; then
+            log_warn "No video stream found, skipping"
+            ((skipped++))
+            echo
+            continue
+        fi
+
         parse_filename "$(basename "$f")" "$(basename "$(dirname "$f")")"
         local out
         out=$(get_output_path)
-        local video_idx video_codec video_resolution video_bitrate_label
-        video_idx=$(get_primary_video_stream_index "$f")
+        local video_codec video_resolution video_bitrate_label
         video_codec=$(get_primary_video_codec "$f")
         [[ -z "$video_codec" ]] && video_codec=$(get_codec "$f")
         video_resolution=$(get_primary_video_resolution "$f")
         video_bitrate_label=$(get_primary_video_bitrate_label "$f")
-        log_debug "Primary video stream: index=${video_idx:-0}, codec=${video_codec:-unknown}"
+
+        log_debug "Primary video stream: index=${video_idx}, codec=${video_codec:-unknown}"
+
         if [[ "$SHOW_FILE_STATS" == true ]]; then
-            log_info "File Stats:"
-            log_info "  Video: ${video_resolution} | ${video_bitrate_label} | codec=${video_codec:-unknown}"
+            local hdr_type
+            hdr_type=$(detect_hdr_type "$f")
+            local hdr_label=""
+            [[ "$hdr_type" != "sdr" ]] && hdr_label=" [HDR]"
+            local interlace_label=""
+            is_interlaced "$f" && interlace_label=" [Interlaced]"
+            log_info "  Video: ${video_resolution} | ${video_bitrate_label} | ${video_codec:-unknown}${hdr_label}${interlace_label}"
         fi
-        
-        # Check if already HEVC - copy video, but still encode audio to AAC
-        if [[ "$SKIP_HEVC" == true ]]; then
-            if [[ "$video_codec" == "hevc" ]]; then
+
+        # Check if already HEVC - copy video, encode audio only
+        if [[ "$SKIP_HEVC" == true && "$video_codec" == "hevc" ]]; then
+            local allow_hevc_remux=true
+            local source_profile source_pix_fmt
+            source_profile=$(get_primary_video_profile "$f")
+            source_pix_fmt=$(get_primary_video_pix_fmt "$f")
+
+            if ! is_edge_safe_hevc_stream "$source_profile" "$source_pix_fmt"; then
+                allow_hevc_remux=false
+                log_warn "  HEVC profile '${source_profile:-unknown}' not browser-safe; will re-encode"
+            fi
+
+            if [[ "$allow_hevc_remux" == true ]]; then
                 if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
                     log_warn "Skip (exists): $(basename "$out")"
                     ((skipped++))
                     echo
                     continue
                 fi
-                log_info "Remuxing (HEVC -> copy video, encode AAC): $(basename "$f")"
+
+                log_info "Remuxing (copy HEVC, encode AAC): $(basename "$f")"
                 log_info "  -> $(basename "$out")"
                 mkdir -p "$(dirname "$out")"
+
                 if [[ "$DRY_RUN" == true ]]; then
                     log_success "[DRY] Would remux"
-                else
-                    local start_rm=$(date +%s)
-                    local remux_err remux_ok=false
-                    remux_err=$(mktemp)
-                    local remux_metadata_mode="strip"
-                    local remux_include_subtitles=true
-                    local remux_include_attachments=true
-                    local remux_muxing_queue_size=4096
-                    local remux_timestamp_fix=false
-                    [[ "$CLEAN_METADATA" == false ]] && remux_metadata_mode="keep"
+                    ((encoded++))
+                    echo
+                    continue
+                fi
 
-                    # Primary attempt follows the selected metadata mode.
-                    if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
+                local start_rm=$(date +%s)
+                local remux_err remux_ok=false
+                remux_err=$(make_temp_file)
+                local remux_include_subtitles=true
+                local remux_include_attachments=true
+                local remux_muxing_queue_size=4096
+                local remux_timestamp_fix="$CLEAN_TIMESTAMPS"
+                local remux_retry_count=0
+                local remux_max_retries=4
+
+                while [[ $remux_retry_count -lt $remux_max_retries ]]; do
+                    if run_remux_attempt "$f" "$out" "$video_idx" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
                         remux_ok=true
+                        break
                     fi
 
-                    if [[ "$STRICT_MODE" != true ]]; then
-                        if [[ "$remux_ok" != true && "$remux_metadata_mode" == "keep" ]]; then
-                            log_warn "Remux retry: switching to clean metadata mode"
-                            remux_metadata_mode="strip"
-                            rm -f "$out"
+                    [[ "$STRICT_MODE" == true ]] && break
 
-                            # Fallback to clean metadata mode if preserve mode fails.
-                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                                remux_ok=true
-                            fi
-                        fi
+                    ((remux_retry_count++))
+                    rm -f "$out"
 
-                        if [[ "$remux_ok" != true && "$KEEP_ATTACHMENTS" == true ]] && ffmpeg_error_has_attachment_tag_issue "$remux_err"; then
-                            log_warn "Remux retry: source attachment tag issue; retrying without attachments"
-                            rm -f "$out"
-                            remux_include_attachments=false
-
-                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                                remux_ok=true
-                            fi
-                        fi
-
-                        if [[ "$remux_ok" != true && "$KEEP_SUBTITLES" == true && "$remux_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$remux_err"; then
-                            log_warn "Remux retry: subtitle stream mux issue; retrying without subtitles"
-                            rm -f "$out"
-                            remux_include_subtitles=false
-
-                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                                remux_ok=true
-                            fi
-                        fi
-
-                        if [[ "$remux_ok" != true && "$remux_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$remux_err"; then
-                            log_warn "Remux retry: increasing mux queue size to 16384"
-                            rm -f "$out"
-                            remux_muxing_queue_size=16384
-
-                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                                remux_ok=true
-                            fi
-                        fi
-
-                        if [[ "$remux_ok" != true && "$remux_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$remux_err"; then
-                            log_warn "Remux retry: timestamp discontinuity detected; retrying with genpts"
-                            rm -f "$out"
-                            remux_timestamp_fix=true
-
-                            if run_remux_attempt "$f" "$out" "${video_idx:-0}" "$remux_metadata_mode" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
-                                remux_ok=true
-                            fi
-                        fi
-                    fi
-
-                    if [[ "$remux_ok" != true ]]; then
-                        log_error "Remux failed"
-                        if [[ -s "$remux_err" ]]; then
-                            log_error "Last ffmpeg output:"
-                            tail -n 20 "$remux_err" | sed 's/^/  /'
-                        fi
-                        rm -f "$remux_err"
-                        rm -f "$out"
-                        ((failed++))
-                        echo
+                    if [[ "$remux_include_attachments" == true ]] && ffmpeg_error_has_attachment_tag_issue "$remux_err"; then
+                        log_warn "Remux retry $remux_retry_count: skip attachments"
+                        remux_include_attachments=false
                         continue
                     fi
-                    rm -f "$remux_err"
-                    
-                    local elapsed_rm=$(( $(date +%s) - start_rm ))
-                    local in_sz out_sz ratio
-                    in_sz=$(stat -c%s "$f" 2>/dev/null) || in_sz=0
-                    out_sz=$(stat -c%s "$out" 2>/dev/null) || out_sz=0
-                    [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=100
-                    log_success "Remuxed in ${elapsed_rm}s (${ratio}% of original)"
+
+                    if [[ "$remux_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$remux_err"; then
+                        log_warn "Remux retry $remux_retry_count: skip subtitles"
+                        remux_include_subtitles=false
+                        continue
+                    fi
+
+                    if [[ "$remux_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$remux_err"; then
+                        log_warn "Remux retry $remux_retry_count: increase queue"
+                        remux_muxing_queue_size=16384
+                        continue
+                    fi
+
+                    if [[ "$remux_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$remux_err"; then
+                        log_warn "Remux retry $remux_retry_count: fix timestamps"
+                        remux_timestamp_fix=true
+                        continue
+                    fi
+
+                    break
+                done
+
+                if [[ "$remux_ok" != true ]]; then
+                    log_error "Remux failed"
+                    if [[ -s "$remux_err" ]]; then
+                        log_error "Last ffmpeg output:"
+                        tail -n 20 "$remux_err" | sed 's/^/  /'
+                    fi
+                    rm -f "$out"
+                    ((failed++))
+                    echo
+                    continue
                 fi
+
+                local elapsed_rm=$(( $(date +%s) - start_rm ))
+                local in_sz out_sz ratio
+                in_sz=$(get_file_size "$f")
+                out_sz=$(get_file_size "$out")
+                [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=100
+                log_success "Remuxed in ${elapsed_rm}s (${ratio}% of original)"
                 ((encoded++))
                 echo
                 continue
             fi
         fi
-        
+
         if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
             log_warn "Skip (exists)"
             ((skipped++))
             echo
             continue
         fi
-        
-        if encode_file "$f" "$out" "${video_idx:-0}"; then
+
+        if encode_file "$f" "$out" "$video_idx"; then
             ((encoded++))
         else
             ((failed++))
         fi
         echo
     done
-    
+
     log_info "=============================="
     log_info "Done: $encoded encoded, $skipped skipped, $failed failed"
 
     return 0
 }
 
-# Lightweight environment diagnostics for quick troubleshooting.
+#------------------------------------------------------------------------------
+# System diagnostics
+#------------------------------------------------------------------------------
 run_check() {
     log_info "=== System Check ==="
-    
+
     if command -v ffmpeg &>/dev/null; then
-        log_success "ffmpeg: $(ffmpeg -version 2>/dev/null | head -1)"
+        local ffmpeg_version
+        ffmpeg_version=$(ffmpeg -version 2>/dev/null | head -1)
+        log_success "ffmpeg: ${ffmpeg_version:-unknown}"
     else
         log_error "ffmpeg not found"
     fi
-    
+
     log_info "HEVC encoders:"
-    ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "hevc|265"
-    
-    local dev=$(ls /dev/dri/renderD* 2>/dev/null | head -1)
+    local hevc_encoders
+    hevc_encoders=$(ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "hevc|265" || true)
+    if [[ -n "$hevc_encoders" ]]; then
+        printf '%s\n' "$hevc_encoders"
+    else
+        log_warn "No HEVC-related encoders reported by ffmpeg"
+    fi
+
+    local dev
+    dev=$(get_first_render_device || true)
     if [[ -n "$dev" ]]; then
         log_info "Testing VAAPI on $dev..."
         if ffmpeg -hide_banner -nostdin -init_hw_device vaapi=va:"$dev" \
                 -f lavfi -i color=black:s=256x256:d=0.1 \
                 -vf 'format=p010,hwupload' -c:v hevc_vaapi -profile:v main10 -f null - 2>/dev/null; then
-            log_success "VAAPI works"
+            log_success "VAAPI works (main10)"
+        elif ffmpeg -hide_banner -nostdin -init_hw_device vaapi=va:"$dev" \
+                -f lavfi -i color=black:s=256x256:d=0.1 \
+                -vf 'format=nv12,hwupload' -c:v hevc_vaapi -profile:v main -f null - 2>/dev/null; then
+            log_success "VAAPI works (main/8-bit only)"
         else
             log_error "VAAPI failed"
         fi
+    else
+        log_warn "No VAAPI device found"
     fi
-    
+
     log_info "Testing CPU x265..."
     if ffmpeg -hide_banner -nostdin -f lavfi -i color=black:s=256x256:d=0.1 -c:v libx265 -f null - 2>/dev/null; then
         log_success "CPU x265 works"
     else
         log_error "CPU x265 failed"
     fi
+
+    log_info "Testing AAC encoder..."
+    if ffmpeg -hide_banner -nostdin -f lavfi -i sine=frequency=1000:duration=0.1 -c:a aac -f null - 2>/dev/null; then
+        log_success "AAC encoder works"
+    else
+        log_error "AAC encoder failed"
+    fi
 }
 
+#------------------------------------------------------------------------------
 # Entrypoint
+#------------------------------------------------------------------------------
 main() {
     init_colors
     parse_args "$@"
-    init_colors
+    init_colors  # Re-init after --color/--no-color parsed
     print_banner
-    
+
     if [[ "$CHECK_ONLY" == true ]]; then
         run_check
         exit 0
     fi
-    
+
     [[ ! -d "$INPUT_DIR" ]] && { log_error "Input not found: $INPUT_DIR"; exit 1; }
     mkdir -p "$OUTPUT_DIR"
-    
+
     log_info "=== Muxmaster v${SCRIPT_VERSION} ==="
     log_info "In:  $INPUT_DIR"
     log_info "Out: $OUTPUT_DIR"
     [[ "$DRY_RUN" == true ]] && log_warn "DRY RUN"
     echo
-    
+
     check_deps
     process_files
 }
