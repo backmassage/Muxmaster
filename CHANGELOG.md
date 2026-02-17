@@ -2,6 +2,24 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2.3] - 2026-02-17
+
+### Added
+
+- Argument validation for:
+  - `--container` values (`mkv`, `mp4`)
+  - `--hdr` values (`preserve`, `tonemap`)
+- Runtime safety guard that rejects output directories that are the same as, or nested inside, the input directory.
+
+### Changed
+
+- Updated README for release `1.2.3` and aligned documented behavior/options with `Muxmaster.sh v2.1.0`.
+- Clarified CLI help text for `--no-match-audio-layout`.
+
+### Fixed
+
+- Fixed audio channel-selection logic during re-encode so mixed multi-audio inputs no longer get forced to mono when the first track is mono.
+
 ## [1.1] - 2026-02-16
 
 ### Added

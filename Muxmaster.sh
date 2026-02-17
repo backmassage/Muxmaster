@@ -198,6 +198,7 @@ Behavior Options:
   --clean-timestamps        Enable timestamp regeneration (default: on)
   --no-clean-timestamps     Disable timestamp regeneration
   --match-audio-layout      Force stereo normalization (default: on)
+  --no-match-audio-layout   Disable audio layout normalization
 
 Display Options:
   --show-fps                Show live ffmpeg FPS/speed (default: on)
@@ -279,7 +280,7 @@ parse_args() {
                 ;;
             --hdr)
                 require_option_value "$1" "${2-}"
-                HANDLE_HDR="$2"
+                HANDLE_HDR="${2,,}"
                 shift 2
                 ;;
             --no-deinterlace)
@@ -326,6 +327,22 @@ parse_args() {
         vaapi|cpu) ;;
         *)
             log_error "Invalid mode '$ENCODER_MODE' (use 'vaapi' or 'cpu')"
+            exit 1
+            ;;
+    esac
+
+    case "$OUTPUT_CONTAINER" in
+        mkv|mp4) ;;
+        *)
+            log_error "Invalid container '$OUTPUT_CONTAINER' (use 'mkv' or 'mp4')"
+            exit 1
+            ;;
+    esac
+
+    case "$HANDLE_HDR" in
+        preserve|tonemap) ;;
+        *)
+            log_error "Invalid HDR mode '$HANDLE_HDR' (use 'preserve' or 'tonemap')"
             exit 1
             ;;
     esac
@@ -826,15 +843,20 @@ build_audio_opts() {
         log_debug "All audio tracks are AAC with ≤${AUDIO_CHANNELS}ch, copying"
         opts=(-map 0:a -c:a copy)
     else
-        # Get source channel count to handle mono properly
-        local source_channels
-        source_channels=$(get_audio_channels "$input" 0)
+        # Inspect all tracks so one mono first track does not force every
+        # encoded track to mono when later tracks are stereo/multi-channel.
+        local stream_count i source_channels max_source_channels=0
+        stream_count=$(get_stream_count "a" "$input")
+        for ((i=0; i<stream_count; i++)); do
+            source_channels=$(get_audio_channels "$input" "$i")
+            [[ "$source_channels" -gt "$max_source_channels" ]] && max_source_channels="$source_channels"
+        done
 
-        # Determine target channels: don't upmix mono to stereo unnecessarily
+        # Only preserve mono when all input tracks are mono.
         local target_channels="$AUDIO_CHANNELS"
-        if [[ "$source_channels" -eq 1 && "$AUDIO_CHANNELS" -gt 1 ]]; then
+        if [[ "$max_source_channels" -le 1 && "$AUDIO_CHANNELS" -gt 1 ]]; then
             target_channels=1
-            log_debug "Preserving mono audio (source has 1 channel)"
+            log_debug "Preserving mono audio (all source tracks are mono)"
         fi
 
         opts=(-map 0:a -c:a aac -ac "$target_channels" -ar 48000 -b:a "$AUDIO_BITRATE")
@@ -1517,6 +1539,15 @@ main() {
 
     [[ ! -d "$INPUT_DIR" ]] && { log_error "Input not found: $INPUT_DIR"; exit 1; }
     mkdir -p "$OUTPUT_DIR"
+
+    local input_abs output_abs
+    input_abs=$(cd "$INPUT_DIR" && pwd -P) || { log_error "Cannot resolve input path: $INPUT_DIR"; exit 1; }
+    output_abs=$(cd "$OUTPUT_DIR" && pwd -P) || { log_error "Cannot resolve output path: $OUTPUT_DIR"; exit 1; }
+    if [[ "$output_abs" == "$input_abs" || "$output_abs" == "$input_abs/"* ]]; then
+        log_error "Output directory must not be inside input directory"
+        log_error "Choose an output path outside: $INPUT_DIR"
+        exit 1
+    fi
 
     log_info "=== Muxmaster v${SCRIPT_VERSION} ==="
     log_info "In:  $INPUT_DIR"
