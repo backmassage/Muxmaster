@@ -133,6 +133,8 @@ Typical anime/dual-audio remux workflow:
 | Disable automatic retry fallbacks | `./Muxmaster.sh --strict "/input" "/output"` |
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
 | Force timestamp regeneration during processing | `./Muxmaster.sh --clean-timestamps "/input" "/output"` |
+| Force matching audio layout on all tracks | `./Muxmaster.sh --match-audio-layout "/input" "/output"` |
+| Edge-safe pass (timestamps + matched audio layout) | `./Muxmaster.sh --clean-timestamps --match-audio-layout "/input" "/output"` |
 | Regenerate clean timestamps before retest | `scripts/helpers/clean_timestamps_remux.sh "/input.mkv" "/output_fixed.mkv"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
 | System diagnostics | `./Muxmaster.sh --check` |
@@ -165,6 +167,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--strict` | Disable automatic FFmpeg retry fallbacks (fail fast per file) |
 | `--clean-timestamps` | Regenerate timestamps on first remux/encode attempt (`-fflags +genpts`) |
 | `--no-clean-timestamps` | Disable proactive timestamp regeneration |
+| `--match-audio-layout` | Normalize all output audio streams to stereo layout |
+| `--no-match-audio-layout` | Disable explicit stereo layout normalization |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
 | `--` | End options parsing (use before paths starting with `-`) |
@@ -192,6 +196,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - HEVC sources: remux by default (`--no-skip-hevc` to force HEVC re-encode)
 - Automatic FFmpeg fallback retries are enabled by default (`--strict` disables them)
 - Proactive timestamp regeneration is off by default (`--clean-timestamps` enables it for all files)
+- Audio layout normalization to stereo is on by default (`--no-match-audio-layout` disables it)
 
 Supported input extensions:
 
@@ -331,6 +336,21 @@ scripts/helpers/clean_timestamps_remux.sh "input.mkv" "output_fixed.mkv"
 ```
 
 - This often fixes DTS discontinuities, missing PTS, and out-of-order timestamps.
+
+### Edge playback issues when switching audio tracks
+
+- Browser decoders can fail to reinitialize cleanly if tracks have different channel layouts.
+- Muxmaster can force all output audio tracks to a consistent stereo layout:
+
+```bash
+./Muxmaster.sh --match-audio-layout "/input" "/output"
+```
+
+- For problematic Blu-ray/batch sources in Edge, run both protections together:
+
+```bash
+./Muxmaster.sh --clean-timestamps --match-audio-layout "/input" "/output"
+```
 
 ### Audio issues on specific files
 

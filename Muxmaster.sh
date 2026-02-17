@@ -45,6 +45,7 @@ QUALITY_OVERRIDE=""
 COLOR_MODE="auto"
 STRICT_MODE=false
 CLEAN_TIMESTAMPS=false
+MATCH_AUDIO_LAYOUT=true
 
 INPUT_DIR=""
 OUTPUT_DIR=""
@@ -158,6 +159,8 @@ Options:
   --strict                  Disable automatic ffmpeg retry fallbacks
   --clean-timestamps        Regenerate timestamps on first attempt (genpts)
   --no-clean-timestamps     Disable proactive timestamp regeneration
+  --match-audio-layout      Force audio layout normalization to stereo (default: on)
+  --no-match-audio-layout   Disable explicit audio layout normalization
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
   --                        End options parsing
@@ -168,7 +171,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 224k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata, timestamp retries on discontinuity
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata, timestamp retries on discontinuity
 EOF
     exit "$exit_code"
 }
@@ -240,6 +243,8 @@ parse_args() {
             --strict) STRICT_MODE=true; shift ;;
             --clean-timestamps) CLEAN_TIMESTAMPS=true; shift ;;
             --no-clean-timestamps) CLEAN_TIMESTAMPS=false; shift ;;
+            --match-audio-layout) MATCH_AUDIO_LAYOUT=true; shift ;;
+            --no-match-audio-layout) MATCH_AUDIO_LAYOUT=false; shift ;;
             --color) COLOR_MODE="always"; shift ;;
             --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
@@ -586,6 +591,10 @@ run_remux_attempt() {
 
     if has_audio_stream "$input"; then
         audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+        if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
+            # Force consistent output layout metadata for browser decoder stability.
+            audio_opts+=(-filter:a "aformat=channel_layouts=stereo")
+        fi
     else
         audio_opts=(-an)
     fi
@@ -603,6 +612,10 @@ run_encode_attempt() {
 
     if has_audio_stream "$input"; then
         audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
+        if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
+            # Force consistent output layout metadata for browser decoder stability.
+            audio_opts+=(-filter:a "aformat=channel_layouts=stereo")
+        fi
     else
         audio_opts=(-an)
     fi
@@ -896,6 +909,7 @@ process_files() {
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     [[ "$STRICT_MODE" == true ]] && log_info "Retry policy: strict mode enabled (automatic retries disabled)"
     [[ "$CLEAN_TIMESTAMPS" == true ]] && log_info "Timestamps: proactive regeneration enabled (genpts + avoid_negative_ts)"
+    [[ "$MATCH_AUDIO_LAYOUT" == true ]] && log_info "Audio layout: normalize all audio streams to stereo"
     echo
     
     # Main per-file pipeline:
