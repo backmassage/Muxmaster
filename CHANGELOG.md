@@ -18,7 +18,7 @@ All notable changes to this project are documented in this file.
 - Kept `MATCH_AUDIO_LAYOUT` default-on and strengthened it with stable audio resampling (`aresample=async=1:first_pts=0`) for renderer compatibility.
 - Added `-max_interleave_delta 0` to ffmpeg output paths to reduce interleave-related playback edge cases.
 - Switched default output container to MP4 for improved Edge/browser playback compatibility.
-- Added MP4-aware stream handling: `mov_text` subtitle conversion when possible, attachment skipping for MP4 compatibility, and MP4 mux flags (`-tag:v hvc1`, `-movflags +faststart+use_metadata_tags`).
+- Added MP4-aware stream handling: `mov_text` subtitle conversion when possible, attachment skipping for MP4 compatibility, and MP4 mux flags (`-movflags +faststart+use_metadata_tags`).
 - Project version finalized to `1.2`.
 - Removed forced keyframe interval (`-g 48`) so re-encodes use source/encoder default keyframe cadence.
 
@@ -26,7 +26,7 @@ All notable changes to this project are documented in this file.
 
 - Hardened VAAPI render-device detection to avoid brittle shell parsing when `/dev/dri/renderD*` is missing.
 - Expanded FFmpeg timestamp retry detection to include broader DTS/PTS anomaly messages (including missing/invalid PTS patterns).
-- Strengthened MP4 stream flags for playback/metadata compatibility (`-tag:v hvc1`, `-movflags +faststart+use_metadata_tags`).
+- Strengthened MP4 stream flags for playback/metadata compatibility (`-movflags +faststart+use_metadata_tags`) and removed forced `hvc1` tagging to avoid decoder-tag mismatches.
 - Preserved only intended per-track metadata keys (language/title) for audio/subtitle streams to avoid noisy encoder/duration tag carryover.
 - Mapped track titles to MP4 `handler_name` so audio/subtitle names remain visible after remux/encode.
 - Added fallback title extraction from non-generic source `handler_name` values when explicit track titles are absent.

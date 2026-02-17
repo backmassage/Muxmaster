@@ -10,7 +10,7 @@ Current version: **1.2**
 
 - Switched default output container to MP4 for Edge/browser playback compatibility.
 - Enabled proactive timestamp cleanup and audio layout normalization by default.
-- Added MP4 stream compatibility flags (`hvc1`, `+faststart+use_metadata_tags`) and safer subtitle conversion behavior.
+- Added MP4 stream compatibility flags (`+faststart+use_metadata_tags`) and safer subtitle conversion behavior.
 - Improved per-track metadata preservation for language and visible track names in MP4 outputs.
 - Hardened FFmpeg fallback detection and VAAPI render-device probing.
 
@@ -91,7 +91,8 @@ Use `scripts/helpers/` for helper `.sh` utilities.
   - Retries with generated timestamps when FFmpeg reports non-monotonic DTS.
   - Use `--strict` to disable all automatic per-file retry fallbacks.
 - **MP4 stream compatibility flags**
-  - Uses `hvc1` video tag plus `+faststart` and `+use_metadata_tags` for better Edge/browser handling.
+  - Uses `+faststart` and `+use_metadata_tags` for better browser streaming/metadata behavior.
+  - Leaves HEVC codec tag selection to FFmpeg/container defaults to avoid decoder-tag mismatches.
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**
