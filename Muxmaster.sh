@@ -44,7 +44,7 @@ CHECK_ONLY=false
 QUALITY_OVERRIDE=""
 COLOR_MODE="auto"
 STRICT_MODE=false
-CLEAN_TIMESTAMPS=false
+CLEAN_TIMESTAMPS=true
 MATCH_AUDIO_LAYOUT=true
 
 INPUT_DIR=""
@@ -157,7 +157,7 @@ Options:
   --no-subs                 Do not copy subtitle streams
   --no-attachments          Do not copy attachment streams (fonts/images)
   --strict                  Disable automatic ffmpeg retry fallbacks
-  --clean-timestamps        Regenerate timestamps on first attempt (genpts)
+  --clean-timestamps        Enable proactive timestamp regeneration (default: on)
   --no-clean-timestamps     Disable proactive timestamp regeneration
   --match-audio-layout      Force audio layout normalization to stereo (default: on)
   --no-match-audio-layout   Disable explicit audio layout normalization
@@ -171,7 +171,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata, timestamp retries on discontinuity
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata, proactive timestamp cleanup + anomaly retries
 EOF
     exit "$exit_code"
 }
@@ -586,7 +586,7 @@ run_remux_with_audio_opts() {
             "${pre_input_opts[@]}" \
             -i "$input" \
             -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-            -dn -max_muxing_queue_size "$muxing_queue_size" \
+            -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
             -c:v copy \
             "${metadata_opts[@]}" \
             "${stream_metadata_opts[@]}" \
@@ -603,8 +603,8 @@ run_remux_attempt() {
     if has_audio_stream "$input"; then
         audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
         if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
-            # Force consistent output layout metadata for browser decoder stability.
-            audio_opts+=(-filter:a "aformat=channel_layouts=stereo")
+            # Normalize layout/rate and regenerate stable audio frame timing for browser renderers.
+            audio_opts+=(-filter:a "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000:channel_layouts=stereo")
         fi
     else
         audio_opts=(-an)
@@ -624,8 +624,8 @@ run_encode_attempt() {
     if has_audio_stream "$input"; then
         audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
         if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
-            # Force consistent output layout metadata for browser decoder stability.
-            audio_opts+=(-filter:a "aformat=channel_layouts=stereo")
+            # Normalize layout/rate and regenerate stable audio frame timing for browser renderers.
+            audio_opts+=(-filter:a "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000:channel_layouts=stereo")
         fi
     else
         audio_opts=(-an)
@@ -687,7 +687,7 @@ run_encode_attempt() {
                 -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
                 -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
                 -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-                -dn -max_muxing_queue_size "$muxing_queue_size" \
+                -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
                 -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
                 "${metadata_opts[@]}" \
                 "${stream_metadata_opts[@]}" \
@@ -700,7 +700,7 @@ run_encode_attempt() {
                 "${pre_input_opts[@]}" \
                 -i "$input" \
                 -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-                -dn -max_muxing_queue_size "$muxing_queue_size" \
+                -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
                 -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
                 -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
                 -x265-params log-level=error \
@@ -919,8 +919,8 @@ process_files() {
     [[ "$SHOW_FILE_STATS" == true ]] && log_info "File stats: source video resolution/bitrate section enabled"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     [[ "$STRICT_MODE" == true ]] && log_info "Retry policy: strict mode enabled (automatic retries disabled)"
-    [[ "$CLEAN_TIMESTAMPS" == true ]] && log_info "Timestamps: proactive regeneration enabled (genpts + avoid_negative_ts)"
-    [[ "$MATCH_AUDIO_LAYOUT" == true ]] && log_info "Audio layout: normalize all audio streams to stereo"
+    [[ "$CLEAN_TIMESTAMPS" == true ]] && log_info "Timestamps: proactive regeneration enabled by default (genpts + avoid_negative_ts)"
+    [[ "$MATCH_AUDIO_LAYOUT" == true ]] && log_info "Audio render compatibility: normalize all audio streams to stereo with stable resampling"
     echo
     
     # Main per-file pipeline:

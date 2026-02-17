@@ -132,8 +132,8 @@ Typical anime/dual-audio remux workflow:
 | Preserve source metadata/chapters | `./Muxmaster.sh --keep-metadata "/input" "/output"` |
 | Disable automatic retry fallbacks | `./Muxmaster.sh --strict "/input" "/output"` |
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
-| Force timestamp regeneration during processing | `./Muxmaster.sh --clean-timestamps "/input" "/output"` |
-| Force matching audio layout on all tracks | `./Muxmaster.sh --match-audio-layout "/input" "/output"` |
+| Disable proactive timestamp regeneration | `./Muxmaster.sh --no-clean-timestamps "/input" "/output"` |
+| Disable forced matching audio layout | `./Muxmaster.sh --no-match-audio-layout "/input" "/output"` |
 | Edge-safe pass (timestamps + matched audio layout) | `./Muxmaster.sh --clean-timestamps --match-audio-layout "/input" "/output"` |
 | Regenerate clean timestamps before retest | `scripts/helpers/clean_timestamps_remux.sh "/input.mkv" "/output_fixed.mkv"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
@@ -165,9 +165,9 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-subs` | Do not copy subtitle streams |
 | `--no-attachments` | Do not copy attachment streams |
 | `--strict` | Disable automatic FFmpeg retry fallbacks (fail fast per file) |
-| `--clean-timestamps` | Regenerate timestamps on first remux/encode attempt (`-fflags +genpts`) |
+| `--clean-timestamps` | Enable proactive timestamp regeneration on first remux/encode attempt (`-fflags +genpts`, default: on) |
 | `--no-clean-timestamps` | Disable proactive timestamp regeneration |
-| `--match-audio-layout` | Normalize all output audio streams to stereo layout |
+| `--match-audio-layout` | Normalize all output audio streams to stereo layout with stable resampling (default: on) |
 | `--no-match-audio-layout` | Disable explicit stereo layout normalization |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
@@ -195,7 +195,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - Existing output files: skipped by default (`--force` to overwrite)
 - HEVC sources: remux by default (`--no-skip-hevc` to force HEVC re-encode)
 - Automatic FFmpeg fallback retries are enabled by default (`--strict` disables them)
-- Proactive timestamp regeneration is off by default (`--clean-timestamps` enables it for all files)
+- Proactive timestamp regeneration is on by default (`--no-clean-timestamps` disables it)
 - Audio layout normalization to stereo is on by default (`--no-match-audio-layout` disables it)
 
 Supported input extensions:
@@ -316,7 +316,8 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### Non-monotonic DTS / timestamp ordering errors
 
 - Newer script versions automatically retry with generated timestamps for common DTS/PTS anomalies (including missing/invalid PTS messages).
-- To force timestamp regeneration on the first attempt for every file (recommended for Blu-ray/batch remux sources and Edge MSE audio switching), run:
+- Proactive timestamp regeneration is enabled by default for all files.
+- If needed, you can still explicitly force it:
 
 ```bash
 ./Muxmaster.sh --clean-timestamps "/input" "/output"
@@ -340,7 +341,8 @@ scripts/helpers/clean_timestamps_remux.sh "input.mkv" "output_fixed.mkv"
 ### Edge playback issues when switching audio tracks
 
 - Browser decoders can fail to reinitialize cleanly if tracks have different channel layouts.
-- Muxmaster can force all output audio tracks to a consistent stereo layout:
+- Muxmaster now normalizes output audio tracks to a consistent stereo layout with stable resampling by default.
+- If needed, you can still explicitly force/confirm it:
 
 ```bash
 ./Muxmaster.sh --match-audio-layout "/input" "/output"

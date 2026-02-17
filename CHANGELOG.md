@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file.
 ### Changed
 
 - Expanded troubleshooting guidance for timestamp issues to include a dedicated clean-remux step before retesting playback.
+- Switched `CLEAN_TIMESTAMPS` to default-on behavior for proactive timestamp regeneration on initial remux/encode attempts.
+- Kept `MATCH_AUDIO_LAYOUT` default-on and strengthened it with stable audio resampling (`aresample=async=1:first_pts=0`) for renderer compatibility.
+- Added `-max_interleave_delta 0` to ffmpeg output paths to reduce interleave-related playback edge cases.
 
 ### Fixed
 
