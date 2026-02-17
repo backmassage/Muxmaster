@@ -67,6 +67,7 @@ Use `scripts/helpers/` for helper `.sh` utilities.
   - In MP4 workflows, the script auto-switches VAAPI mode to CPU unless `--allow-unsafe-vaapi-mp4` is provided.
 - **HEVC profile selection**
   - MP4 output defaults to HEVC main (8-bit) for broader Edge decoder compatibility.
+  - Use `--hevc-10bit` to test HEVC main10 output in MP4 workflows.
   - VAAPI falls back to HEVC main10 only when HEVC main is unavailable.
 - **Audio handling**
   - Tries to convert **all audio tracks** to AAC stereo 224k.
@@ -145,6 +146,7 @@ Typical anime/dual-audio remux workflow:
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
 | Disable proactive timestamp regeneration | `./Muxmaster.sh --no-clean-timestamps "/input" "/output"` |
 | Disable forced matching audio layout | `./Muxmaster.sh --no-match-audio-layout "/input" "/output"` |
+| Test HEVC 10-bit output | `./Muxmaster.sh --hevc-10bit "/input" "/output"` |
 | Edge-safe pass (timestamps + matched audio layout, default behavior) | `./Muxmaster.sh "/input" "/output"` |
 | Regenerate clean timestamps before retest | `scripts/helpers/clean_timestamps_remux.sh "/input.mkv" "/output_fixed.mkv"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
@@ -180,6 +182,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-clean-timestamps` | Disable proactive timestamp regeneration |
 | `--match-audio-layout` | Normalize all output audio streams to stereo layout with stable resampling (default: on) |
 | `--no-match-audio-layout` | Disable explicit stereo layout normalization |
+| `--hevc-10bit` | Force HEVC main10 10-bit output (test mode) |
+| `--hevc-8bit` | Force HEVC main 8-bit output |
 | `--allow-unsafe-vaapi-mp4` | Keep VAAPI mode for MP4 outputs (advanced; may produce corrupted playback on some systems) |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
@@ -207,6 +211,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - Existing output files: skipped by default (`--force` to overwrite)
 - HEVC sources: re-encode by default for MP4 edge safety (`--skip-hevc` to force copy remux)
 - MP4 mode auto-switches VAAPI requests to CPU unless `--allow-unsafe-vaapi-mp4` is set
+- MP4 mode defaults to HEVC main/8-bit for stability (`--hevc-10bit` to test main10)
 - Automatic FFmpeg fallback retries are enabled by default (`--strict` disables them)
 - Proactive timestamp regeneration is on by default (`--no-clean-timestamps` disables it)
 - Audio layout normalization to stereo is on by default (`--no-match-audio-layout` disables it)

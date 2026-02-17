@@ -51,6 +51,7 @@ COLOR_MODE="auto"
 STRICT_MODE=false
 CLEAN_TIMESTAMPS=true
 MATCH_AUDIO_LAYOUT=true
+FORCE_HEVC_10BIT=false
 
 INPUT_DIR=""
 OUTPUT_DIR=""
@@ -166,6 +167,8 @@ Options:
   --no-clean-timestamps     Disable proactive timestamp regeneration
   --match-audio-layout      Force audio layout normalization to stereo (default: on)
   --no-match-audio-layout   Disable explicit audio layout normalization
+  --hevc-10bit              Force HEVC main10 10-bit output (test mode)
+  --hevc-8bit               Force HEVC main 8-bit output
   --allow-unsafe-vaapi-mp4  Keep VAAPI mode for MP4 outputs (not recommended)
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
@@ -177,7 +180,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: MP4 outputs prefer CPU encode safety (VAAPI requires --allow-unsafe-vaapi-mp4), HEVC main for MP4 edge safety (auto-fallback to main10 if required), QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, source/default keyframe cadence (not forced), clean container metadata, proactive timestamp cleanup + anomaly retries
+Encoding defaults: MP4 outputs prefer CPU encode safety (VAAPI requires --allow-unsafe-vaapi-mp4), HEVC main for MP4 edge safety (use --hevc-10bit to test main10), QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, source/default keyframe cadence (not forced), clean container metadata, proactive timestamp cleanup + anomaly retries
 EOF
     exit "$exit_code"
 }
@@ -251,6 +254,8 @@ parse_args() {
             --no-clean-timestamps) CLEAN_TIMESTAMPS=false; shift ;;
             --match-audio-layout) MATCH_AUDIO_LAYOUT=true; shift ;;
             --no-match-audio-layout) MATCH_AUDIO_LAYOUT=false; shift ;;
+            --hevc-10bit) FORCE_HEVC_10BIT=true; shift ;;
+            --hevc-8bit) FORCE_HEVC_10BIT=false; shift ;;
             --allow-unsafe-vaapi-mp4) ALLOW_UNSAFE_VAAPI_MP4=true; shift ;;
             --color) COLOR_MODE="always"; shift ;;
             --no-color) COLOR_MODE="never"; shift ;;
@@ -319,8 +324,13 @@ parse_args() {
 
     if output_container_is_mp4; then
         # Edge-safe MP4 defaults: prefer HEVC main/8-bit and avoid copying unknown HEVC bitstreams.
-        CPU_HEVC_PROFILE="main"
-        CPU_PIX_FMT="yuv420p"
+        if [[ "$FORCE_HEVC_10BIT" == true ]]; then
+            CPU_HEVC_PROFILE="main10"
+            CPU_PIX_FMT="yuv420p10le"
+        else
+            CPU_HEVC_PROFILE="main"
+            CPU_PIX_FMT="yuv420p"
+        fi
 
         if [[ "$SKIP_HEVC_EXPLICIT" != true ]]; then
             SKIP_HEVC=false
@@ -377,7 +387,18 @@ check_deps() {
         local vaapi_err
         vaapi_err=$(mktemp)
         if output_container_is_mp4; then
-            if test_vaapi_profile "nv12" "main" "$vaapi_err"; then
+            if [[ "$FORCE_HEVC_10BIT" == true ]]; then
+                if test_vaapi_profile "p010" "main10" "$vaapi_err"; then
+                    VAAPI_SW_FORMAT="p010"
+                    VAAPI_PROFILE="main10"
+                    log_warn "VAAPI ready: $VAAPI_DEVICE (HEVC main10 test mode for MP4)"
+                else
+                    log_error "VAAPI main10 unavailable for requested --hevc-10bit mode"
+                    [[ "$VERBOSE" == true ]] && sed 's/^/  /' "$vaapi_err"
+                    rm -f "$vaapi_err"
+                    exit 1
+                fi
+            elif test_vaapi_profile "nv12" "main" "$vaapi_err"; then
                 VAAPI_SW_FORMAT="nv12"
                 VAAPI_PROFILE="main"
                 log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main, edge-safe MP4)"
@@ -1071,6 +1092,7 @@ process_files() {
     if [[ "$AUTO_CPU_MODE_FOR_MP4_SAFETY" == true ]]; then
         log_warn "MP4 safety: VAAPI mode auto-switched to CPU to avoid decoder corruption (override with --allow-unsafe-vaapi-mp4)"
     fi
+    [[ "$FORCE_HEVC_10BIT" == true ]] && log_warn "HEVC profile override: forcing 10-bit main10 output (--hevc-10bit)"
     log_info "Container: ${OUTPUT_CONTAINER^^}"
     log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (strict AAC, no source-audio fallback) | Keyframes: source/default cadence"
     if [[ "$KEEP_SUBTITLES" == true ]]; then

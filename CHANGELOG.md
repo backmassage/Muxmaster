@@ -11,6 +11,7 @@ All notable changes to this project are documented in this file.
 - CLI flags `--clean-timestamps` / `--no-clean-timestamps` to control proactive timestamp regeneration in base remux/encode runs.
 - CLI flags `--match-audio-layout` / `--no-match-audio-layout` to normalize all output audio streams to a consistent stereo layout.
 - CLI flag `--allow-unsafe-vaapi-mp4` to explicitly keep VAAPI mode in MP4 workflows when needed.
+- CLI flags `--hevc-10bit` / `--hevc-8bit` to override HEVC output bit-depth/profile selection.
 
 ### Changed
 
