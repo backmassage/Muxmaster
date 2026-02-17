@@ -631,7 +631,7 @@ ffmpeg_error_has_timestamp_discontinuity() {
 run_remux_with_audio_opts() {
     local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_subtitles="$6" include_attachments="$7" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     shift 9
-    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts container_opts
+    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts stream_disposition_opts container_opts
     local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false language_tag title_tag handler_name_tag
 
     if output_container_is_mp4; then
@@ -675,6 +675,7 @@ run_remux_with_audio_opts() {
 
     # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
     stream_metadata_opts=()
+    stream_disposition_opts=()
     audio_stream_count=$(get_stream_count "a" "$input")
     if [[ "$audio_stream_count" -gt 0 ]]; then
         for ((i=0; i<audio_stream_count; i++)); do
@@ -691,6 +692,12 @@ run_remux_with_audio_opts() {
                 else
                     stream_metadata_opts+=(-metadata:s:a:"$i" "title=$title_tag")
                 fi
+            fi
+
+            if [[ "$i" -eq 0 ]]; then
+                stream_disposition_opts+=(-disposition:a:"$i" default)
+            else
+                stream_disposition_opts+=(-disposition:a:"$i" 0)
             fi
         done
     fi
@@ -713,6 +720,12 @@ run_remux_with_audio_opts() {
                         stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
                     fi
                 fi
+
+                # Keep subtitle tracks non-default in MP4 to reduce web-player
+                # track toggle edge cases during playback.
+                if [[ "$mp4_output" == true ]]; then
+                    stream_disposition_opts+=(-disposition:s:"$i" 0)
+                fi
             done
         fi
     fi
@@ -727,6 +740,7 @@ run_remux_with_audio_opts() {
             -c:v copy \
             "${metadata_opts[@]}" \
             "${stream_metadata_opts[@]}" \
+            "${stream_disposition_opts[@]}" \
             "${timestamp_opts[@]}" \
             "${container_opts[@]}" \
             "$output"
@@ -756,7 +770,7 @@ run_remux_attempt() {
 # subtitles/attachments are preserved by default.
 run_encode_attempt() {
     local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" metadata_mode="${6:-}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
-    local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts container_opts
+    local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts stream_disposition_opts container_opts
     local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false language_tag title_tag handler_name_tag
 
     if output_container_is_mp4; then
@@ -814,6 +828,7 @@ run_encode_attempt() {
 
     # Preserve per-stream metadata (track titles/language tags) for mapped audio/subtitle streams.
     stream_metadata_opts=()
+    stream_disposition_opts=()
     audio_stream_count=$(get_stream_count "a" "$input")
     if [[ "$audio_stream_count" -gt 0 ]]; then
         for ((i=0; i<audio_stream_count; i++)); do
@@ -830,6 +845,12 @@ run_encode_attempt() {
                 else
                     stream_metadata_opts+=(-metadata:s:a:"$i" "title=$title_tag")
                 fi
+            fi
+
+            if [[ "$i" -eq 0 ]]; then
+                stream_disposition_opts+=(-disposition:a:"$i" default)
+            else
+                stream_disposition_opts+=(-disposition:a:"$i" 0)
             fi
         done
     fi
@@ -852,6 +873,10 @@ run_encode_attempt() {
                         stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
                     fi
                 fi
+
+                if [[ "$mp4_output" == true ]]; then
+                    stream_disposition_opts+=(-disposition:s:"$i" 0)
+                fi
             done
         fi
     fi
@@ -868,6 +893,7 @@ run_encode_attempt() {
                 -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" \
                 "${metadata_opts[@]}" \
                 "${stream_metadata_opts[@]}" \
+                "${stream_disposition_opts[@]}" \
                 "${timestamp_opts[@]}" \
                 "${container_opts[@]}" \
                 "$output"
@@ -884,6 +910,7 @@ run_encode_attempt() {
                 -x265-params log-level=error \
                 "${metadata_opts[@]}" \
                 "${stream_metadata_opts[@]}" \
+                "${stream_disposition_opts[@]}" \
                 "${timestamp_opts[@]}" \
                 "${container_opts[@]}" \
                 "$output"

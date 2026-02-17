@@ -34,6 +34,7 @@ All notable changes to this project are documented in this file.
 - Added fallback title extraction from non-generic source `handler_name` values when explicit track titles are absent.
 - Reduced MP4 visual corruption risk on Edge by defaulting MP4 workflows to HEVC re-encode and preferring HEVC main (8-bit) over main10.
 - Removed forced `hvc1` tag and auto-switched MP4 workflows from VAAPI to CPU by default to reduce decoder corruption risk.
+- Normalized MP4 stream dispositions (single default audio, non-default subtitles) to reduce Jellyfin/Edge track-switch playback failures.
 
 ## [1.1] - 2026-02-16
 

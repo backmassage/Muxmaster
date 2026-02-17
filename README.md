@@ -79,6 +79,7 @@ Use `scripts/helpers/` for helper `.sh` utilities.
   - For MP4 output, subtitles are converted to `mov_text` when compatible.
   - If subtitle mux/convert fails, the file is retried without subtitles.
   - Preserves original subtitle track metadata (title/language tags).
+  - MP4 outputs keep subtitles non-default to reduce web-player track toggle edge cases.
 - **Attachment handling**
   - MP4 output automatically skips attachment streams (fonts/images) for container compatibility.
   - If attachments are present and cause mux issues in non-MP4 workflows, the file is retried without attachments.
