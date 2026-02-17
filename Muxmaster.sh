@@ -17,7 +17,6 @@ VAAPI_SW_FORMAT="p010"
 CPU_CRF=19
 CPU_PRESET="slow"
 OUTPUT_CONTAINER="mp4"
-KEYFRAME_INT=48              # Keyframes every 48 frames (~2s at 24fps)
 AUDIO_CHANNELS=2
 AUDIO_BITRATE="224k"
 FFMPEG_PROBESIZE="100M"
@@ -171,7 +170,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, keyframes every 48 frames, clean container metadata, proactive timestamp cleanup + anomaly retries
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, source/default keyframe cadence (not forced), clean container metadata, proactive timestamp cleanup + anomaly retries
 EOF
     exit "$exit_code"
 }
@@ -801,7 +800,7 @@ run_encode_attempt() {
                 -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
                 -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
                 -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
-                -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
+                -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" \
                 "${video_tag_opts[@]}" \
                 "${metadata_opts[@]}" \
                 "${stream_metadata_opts[@]}" \
@@ -817,7 +816,7 @@ run_encode_attempt() {
                 -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
                 -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
                 -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
-                -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
+                -profile:v main10 -pix_fmt yuv420p10le \
                 -x265-params log-level=error \
                 "${video_tag_opts[@]}" \
                 "${metadata_opts[@]}" \
@@ -1028,7 +1027,7 @@ process_files() {
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
     log_info "Container: ${OUTPUT_CONTAINER^^}"
-    log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (strict AAC, no source-audio fallback) | Keyframes: ${KEYFRAME_INT}f"
+    log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (strict AAC, no source-audio fallback) | Keyframes: source/default cadence"
     if [[ "$KEEP_SUBTITLES" == true ]]; then
         if output_container_is_mp4; then
             log_info "Subtitles: convert to mov_text when compatible (auto-retry without subtitles on incompatible formats)"

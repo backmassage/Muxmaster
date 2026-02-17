@@ -189,7 +189,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 ## Defaults and Behavior
 
 - Output container: **MP4**
-- Keyframe interval: **48**
+- Keyframe cadence: **not forced** (uses source/encoder defaults)
 - Audio target: **AAC stereo 224k** (all tracks)
 - If AAC fails on a file: file processing fails (**no audio-copy fallback**)
 - Subtitles: converted to `mov_text` when compatible; incompatible subtitle formats are dropped via retry fallback

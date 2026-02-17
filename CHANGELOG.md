@@ -20,6 +20,7 @@ All notable changes to this project are documented in this file.
 - Switched default output container to MP4 for improved Edge/browser playback compatibility.
 - Added MP4-aware stream handling: `mov_text` subtitle conversion when possible, attachment skipping for MP4 compatibility, and MP4 mux flags (`-tag:v hvc1`, `-movflags +faststart+use_metadata_tags`).
 - Project version finalized to `1.2`.
+- Removed forced keyframe interval (`-g 48`) so re-encodes use source/encoder default keyframe cadence.
 
 ### Fixed
 
