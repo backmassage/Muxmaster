@@ -8,6 +8,7 @@ All notable changes to this project are documented in this file.
 
 - Helper utility `scripts/helpers/clean_timestamps_remux.sh` for clean stream-copy remux with generated PTS:
   - `ffmpeg -fflags +genpts -i input.mkv -map 0 -c copy output_fixed.mkv`
+- CLI flags `--clean-timestamps` / `--no-clean-timestamps` to control proactive timestamp regeneration in base remux/encode runs.
 
 ### Changed
 

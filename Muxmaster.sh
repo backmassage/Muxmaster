@@ -44,6 +44,7 @@ CHECK_ONLY=false
 QUALITY_OVERRIDE=""
 COLOR_MODE="auto"
 STRICT_MODE=false
+CLEAN_TIMESTAMPS=false
 
 INPUT_DIR=""
 OUTPUT_DIR=""
@@ -155,6 +156,8 @@ Options:
   --no-subs                 Do not copy subtitle streams
   --no-attachments          Do not copy attachment streams (fonts/images)
   --strict                  Disable automatic ffmpeg retry fallbacks
+  --clean-timestamps        Regenerate timestamps on first attempt (genpts)
+  --no-clean-timestamps     Disable proactive timestamp regeneration
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
   --                        End options parsing
@@ -165,7 +168,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 224k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC 224k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata, timestamp retries on discontinuity
 EOF
     exit "$exit_code"
 }
@@ -235,6 +238,8 @@ parse_args() {
             --no-subs) KEEP_SUBTITLES=false; shift ;;
             --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
             --strict) STRICT_MODE=true; shift ;;
+            --clean-timestamps) CLEAN_TIMESTAMPS=true; shift ;;
+            --no-clean-timestamps) CLEAN_TIMESTAMPS=false; shift ;;
             --color) COLOR_MODE="always"; shift ;;
             --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
@@ -775,7 +780,7 @@ encode_file() {
     local encode_include_attachments=true
     local encode_include_subtitles=true
     local encode_muxing_queue_size=4096
-    local encode_timestamp_fix=false
+    local encode_timestamp_fix="$CLEAN_TIMESTAMPS"
     [[ "$CLEAN_METADATA" == false ]] && encode_metadata_mode="keep"
 
     if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_metadata_mode" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
@@ -890,6 +895,7 @@ process_files() {
     [[ "$SHOW_FILE_STATS" == true ]] && log_info "File stats: source video resolution/bitrate section enabled"
     [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
     [[ "$STRICT_MODE" == true ]] && log_info "Retry policy: strict mode enabled (automatic retries disabled)"
+    [[ "$CLEAN_TIMESTAMPS" == true ]] && log_info "Timestamps: proactive regeneration enabled (genpts + avoid_negative_ts)"
     echo
     
     # Main per-file pipeline:
@@ -939,7 +945,7 @@ process_files() {
                     local remux_include_subtitles=true
                     local remux_include_attachments=true
                     local remux_muxing_queue_size=4096
-                    local remux_timestamp_fix=false
+                    local remux_timestamp_fix="$CLEAN_TIMESTAMPS"
                     [[ "$CLEAN_METADATA" == false ]] && remux_metadata_mode="keep"
 
                     # Primary attempt follows the selected metadata mode.

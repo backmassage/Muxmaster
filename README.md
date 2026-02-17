@@ -132,6 +132,7 @@ Typical anime/dual-audio remux workflow:
 | Preserve source metadata/chapters | `./Muxmaster.sh --keep-metadata "/input" "/output"` |
 | Disable automatic retry fallbacks | `./Muxmaster.sh --strict "/input" "/output"` |
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
+| Force timestamp regeneration during processing | `./Muxmaster.sh --clean-timestamps "/input" "/output"` |
 | Regenerate clean timestamps before retest | `scripts/helpers/clean_timestamps_remux.sh "/input.mkv" "/output_fixed.mkv"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
 | System diagnostics | `./Muxmaster.sh --check` |
@@ -162,6 +163,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-subs` | Do not copy subtitle streams |
 | `--no-attachments` | Do not copy attachment streams |
 | `--strict` | Disable automatic FFmpeg retry fallbacks (fail fast per file) |
+| `--clean-timestamps` | Regenerate timestamps on first remux/encode attempt (`-fflags +genpts`) |
+| `--no-clean-timestamps` | Disable proactive timestamp regeneration |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
 | `--` | End options parsing (use before paths starting with `-`) |
@@ -188,6 +191,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - Existing output files: skipped by default (`--force` to overwrite)
 - HEVC sources: remux by default (`--no-skip-hevc` to force HEVC re-encode)
 - Automatic FFmpeg fallback retries are enabled by default (`--strict` disables them)
+- Proactive timestamp regeneration is off by default (`--clean-timestamps` enables it for all files)
 
 Supported input extensions:
 
@@ -307,6 +311,12 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### Non-monotonic DTS / timestamp ordering errors
 
 - Newer script versions automatically retry with generated timestamps.
+- To force timestamp regeneration on the first attempt for every file (recommended for Blu-ray/batch remux sources and Edge MSE audio switching), run:
+
+```bash
+./Muxmaster.sh --clean-timestamps "/input" "/output"
+```
+
 - If remuxes came from Blu-ray or large batch pipelines, timestamp irregularities can still break MSE when switching audio tracks.
 - Run a clean stream-copy remux first, then retest playback:
 
