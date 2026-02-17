@@ -720,14 +720,14 @@ run_remux_with_audio_opts() {
                         stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
                     fi
                 fi
-
-                # Keep subtitle tracks non-default in MP4 to reduce web-player
-                # track toggle edge cases during playback.
-                if [[ "$mp4_output" == true ]]; then
-                    stream_disposition_opts+=(-disposition:s:"$i" 0)
-                fi
             done
         fi
+    fi
+
+    # Keep all MP4 subtitle tracks non-default to reduce web-player
+    # track toggle edge cases during playback.
+    if [[ "$mp4_output" == true && "$subtitle_stream_count" -gt 0 ]]; then
+        stream_disposition_opts+=(-disposition:s 0)
     fi
 
     run_ffmpeg_logged "$err_file" \
@@ -873,12 +873,12 @@ run_encode_attempt() {
                         stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
                     fi
                 fi
-
-                if [[ "$mp4_output" == true ]]; then
-                    stream_disposition_opts+=(-disposition:s:"$i" 0)
-                fi
             done
         fi
+    fi
+
+    if [[ "$mp4_output" == true && "$subtitle_stream_count" -gt 0 ]]; then
+        stream_disposition_opts+=(-disposition:s 0)
     fi
 
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
