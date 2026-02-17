@@ -46,6 +46,7 @@ This project is actively tuned and validated on:
 ├── Muxmaster.sh
 └── scripts/
     └── helpers/
+        ├── clean_timestamps_remux.sh
         ├── harleybox_auto.sh
         └── extra/
             └── .gitkeep
@@ -131,6 +132,7 @@ Typical anime/dual-audio remux workflow:
 | Preserve source metadata/chapters | `./Muxmaster.sh --keep-metadata "/input" "/output"` |
 | Disable automatic retry fallbacks | `./Muxmaster.sh --strict "/input" "/output"` |
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
+| Regenerate clean timestamps before retest | `scripts/helpers/clean_timestamps_remux.sh "/input.mkv" "/output_fixed.mkv"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
 | System diagnostics | `./Muxmaster.sh --check` |
 
@@ -305,7 +307,20 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### Non-monotonic DTS / timestamp ordering errors
 
 - Newer script versions automatically retry with generated timestamps.
-- For badly damaged sources, remuxing the source once with FFmpeg may still be required.
+- If remuxes came from Blu-ray or large batch pipelines, timestamp irregularities can still break MSE when switching audio tracks.
+- Run a clean stream-copy remux first, then retest playback:
+
+```bash
+ffmpeg -fflags +genpts -i "input.mkv" -map 0 -c copy "output_fixed.mkv"
+```
+
+- Helper command:
+
+```bash
+scripts/helpers/clean_timestamps_remux.sh "input.mkv" "output_fixed.mkv"
+```
+
+- This often fixes DTS discontinuities, missing PTS, and out-of-order timestamps.
 
 ### Audio issues on specific files
 

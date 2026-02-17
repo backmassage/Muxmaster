@@ -2,6 +2,17 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.2] - Unreleased
+
+### Added
+
+- Helper utility `scripts/helpers/clean_timestamps_remux.sh` for clean stream-copy remux with generated PTS:
+  - `ffmpeg -fflags +genpts -i input.mkv -map 0 -c copy output_fixed.mkv`
+
+### Changed
+
+- Expanded troubleshooting guidance for timestamp issues to include a dedicated clean-remux step before retesting playback.
+
 ## [1.1] - 2026-02-16
 
 ### Added
