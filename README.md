@@ -2,17 +2,17 @@
 
 > A fast, resilient batch encoder/remuxer for Jellyfin-style libraries.
 
-Current version: **1.1**
+Current version: **1.2**
 
 ## Quick Changelog
 
-### v1.1 (2026-02-16)
+### v1.2 (2026-02-17)
 
-- Added FFmpeg hardening retries for attachment tag issues, subtitle mux failures, mux queue overflow, and timestamp discontinuities.
-- Added `--strict` mode to disable automatic per-file retry fallbacks.
-- Preserved original audio/subtitle stream metadata (track titles/language tags).
-- Reorganized helper script structure and moved `harleybox_auto.sh` to `scripts/helpers/`.
-- Updated HarleyBox helper mount settings to remove `umask=000` and add `nofail` to fstab options.
+- Switched default output container to MP4 for Edge/browser playback compatibility.
+- Enabled proactive timestamp cleanup and audio layout normalization by default.
+- Added MP4 stream compatibility flags (`hvc1`, `+faststart+use_metadata_tags`) and safer subtitle conversion behavior.
+- Improved per-track metadata preservation for language and visible track names in MP4 outputs.
+- Hardened FFmpeg fallback detection and VAAPI render-device probing.
 
 Full release notes: [`CHANGELOG.md`](./CHANGELOG.md)
 

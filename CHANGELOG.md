@@ -2,7 +2,7 @@
 
 All notable changes to this project are documented in this file.
 
-## [1.2] - Unreleased
+## [1.2] - 2026-02-17
 
 ### Added
 
@@ -18,7 +18,8 @@ All notable changes to this project are documented in this file.
 - Kept `MATCH_AUDIO_LAYOUT` default-on and strengthened it with stable audio resampling (`aresample=async=1:first_pts=0`) for renderer compatibility.
 - Added `-max_interleave_delta 0` to ffmpeg output paths to reduce interleave-related playback edge cases.
 - Switched default output container to MP4 for improved Edge/browser playback compatibility.
-- Added MP4-aware stream handling: `mov_text` subtitle conversion when possible, attachment skipping for MP4 compatibility, and MP4 mux flags (`-tag:v hvc1`, `-movflags +faststart`).
+- Added MP4-aware stream handling: `mov_text` subtitle conversion when possible, attachment skipping for MP4 compatibility, and MP4 mux flags (`-tag:v hvc1`, `-movflags +faststart+use_metadata_tags`).
+- Project version finalized to `1.2`.
 
 ### Fixed
 
