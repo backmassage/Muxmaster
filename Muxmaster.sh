@@ -16,6 +16,8 @@ VAAPI_PROFILE="main10"
 VAAPI_SW_FORMAT="p010"
 CPU_CRF=19
 CPU_PRESET="slow"
+CPU_HEVC_PROFILE="main10"
+CPU_PIX_FMT="yuv420p10le"
 OUTPUT_CONTAINER="mp4"
 AUDIO_CHANNELS=2
 AUDIO_BITRATE="224k"
@@ -34,6 +36,8 @@ KEEP_ATTACHMENTS=true
 DRY_RUN=false
 SKIP_EXISTING=true
 SKIP_HEVC=true
+SKIP_HEVC_EXPLICIT=false
+AUTO_EDGE_SAFE_HEVC_REENCODE=false
 CLEAN_METADATA=true
 SHOW_FILE_STATS=true
 SHOW_FFMPEG_FPS=true
@@ -146,7 +150,7 @@ Options:
   -q, --quality <value>     QP for VAAPI, CRF for CPU (default: 19, lower=better)
   -p, --preset <preset>     CPU preset (default: slow)
   -d, --dry-run             Preview only
-  --skip-hevc               HEVC files: copy video, encode audio only (default: on)
+  --skip-hevc               HEVC files: copy video, encode audio only
   --no-skip-hevc            Re-encode HEVC video instead of remuxing it
   --clean-metadata          Strip container metadata/chapters (default: on)
   --keep-metadata           Preserve source container metadata/chapters
@@ -170,7 +174,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, source/default keyframe cadence (not forced), clean container metadata, proactive timestamp cleanup + anomaly retries
+Encoding defaults: HEVC main for MP4 edge safety (auto-fallback to main10 if required), QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, source/default keyframe cadence (not forced), clean container metadata, proactive timestamp cleanup + anomaly retries
 EOF
     exit "$exit_code"
 }
@@ -230,8 +234,8 @@ parse_args() {
                 shift 2
                 ;;
             -d|--dry-run) DRY_RUN=true; shift ;;
-            --skip-hevc) SKIP_HEVC=true; shift ;;
-            --no-skip-hevc) SKIP_HEVC=false; shift ;;
+            --skip-hevc) SKIP_HEVC=true; SKIP_HEVC_EXPLICIT=true; shift ;;
+            --no-skip-hevc) SKIP_HEVC=false; SKIP_HEVC_EXPLICIT=true; shift ;;
             --clean-metadata) CLEAN_METADATA=true; shift ;;
             --keep-metadata) CLEAN_METADATA=false; shift ;;
             --show-fps) SHOW_FFMPEG_FPS=true; shift ;;
@@ -299,6 +303,20 @@ parse_args() {
     else
         FFMPEG_PROGRESS_ARGS=()
     fi
+
+    if output_container_is_mp4; then
+        # Edge-safe MP4 defaults: prefer HEVC main/8-bit and avoid copying unknown HEVC bitstreams.
+        CPU_HEVC_PROFILE="main"
+        CPU_PIX_FMT="yuv420p"
+
+        if [[ "$SKIP_HEVC_EXPLICIT" != true ]]; then
+            SKIP_HEVC=false
+            AUTO_EDGE_SAFE_HEVC_REENCODE=true
+        fi
+    else
+        CPU_HEVC_PROFILE="main10"
+        CPU_PIX_FMT="yuv420p10le"
+    fi
 }
 
 # Probe whether a specific VAAPI HEVC profile+format combo works.
@@ -345,20 +363,38 @@ check_deps() {
         
         local vaapi_err
         vaapi_err=$(mktemp)
-        if test_vaapi_profile "p010" "main10" "$vaapi_err"; then
-            VAAPI_SW_FORMAT="p010"
-            VAAPI_PROFILE="main10"
-            log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main10)"
-        elif test_vaapi_profile "nv12" "main" "$vaapi_err"; then
-            VAAPI_SW_FORMAT="nv12"
-            VAAPI_PROFILE="main"
-            log_warn "VAAPI main10 unavailable, falling back to HEVC main (8-bit)"
-            log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main)"
+        if output_container_is_mp4; then
+            if test_vaapi_profile "nv12" "main" "$vaapi_err"; then
+                VAAPI_SW_FORMAT="nv12"
+                VAAPI_PROFILE="main"
+                log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main, edge-safe MP4)"
+            elif test_vaapi_profile "p010" "main10" "$vaapi_err"; then
+                VAAPI_SW_FORMAT="p010"
+                VAAPI_PROFILE="main10"
+                log_warn "VAAPI HEVC main unavailable; falling back to main10 (may decode poorly on some Edge systems)"
+                log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main10)"
+            else
+                log_error "VAAPI test failed"
+                [[ "$VERBOSE" == true ]] && sed 's/^/  /' "$vaapi_err"
+                rm -f "$vaapi_err"
+                exit 1
+            fi
         else
-            log_error "VAAPI test failed"
-            [[ "$VERBOSE" == true ]] && sed 's/^/  /' "$vaapi_err"
-            rm -f "$vaapi_err"
-            exit 1
+            if test_vaapi_profile "p010" "main10" "$vaapi_err"; then
+                VAAPI_SW_FORMAT="p010"
+                VAAPI_PROFILE="main10"
+                log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main10)"
+            elif test_vaapi_profile "nv12" "main" "$vaapi_err"; then
+                VAAPI_SW_FORMAT="nv12"
+                VAAPI_PROFILE="main"
+                log_warn "VAAPI main10 unavailable, falling back to HEVC main (8-bit)"
+                log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main)"
+            else
+                log_error "VAAPI test failed"
+                [[ "$VERBOSE" == true ]] && sed 's/^/  /' "$vaapi_err"
+                rm -f "$vaapi_err"
+                exit 1
+            fi
         fi
         rm -f "$vaapi_err"
     else
@@ -816,7 +852,7 @@ run_encode_attempt() {
                 -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
                 -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
                 -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
-                -profile:v main10 -pix_fmt yuv420p10le \
+                -profile:v "$CPU_HEVC_PROFILE" -pix_fmt "$CPU_PIX_FMT" \
                 -x265-params log-level=error \
                 "${video_tag_opts[@]}" \
                 "${metadata_opts[@]}" \
@@ -1023,7 +1059,7 @@ process_files() {
     local total=${#files[@]} current=0 encoded=0 skipped=0 failed=0
     
     log_info "Found $total files"
-    local profile_label="main10"
+    local profile_label="$CPU_HEVC_PROFILE"
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
     log_info "Container: ${OUTPUT_CONTAINER^^}"
@@ -1046,7 +1082,15 @@ process_files() {
     [[ "$CLEAN_METADATA" == false ]] && log_info "Metadata: preserve source container metadata and chapters"
     [[ "$SHOW_FFMPEG_FPS" == true ]] && log_info "FFmpeg progress: live FPS/speed enabled"
     [[ "$SHOW_FILE_STATS" == true ]] && log_info "File stats: source video resolution/bitrate section enabled"
-    [[ "$SKIP_HEVC" == true ]] && log_info "HEVC files: remux (copy video, encode audio)"
+    if [[ "$SKIP_HEVC" == true ]]; then
+        log_info "HEVC files: remux (copy video, encode audio)"
+        if output_container_is_mp4; then
+            log_warn "HEVC copy to MP4 can decode poorly on some Edge systems. Use --no-skip-hevc for safer re-encode."
+        fi
+    else
+        log_info "HEVC files: re-encode video for compatibility (skip-hevc disabled)"
+        [[ "$AUTO_EDGE_SAFE_HEVC_REENCODE" == true ]] && log_info "HEVC policy: auto-disabled skip-hevc for MP4 edge safety (override with --skip-hevc)"
+    fi
     [[ "$STRICT_MODE" == true ]] && log_info "Retry policy: strict mode enabled (automatic retries disabled)"
     [[ "$CLEAN_TIMESTAMPS" == true ]] && log_info "Timestamps: proactive regeneration enabled by default (genpts + avoid_negative_ts)"
     [[ "$MATCH_AUDIO_LAYOUT" == true ]] && log_info "Audio render compatibility: normalize all audio streams to stereo with stable resampling"

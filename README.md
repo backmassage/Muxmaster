@@ -20,7 +20,7 @@ Full release notes: [`CHANGELOG.md`](./CHANGELOG.md)
 
 - HEVC video encoding via VAAPI or CPU/x265
 - Strict AAC audio processing for all tracks (224k target)
-- HEVC remux mode by default (copy video + process audio)
+- HEVC re-encode by default for MP4 Edge safety (`--skip-hevc` to force copy)
 - MP4 output by default for browser/Edge playback compatibility
 - Clean container metadata/chapters by default
 - Automatic TV/movie folder structure normalization
@@ -62,8 +62,9 @@ Use `scripts/helpers/` for helper `.sh` utilities.
 - **Encoder modes**
   - `vaapi` (default): hardware HEVC encode via VAAPI
   - `cpu`: software HEVC encode via `libx265`
-- **10-bit first**
-  - VAAPI probes main10 first and falls back to main (8-bit) if needed.
+- **HEVC profile selection**
+  - MP4 output defaults to HEVC main (8-bit) for broader Edge decoder compatibility.
+  - VAAPI falls back to HEVC main10 only when HEVC main is unavailable.
 - **Audio handling**
   - Tries to convert **all audio tracks** to AAC stereo 224k.
   - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
@@ -78,8 +79,8 @@ Use `scripts/helpers/` for helper `.sh` utilities.
   - MP4 output automatically skips attachment streams (fonts/images) for container compatibility.
   - If attachments are present and cause mux issues in non-MP4 workflows, the file is retried without attachments.
 - **HEVC skip mode**
-  - Default behavior remuxes HEVC sources (copy video + process audio).
-  - Use `--no-skip-hevc` to force HEVC re-encode.
+  - MP4 default behavior re-encodes HEVC video for compatibility.
+  - Use `--skip-hevc` to force HEVC video copy remux (faster, but may decode poorly on some Edge systems).
 - **Metadata handling**
   - Default behavior strips container metadata and chapters for cleaner outputs.
   - Use `--keep-metadata` to preserve source container metadata/chapters.
@@ -131,9 +132,9 @@ Typical anime/dual-audio remux workflow:
 
 | Goal | Command |
 |---|---|
-| Standard encode pass (HEVC remux default) | `./Muxmaster.sh -m vaapi "/input" "/output"` |
+| Standard encode pass (MP4 edge-safe defaults) | `./Muxmaster.sh -m vaapi "/input" "/output"` |
 | CPU encode | `./Muxmaster.sh -m cpu "/input" "/output"` |
-| Force HEVC re-encode | `./Muxmaster.sh --no-skip-hevc "/input" "/output"` |
+| Force HEVC video copy remux (advanced) | `./Muxmaster.sh --skip-hevc "/input" "/output"` |
 | Preserve source metadata/chapters | `./Muxmaster.sh --keep-metadata "/input" "/output"` |
 | Disable automatic retry fallbacks | `./Muxmaster.sh --strict "/input" "/output"` |
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
@@ -160,8 +161,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `-q, --quality <value>` | VAAPI QP or CPU CRF (default: `19`) |
 | `-p, --preset <preset>` | CPU preset for x265 (default: `slow`) |
 | `-d, --dry-run` | Preview planned operations only |
-| `--skip-hevc` | HEVC files: copy video, process audio (default behavior) |
-| `--no-skip-hevc` | Re-encode HEVC video instead of remuxing it |
+| `--skip-hevc` | HEVC files: copy video, process audio (advanced; may reduce Edge compatibility) |
+| `--no-skip-hevc` | Re-encode HEVC video instead of remuxing it (default in MP4 mode) |
 | `--clean-metadata` | Strip container metadata and chapters (default behavior) |
 | `--keep-metadata` | Preserve source container metadata and chapters |
 | `--show-fps` | Show live FFmpeg encoding FPS/speed progress (default: on) |
@@ -198,7 +199,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - FFmpeg FPS/speed live progress is on by default (`--no-fps` to disable)
 - Per-file source video stats are shown by default (`--no-stats` to hide)
 - Existing output files: skipped by default (`--force` to overwrite)
-- HEVC sources: remux by default (`--no-skip-hevc` to force HEVC re-encode)
+- HEVC sources: re-encode by default for MP4 edge safety (`--skip-hevc` to force copy remux)
 - Automatic FFmpeg fallback retries are enabled by default (`--strict` disables them)
 - Proactive timestamp regeneration is on by default (`--no-clean-timestamps` disables it)
 - Audio layout normalization to stereo is on by default (`--no-match-audio-layout` disables it)

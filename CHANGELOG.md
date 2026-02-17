@@ -30,6 +30,7 @@ All notable changes to this project are documented in this file.
 - Preserved only intended per-track metadata keys (language/title) for audio/subtitle streams to avoid noisy encoder/duration tag carryover.
 - Mapped track titles to MP4 `handler_name` so audio/subtitle names remain visible after remux/encode.
 - Added fallback title extraction from non-generic source `handler_name` values when explicit track titles are absent.
+- Reduced MP4 visual corruption risk on Edge by defaulting MP4 workflows to HEVC re-encode and preferring HEVC main (8-bit) over main10.
 
 ## [1.1] - 2026-02-16
 
