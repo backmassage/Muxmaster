@@ -602,7 +602,13 @@ run_remux_with_audio_opts() {
             language_tag=$(get_stream_tag_value "$input" "a" "$i" "language")
             title_tag=$(get_stream_tag_value "$input" "a" "$i" "title")
             [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "language=$language_tag")
-            [[ -n "$title_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "title=$title_tag")
+            if [[ -n "$title_tag" ]]; then
+                if [[ "$mp4_output" == true ]]; then
+                    stream_metadata_opts+=(-metadata:s:a:"$i" "handler_name=$title_tag")
+                else
+                    stream_metadata_opts+=(-metadata:s:a:"$i" "title=$title_tag")
+                fi
+            fi
         done
     fi
 
@@ -613,7 +619,13 @@ run_remux_with_audio_opts() {
                 language_tag=$(get_stream_tag_value "$input" "s" "$i" "language")
                 title_tag=$(get_stream_tag_value "$input" "s" "$i" "title")
                 [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "language=$language_tag")
-                [[ -n "$title_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
+                if [[ -n "$title_tag" ]]; then
+                    if [[ "$mp4_output" == true ]]; then
+                        stream_metadata_opts+=(-metadata:s:s:"$i" "handler_name=$title_tag")
+                    else
+                        stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
+                    fi
+                fi
             done
         fi
     fi
@@ -724,7 +736,13 @@ run_encode_attempt() {
             language_tag=$(get_stream_tag_value "$input" "a" "$i" "language")
             title_tag=$(get_stream_tag_value "$input" "a" "$i" "title")
             [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "language=$language_tag")
-            [[ -n "$title_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "title=$title_tag")
+            if [[ -n "$title_tag" ]]; then
+                if [[ "$mp4_output" == true ]]; then
+                    stream_metadata_opts+=(-metadata:s:a:"$i" "handler_name=$title_tag")
+                else
+                    stream_metadata_opts+=(-metadata:s:a:"$i" "title=$title_tag")
+                fi
+            fi
         done
     fi
 
@@ -735,7 +753,13 @@ run_encode_attempt() {
                 language_tag=$(get_stream_tag_value "$input" "s" "$i" "language")
                 title_tag=$(get_stream_tag_value "$input" "s" "$i" "title")
                 [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "language=$language_tag")
-                [[ -n "$title_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
+                if [[ -n "$title_tag" ]]; then
+                    if [[ "$mp4_output" == true ]]; then
+                        stream_metadata_opts+=(-metadata:s:s:"$i" "handler_name=$title_tag")
+                    else
+                        stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
+                    fi
+                fi
             done
         fi
     fi

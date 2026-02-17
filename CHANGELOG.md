@@ -26,6 +26,7 @@ All notable changes to this project are documented in this file.
 - Expanded FFmpeg timestamp retry detection to include broader DTS/PTS anomaly messages (including missing/invalid PTS patterns).
 - Strengthened MP4 stream flags for playback/metadata compatibility (`-tag:v hvc1`, `-movflags +faststart+use_metadata_tags`).
 - Preserved only intended per-track metadata keys (language/title) for audio/subtitle streams to avoid noisy encoder/duration tag carryover.
+- Mapped track titles to MP4 `handler_name` so audio/subtitle names remain visible after remux/encode.
 
 ## [1.1] - 2026-02-16
 
