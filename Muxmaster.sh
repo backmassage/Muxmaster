@@ -19,6 +19,7 @@ CPU_PRESET="slow"
 CPU_HEVC_PROFILE="main10"
 CPU_PIX_FMT="yuv420p10le"
 OUTPUT_CONTAINER="mp4"
+FORCE_H264=false
 AUDIO_CHANNELS=2
 AUDIO_BITRATE="224k"
 FFMPEG_PROBESIZE="100M"
@@ -169,6 +170,8 @@ Options:
   --no-match-audio-layout   Disable explicit audio layout normalization
   --hevc-10bit              Force HEVC main10 10-bit output (test mode)
   --hevc-8bit               Force HEVC main 8-bit output
+  --force-h264              Force H.264 video encode for maximum web compatibility
+  --force-hevc              Force HEVC video encode path (default)
   --allow-unsafe-vaapi-mp4  Keep VAAPI mode for MP4 outputs (not recommended)
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
@@ -180,7 +183,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: MP4 outputs prefer CPU encode safety (VAAPI requires --allow-unsafe-vaapi-mp4), HEVC main for MP4 edge safety (use --hevc-10bit to test main10), QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, source/default keyframe cadence (not forced), clean container metadata, proactive timestamp cleanup + anomaly retries
+Encoding defaults: MP4 outputs prefer CPU encode safety (VAAPI requires --allow-unsafe-vaapi-mp4), HEVC main for MP4 edge safety (use --hevc-10bit to test main10), optional H.264 fallback via --force-h264, QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, source/default keyframe cadence (not forced), clean container metadata, proactive timestamp cleanup + anomaly retries
 EOF
     exit "$exit_code"
 }
@@ -256,6 +259,8 @@ parse_args() {
             --no-match-audio-layout) MATCH_AUDIO_LAYOUT=false; shift ;;
             --hevc-10bit) FORCE_HEVC_10BIT=true; shift ;;
             --hevc-8bit) FORCE_HEVC_10BIT=false; shift ;;
+            --force-h264) FORCE_H264=true; shift ;;
+            --force-hevc) FORCE_H264=false; shift ;;
             --allow-unsafe-vaapi-mp4) ALLOW_UNSAFE_VAAPI_MP4=true; shift ;;
             --color) COLOR_MODE="always"; shift ;;
             --no-color) COLOR_MODE="never"; shift ;;
@@ -339,6 +344,11 @@ parse_args() {
     else
         CPU_HEVC_PROFILE="main10"
         CPU_PIX_FMT="yuv420p10le"
+    fi
+
+    if [[ "$FORCE_H264" == true ]]; then
+        # H.264 fallback requires full re-encode path (no HEVC copy remux).
+        SKIP_HEVC=false
     fi
 }
 
@@ -432,9 +442,16 @@ check_deps() {
         fi
         rm -f "$vaapi_err"
     else
-        if ! ffmpeg -hide_banner -nostdin -loglevel error \
-                -f lavfi -i color=black:s=256x256:d=0.1 \
-                -c:v libx265 -f null - > /dev/null 2>&1; then
+        if [[ "$FORCE_H264" == true ]]; then
+            if ! ffmpeg -hide_banner -nostdin -loglevel error \
+                    -f lavfi -i color=black:s=256x256:d=0.1 \
+                    -c:v libx264 -f null - > /dev/null 2>&1; then
+                log_error "CPU mode selected but libx264 is unavailable"
+                exit 1
+            fi
+        elif ! ffmpeg -hide_banner -nostdin -loglevel error \
+                    -f lavfi -i color=black:s=256x256:d=0.1 \
+                    -c:v libx265 -f null - > /dev/null 2>&1; then
             log_error "CPU mode selected but libx265 is unavailable"
             exit 1
         fi
@@ -882,38 +899,73 @@ run_encode_attempt() {
     fi
 
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
-        run_ffmpeg_logged "$err_file" \
-            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
-                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-                "${pre_input_opts[@]}" \
-                -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
-                -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
-                -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-                -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
-                -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" \
-                "${metadata_opts[@]}" \
-                "${stream_metadata_opts[@]}" \
-                "${stream_disposition_opts[@]}" \
-                "${timestamp_opts[@]}" \
-                "${container_opts[@]}" \
-                "$output"
+        if [[ "$FORCE_H264" == true ]]; then
+            run_ffmpeg_logged "$err_file" \
+                ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                    -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                    "${pre_input_opts[@]}" \
+                    -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
+                    -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
+                    -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+                    -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
+                    -c:v h264_vaapi -qp "$VAAPI_QP" \
+                    "${metadata_opts[@]}" \
+                    "${stream_metadata_opts[@]}" \
+                    "${stream_disposition_opts[@]}" \
+                    "${timestamp_opts[@]}" \
+                    "${container_opts[@]}" \
+                    "$output"
+        else
+            run_ffmpeg_logged "$err_file" \
+                ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                    -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                    "${pre_input_opts[@]}" \
+                    -init_hw_device vaapi=va:"$VAAPI_DEVICE" -filter_hw_device va \
+                    -i "$input" -vf "format=${VAAPI_SW_FORMAT},hwupload" \
+                    -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+                    -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
+                    -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" \
+                    "${metadata_opts[@]}" \
+                    "${stream_metadata_opts[@]}" \
+                    "${stream_disposition_opts[@]}" \
+                    "${timestamp_opts[@]}" \
+                    "${container_opts[@]}" \
+                    "$output"
+        fi
     else
-        run_ffmpeg_logged "$err_file" \
-            ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
-                -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
-                "${pre_input_opts[@]}" \
-                -i "$input" \
-                -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
-                -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
-                -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
-                -profile:v "$CPU_HEVC_PROFILE" -pix_fmt "$CPU_PIX_FMT" \
-                -x265-params log-level=error \
-                "${metadata_opts[@]}" \
-                "${stream_metadata_opts[@]}" \
-                "${stream_disposition_opts[@]}" \
-                "${timestamp_opts[@]}" \
-                "${container_opts[@]}" \
-                "$output"
+        if [[ "$FORCE_H264" == true ]]; then
+            run_ffmpeg_logged "$err_file" \
+                ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                    -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                    "${pre_input_opts[@]}" \
+                    -i "$input" \
+                    -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+                    -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
+                    -c:v libx264 -crf "$CPU_CRF" -preset "$CPU_PRESET" -profile:v high -pix_fmt yuv420p \
+                    "${metadata_opts[@]}" \
+                    "${stream_metadata_opts[@]}" \
+                    "${stream_disposition_opts[@]}" \
+                    "${timestamp_opts[@]}" \
+                    "${container_opts[@]}" \
+                    "$output"
+        else
+            run_ffmpeg_logged "$err_file" \
+                ffmpeg -hide_banner -nostdin -y -loglevel "$FFMPEG_LOGLEVEL" "${FFMPEG_PROGRESS_ARGS[@]}" \
+                    -probesize "$FFMPEG_PROBESIZE" -analyzeduration "$FFMPEG_ANALYZEDURATION" -ignore_unknown \
+                    "${pre_input_opts[@]}" \
+                    -i "$input" \
+                    -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
+                    -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
+                    -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
+                    -profile:v "$CPU_HEVC_PROFILE" -pix_fmt "$CPU_PIX_FMT" \
+                    -x265-params log-level=error \
+                    "${metadata_opts[@]}" \
+                    "${stream_metadata_opts[@]}" \
+                    "${stream_disposition_opts[@]}" \
+                    "${timestamp_opts[@]}" \
+                    "${container_opts[@]}" \
+                    "$output"
+        fi
     fi
 }
 
@@ -1113,13 +1165,18 @@ process_files() {
     local total=${#files[@]} current=0 encoded=0 skipped=0 failed=0
     
     log_info "Found $total files"
-    local profile_label="$CPU_HEVC_PROFILE"
+    local profile_label="$CPU_HEVC_PROFILE" codec_label="HEVC"
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
-    log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
+    if [[ "$FORCE_H264" == true ]]; then
+        codec_label="H.264"
+        profile_label="high"
+    fi
+    log_info "Mode: $ENCODER_MODE (${codec_label} ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
     if [[ "$AUTO_CPU_MODE_FOR_MP4_SAFETY" == true ]]; then
         log_warn "MP4 safety: VAAPI mode auto-switched to CPU to avoid decoder corruption (override with --allow-unsafe-vaapi-mp4)"
     fi
     [[ "$FORCE_HEVC_10BIT" == true ]] && log_warn "HEVC profile override: forcing 10-bit main10 output (--hevc-10bit)"
+    [[ "$FORCE_H264" == true ]] && log_warn "Codec override: forcing H.264 output (--force-h264)"
     log_info "Container: ${OUTPUT_CONTAINER^^}"
     log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (strict AAC, no source-audio fallback) | Keyframes: source/default cadence"
     if [[ "$KEEP_SUBTITLES" == true ]]; then

@@ -148,6 +148,7 @@ Typical anime/dual-audio remux workflow:
 | Disable proactive timestamp regeneration | `./Muxmaster.sh --no-clean-timestamps "/input" "/output"` |
 | Disable forced matching audio layout | `./Muxmaster.sh --no-match-audio-layout "/input" "/output"` |
 | Test HEVC 10-bit output | `./Muxmaster.sh --hevc-10bit "/input" "/output"` |
+| Force H.264 web-safe output | `./Muxmaster.sh --force-h264 "/input" "/output"` |
 | Edge-safe pass (timestamps + matched audio layout, default behavior) | `./Muxmaster.sh "/input" "/output"` |
 | Regenerate clean timestamps before retest | `scripts/helpers/clean_timestamps_remux.sh "/input.mkv" "/output_fixed.mkv"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
@@ -185,6 +186,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-match-audio-layout` | Disable explicit stereo layout normalization |
 | `--hevc-10bit` | Force HEVC main10 10-bit output (test mode) |
 | `--hevc-8bit` | Force HEVC main 8-bit output |
+| `--force-h264` | Force H.264 video encode for maximum web compatibility |
+| `--force-hevc` | Force HEVC video encode path (default) |
 | `--allow-unsafe-vaapi-mp4` | Keep VAAPI mode for MP4 outputs (advanced; may produce corrupted playback on some systems) |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
@@ -213,6 +216,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - HEVC sources: re-encode by default for MP4 edge safety (`--skip-hevc` to force copy remux)
 - MP4 mode auto-switches VAAPI requests to CPU unless `--allow-unsafe-vaapi-mp4` is set
 - MP4 mode defaults to HEVC main/8-bit for stability (`--hevc-10bit` to test main10)
+- Use `--force-h264` when HEVC playback still fails in browser clients
 - Automatic FFmpeg fallback retries are enabled by default (`--strict` disables them)
 - Proactive timestamp regeneration is on by default (`--no-clean-timestamps` disables it)
 - Audio layout normalization to stereo is on by default (`--no-match-audio-layout` disables it)
