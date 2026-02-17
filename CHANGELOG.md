@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
   - `ffmpeg -fflags +genpts -i input.mkv -map 0 -c copy output_fixed.mkv`
 - CLI flags `--clean-timestamps` / `--no-clean-timestamps` to control proactive timestamp regeneration in base remux/encode runs.
 - CLI flags `--match-audio-layout` / `--no-match-audio-layout` to normalize all output audio streams to a consistent stereo layout.
+- CLI flag `--allow-unsafe-vaapi-mp4` to explicitly keep VAAPI mode in MP4 workflows when needed.
 
 ### Changed
 
@@ -31,6 +32,7 @@ All notable changes to this project are documented in this file.
 - Mapped track titles to MP4 `handler_name` so audio/subtitle names remain visible after remux/encode.
 - Added fallback title extraction from non-generic source `handler_name` values when explicit track titles are absent.
 - Reduced MP4 visual corruption risk on Edge by defaulting MP4 workflows to HEVC re-encode and preferring HEVC main (8-bit) over main10.
+- Removed forced `hvc1` tag and auto-switched MP4 workflows from VAAPI to CPU by default to reduce decoder corruption risk.
 
 ## [1.1] - 2026-02-16
 

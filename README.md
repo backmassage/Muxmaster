@@ -21,6 +21,7 @@ Full release notes: [`CHANGELOG.md`](./CHANGELOG.md)
 - HEVC video encoding via VAAPI or CPU/x265
 - Strict AAC audio processing for all tracks (224k target)
 - HEVC re-encode by default for MP4 Edge safety (`--skip-hevc` to force copy)
+- MP4 safety auto-switches VAAPI mode to CPU unless explicitly overridden
 - MP4 output by default for browser/Edge playback compatibility
 - Clean container metadata/chapters by default
 - Automatic TV/movie folder structure normalization
@@ -62,6 +63,8 @@ Use `scripts/helpers/` for helper `.sh` utilities.
 - **Encoder modes**
   - `vaapi` (default): hardware HEVC encode via VAAPI
   - `cpu`: software HEVC encode via `libx265`
+- **MP4 safety mode**
+  - In MP4 workflows, the script auto-switches VAAPI mode to CPU unless `--allow-unsafe-vaapi-mp4` is provided.
 - **HEVC profile selection**
   - MP4 output defaults to HEVC main (8-bit) for broader Edge decoder compatibility.
   - VAAPI falls back to HEVC main10 only when HEVC main is unavailable.
@@ -120,21 +123,22 @@ Use `scripts/helpers/` for helper `.sh` utilities.
 
 ```bash
 chmod +x Muxmaster.sh
-./Muxmaster.sh -m vaapi -q 19 "/path/to/input" "/path/to/output"
+./Muxmaster.sh "/path/to/input" "/path/to/output"
 ```
 
 Typical anime/dual-audio remux workflow:
 
 ```bash
-./Muxmaster.sh -m vaapi -q 19 "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
+./Muxmaster.sh "/srv/jellyfin/Media/Output" "/mnt/HarleyBox/Anime"
 ```
 
 ### Quick Command Cheat Sheet
 
 | Goal | Command |
 |---|---|
-| Standard encode pass (MP4 edge-safe defaults) | `./Muxmaster.sh -m vaapi "/input" "/output"` |
+| Standard encode pass (MP4 edge-safe defaults) | `./Muxmaster.sh "/input" "/output"` |
 | CPU encode | `./Muxmaster.sh -m cpu "/input" "/output"` |
+| Keep VAAPI in MP4 mode (unsafe) | `./Muxmaster.sh -m vaapi --allow-unsafe-vaapi-mp4 "/input" "/output"` |
 | Force HEVC video copy remux (advanced) | `./Muxmaster.sh --skip-hevc "/input" "/output"` |
 | Preserve source metadata/chapters | `./Muxmaster.sh --keep-metadata "/input" "/output"` |
 | Disable automatic retry fallbacks | `./Muxmaster.sh --strict "/input" "/output"` |
@@ -158,7 +162,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 
 | Option | Description |
 |---|---|
-| `-m, --mode <vaapi|cpu>` | Encoder mode (default: `vaapi`) |
+| `-m, --mode <vaapi|cpu>` | Encoder mode (default: `vaapi`; MP4 auto-switches to CPU unless `--allow-unsafe-vaapi-mp4`) |
 | `-q, --quality <value>` | VAAPI QP or CPU CRF (default: `19`) |
 | `-p, --preset <preset>` | CPU preset for x265 (default: `slow`) |
 | `-d, --dry-run` | Preview planned operations only |
@@ -176,6 +180,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--no-clean-timestamps` | Disable proactive timestamp regeneration |
 | `--match-audio-layout` | Normalize all output audio streams to stereo layout with stable resampling (default: on) |
 | `--no-match-audio-layout` | Disable explicit stereo layout normalization |
+| `--allow-unsafe-vaapi-mp4` | Keep VAAPI mode for MP4 outputs (advanced; may produce corrupted playback on some systems) |
 | `-f, --force` | Overwrite existing output files |
 | `-l, --log <path>` | Write plain logs to a file |
 | `--` | End options parsing (use before paths starting with `-`) |
@@ -201,6 +206,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 - Per-file source video stats are shown by default (`--no-stats` to hide)
 - Existing output files: skipped by default (`--force` to overwrite)
 - HEVC sources: re-encode by default for MP4 edge safety (`--skip-hevc` to force copy remux)
+- MP4 mode auto-switches VAAPI requests to CPU unless `--allow-unsafe-vaapi-mp4` is set
 - Automatic FFmpeg fallback retries are enabled by default (`--strict` disables them)
 - Proactive timestamp regeneration is on by default (`--no-clean-timestamps` disables it)
 - Audio layout normalization to stereo is on by default (`--no-match-audio-layout` disables it)
@@ -234,7 +240,7 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### VAAPI encode
 
 ```bash
-./Muxmaster.sh -m vaapi -q 19 "/media/input" "/media/output"
+./Muxmaster.sh -m vaapi --allow-unsafe-vaapi-mp4 -q 19 "/media/input" "/media/output"
 ```
 
 ### CPU encode

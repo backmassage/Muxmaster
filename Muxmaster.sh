@@ -38,6 +38,8 @@ SKIP_EXISTING=true
 SKIP_HEVC=true
 SKIP_HEVC_EXPLICIT=false
 AUTO_EDGE_SAFE_HEVC_REENCODE=false
+ALLOW_UNSAFE_VAAPI_MP4=false
+AUTO_CPU_MODE_FOR_MP4_SAFETY=false
 CLEAN_METADATA=true
 SHOW_FILE_STATS=true
 SHOW_FFMPEG_FPS=true
@@ -146,7 +148,7 @@ Muxmaster v$SCRIPT_VERSION
 Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
 
 Options:
-  -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi)
+  -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi; MP4 auto-switches to CPU unless --allow-unsafe-vaapi-mp4)
   -q, --quality <value>     QP for VAAPI, CRF for CPU (default: 19, lower=better)
   -p, --preset <preset>     CPU preset (default: slow)
   -d, --dry-run             Preview only
@@ -164,6 +166,7 @@ Options:
   --no-clean-timestamps     Disable proactive timestamp regeneration
   --match-audio-layout      Force audio layout normalization to stereo (default: on)
   --no-match-audio-layout   Disable explicit audio layout normalization
+  --allow-unsafe-vaapi-mp4  Keep VAAPI mode for MP4 outputs (not recommended)
   -f, --force               Overwrite existing output files
   -l, --log <path>          Write plain logs to file
   --                        End options parsing
@@ -174,7 +177,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: HEVC main for MP4 edge safety (auto-fallback to main10 if required), QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, source/default keyframe cadence (not forced), clean container metadata, proactive timestamp cleanup + anomaly retries
+Encoding defaults: MP4 outputs prefer CPU encode safety (VAAPI requires --allow-unsafe-vaapi-mp4), HEVC main for MP4 edge safety (auto-fallback to main10 if required), QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, source/default keyframe cadence (not forced), clean container metadata, proactive timestamp cleanup + anomaly retries
 EOF
     exit "$exit_code"
 }
@@ -248,6 +251,7 @@ parse_args() {
             --no-clean-timestamps) CLEAN_TIMESTAMPS=false; shift ;;
             --match-audio-layout) MATCH_AUDIO_LAYOUT=true; shift ;;
             --no-match-audio-layout) MATCH_AUDIO_LAYOUT=false; shift ;;
+            --allow-unsafe-vaapi-mp4) ALLOW_UNSAFE_VAAPI_MP4=true; shift ;;
             --color) COLOR_MODE="always"; shift ;;
             --no-color) COLOR_MODE="never"; shift ;;
             -v|--verbose) VERBOSE=true; shift ;;
@@ -278,6 +282,15 @@ parse_args() {
             exit 1
             ;;
     esac
+
+    if output_container_is_mp4; then
+        # Many edge/browser decode stacks are far more stable with CPU x265 output
+        # than VAAPI HEVC output, even when the file appears structurally valid.
+        if [[ "$ENCODER_MODE" == "vaapi" && "$ALLOW_UNSAFE_VAAPI_MP4" != true ]]; then
+            ENCODER_MODE="cpu"
+            AUTO_CPU_MODE_FOR_MP4_SAFETY=true
+        fi
+    fi
 
     if [[ -n "$QUALITY_OVERRIDE" ]]; then
         if ! [[ "$QUALITY_OVERRIDE" =~ ^[0-9]+$ ]]; then
@@ -1055,6 +1068,9 @@ process_files() {
     local profile_label="$CPU_HEVC_PROFILE"
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
+    if [[ "$AUTO_CPU_MODE_FOR_MP4_SAFETY" == true ]]; then
+        log_warn "MP4 safety: VAAPI mode auto-switched to CPU to avoid decoder corruption (override with --allow-unsafe-vaapi-mp4)"
+    fi
     log_info "Container: ${OUTPUT_CONTAINER^^}"
     log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (strict AAC, no source-audio fallback) | Keyframes: source/default cadence"
     if [[ "$KEEP_SUBTITLES" == true ]]; then
