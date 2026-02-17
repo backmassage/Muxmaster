@@ -24,6 +24,8 @@ All notable changes to this project are documented in this file.
 
 - Hardened VAAPI render-device detection to avoid brittle shell parsing when `/dev/dri/renderD*` is missing.
 - Expanded FFmpeg timestamp retry detection to include broader DTS/PTS anomaly messages (including missing/invalid PTS patterns).
+- Strengthened MP4 stream flags for playback/metadata compatibility (`-tag:v hvc1`, `-movflags +faststart+use_metadata_tags`).
+- Preserved only intended per-track metadata keys (language/title) for audio/subtitle streams to avoid noisy encoder/duration tag carryover.
 
 ## [1.1] - 2026-02-16
 

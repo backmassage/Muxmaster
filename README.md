@@ -68,6 +68,7 @@ Use `scripts/helpers/` for helper `.sh` utilities.
   - Tries to convert **all audio tracks** to AAC stereo 224k.
   - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
   - Preserves original audio track metadata per track (title/language tags), including multi/dual-audio releases.
+  - Avoids copying noisy per-stream encoder/duration tags into clean outputs.
 - **Subtitle handling**
   - For MP4 output, subtitles are converted to `mov_text` when compatible.
   - If subtitle mux/convert fails, the file is retried without subtitles.
@@ -87,6 +88,8 @@ Use `scripts/helpers/` for helper `.sh` utilities.
   - Retries with a larger mux queue if FFmpeg reports packet buffer overflow.
   - Retries with generated timestamps when FFmpeg reports non-monotonic DTS.
   - Use `--strict` to disable all automatic per-file retry fallbacks.
+- **MP4 stream compatibility flags**
+  - Uses `hvc1` video tag plus `+faststart` and `+use_metadata_tags` for better Edge/browser handling.
 - **Safer stream selection**
   - Ignores attached-pic video streams when choosing the main video stream.
 - **Readable CLI output**

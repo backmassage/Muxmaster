@@ -404,6 +404,18 @@ get_stream_count() {
     printf '%s\n' "$count"
 }
 
+# Return first tag value for a specific stream and tag key.
+get_stream_tag_value() {
+    local input="$1"
+    local selector="$2"
+    local index="$3"
+    local tag_key="$4"
+
+    ffprobe -v error -select_streams "${selector}:${index}" \
+        -show_entries stream_tags="${tag_key}" \
+        -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | sed -n '1p'
+}
+
 # Return the first non-attached-pic video stream index.
 # This avoids selecting cover art as the "main" video stream.
 get_primary_video_stream_index() {
@@ -539,12 +551,12 @@ run_remux_with_audio_opts() {
     local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_subtitles="$6" include_attachments="$7" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     shift 9
     local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts container_opts video_tag_opts
-    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false
+    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false language_tag title_tag
 
     if output_container_is_mp4; then
         mp4_output=true
         subtitle_codec="mov_text"
-        container_opts=(-movflags +faststart)
+        container_opts=(-movflags +faststart+use_metadata_tags)
         video_tag_opts=(-tag:v hvc1)
     else
         container_opts=()
@@ -587,7 +599,10 @@ run_remux_with_audio_opts() {
     audio_stream_count=$(get_stream_count "a" "$input")
     if [[ "$audio_stream_count" -gt 0 ]]; then
         for ((i=0; i<audio_stream_count; i++)); do
-            stream_metadata_opts+=(-map_metadata:s:a:"$i" 0:s:a:"$i")
+            language_tag=$(get_stream_tag_value "$input" "a" "$i" "language")
+            title_tag=$(get_stream_tag_value "$input" "a" "$i" "title")
+            [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "language=$language_tag")
+            [[ -n "$title_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "title=$title_tag")
         done
     fi
 
@@ -595,7 +610,10 @@ run_remux_with_audio_opts() {
         subtitle_stream_count=$(get_stream_count "s" "$input")
         if [[ "$subtitle_stream_count" -gt 0 ]]; then
             for ((i=0; i<subtitle_stream_count; i++)); do
-                stream_metadata_opts+=(-map_metadata:s:s:"$i" 0:s:s:"$i")
+                language_tag=$(get_stream_tag_value "$input" "s" "$i" "language")
+                title_tag=$(get_stream_tag_value "$input" "s" "$i" "title")
+                [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "language=$language_tag")
+                [[ -n "$title_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
             done
         fi
     fi
@@ -641,12 +659,12 @@ run_remux_attempt() {
 run_encode_attempt() {
     local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" metadata_mode="${6:-}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts container_opts video_tag_opts
-    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false
+    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false language_tag title_tag
 
     if output_container_is_mp4; then
         mp4_output=true
         subtitle_codec="mov_text"
-        container_opts=(-movflags +faststart)
+        container_opts=(-movflags +faststart+use_metadata_tags)
         video_tag_opts=(-tag:v hvc1)
     else
         container_opts=()
@@ -703,7 +721,10 @@ run_encode_attempt() {
     audio_stream_count=$(get_stream_count "a" "$input")
     if [[ "$audio_stream_count" -gt 0 ]]; then
         for ((i=0; i<audio_stream_count; i++)); do
-            stream_metadata_opts+=(-map_metadata:s:a:"$i" 0:s:a:"$i")
+            language_tag=$(get_stream_tag_value "$input" "a" "$i" "language")
+            title_tag=$(get_stream_tag_value "$input" "a" "$i" "title")
+            [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "language=$language_tag")
+            [[ -n "$title_tag" ]] && stream_metadata_opts+=(-metadata:s:a:"$i" "title=$title_tag")
         done
     fi
 
@@ -711,7 +732,10 @@ run_encode_attempt() {
         subtitle_stream_count=$(get_stream_count "s" "$input")
         if [[ "$subtitle_stream_count" -gt 0 ]]; then
             for ((i=0; i<subtitle_stream_count; i++)); do
-                stream_metadata_opts+=(-map_metadata:s:s:"$i" 0:s:s:"$i")
+                language_tag=$(get_stream_tag_value "$input" "s" "$i" "language")
+                title_tag=$(get_stream_tag_value "$input" "s" "$i" "title")
+                [[ -n "$language_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "language=$language_tag")
+                [[ -n "$title_tag" ]] && stream_metadata_opts+=(-metadata:s:s:"$i" "title=$title_tag")
             done
         fi
     fi
