@@ -21,11 +21,12 @@ Full release notes: [`CHANGELOG.md`](./CHANGELOG.md)
 - HEVC video encoding via VAAPI or CPU/x265
 - Strict AAC audio processing for all tracks (224k target)
 - HEVC remux mode by default (copy video + process audio)
+- MP4 output by default for browser/Edge playback compatibility
 - Clean container metadata/chapters by default
 - Automatic TV/movie folder structure normalization
-- Stream-safe defaults for subtitles and attachment fonts
+- Stream-safe defaults for timestamp/audio render compatibility
 
-The script is designed to handle mixed anime/TV/movie files, including dual-audio releases, ASS subtitles, and attachment fonts.
+The script is designed to handle mixed anime/TV/movie files, including dual-audio releases and browser-focused playback constraints.
 
 ## Mini PC Profile (Tuned/Tested)
 
@@ -68,12 +69,12 @@ Use `scripts/helpers/` for helper `.sh` utilities.
   - If AAC fails for a file, that file is marked as failed (**no audio-copy fallback**).
   - Preserves original audio track metadata per track (title/language tags), including multi/dual-audio releases.
 - **Subtitle handling**
-  - Copies subtitle streams by default (`-c:s copy`), so **ASS remains ASS**.
-  - If subtitle mux/copy fails, the file is retried without subtitles.
+  - For MP4 output, subtitles are converted to `mov_text` when compatible.
+  - If subtitle mux/convert fails, the file is retried without subtitles.
   - Preserves original subtitle track metadata (title/language tags).
 - **Attachment handling**
-  - Copies attachment streams by default (fonts/images), which helps ASS styling render correctly.
-  - If an input attachment stream is missing required tags (filename/mimetype), the file is retried without attachments.
+  - MP4 output automatically skips attachment streams (fonts/images) for container compatibility.
+  - If attachments are present and cause mux issues in non-MP4 workflows, the file is retried without attachments.
 - **HEVC skip mode**
   - Default behavior remuxes HEVC sources (copy video + process audio).
   - Use `--no-skip-hevc` to force HEVC re-encode.
@@ -134,7 +135,7 @@ Typical anime/dual-audio remux workflow:
 | Disable live FPS/speed output | `./Muxmaster.sh --no-fps "/input" "/output"` |
 | Disable proactive timestamp regeneration | `./Muxmaster.sh --no-clean-timestamps "/input" "/output"` |
 | Disable forced matching audio layout | `./Muxmaster.sh --no-match-audio-layout "/input" "/output"` |
-| Edge-safe pass (timestamps + matched audio layout) | `./Muxmaster.sh --clean-timestamps --match-audio-layout "/input" "/output"` |
+| Edge-safe pass (timestamps + matched audio layout, default behavior) | `./Muxmaster.sh "/input" "/output"` |
 | Regenerate clean timestamps before retest | `scripts/helpers/clean_timestamps_remux.sh "/input.mkv" "/output_fixed.mkv"` |
 | Dry-run plan only | `./Muxmaster.sh -d "/input" "/output"` |
 | System diagnostics | `./Muxmaster.sh --check` |
@@ -162,8 +163,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `--show-fps` | Show live FFmpeg encoding FPS/speed progress (default: on) |
 | `--no-fps` | Disable live FFmpeg FPS/speed progress |
 | `--no-stats` | Hide per-file source video stats (resolution/bitrate) |
-| `--no-subs` | Do not copy subtitle streams |
-| `--no-attachments` | Do not copy attachment streams |
+| `--no-subs` | Do not process subtitle streams |
+| `--no-attachments` | Do not include attachment streams |
 | `--strict` | Disable automatic FFmpeg retry fallbacks (fail fast per file) |
 | `--clean-timestamps` | Enable proactive timestamp regeneration on first remux/encode attempt (`-fflags +genpts`, default: on) |
 | `--no-clean-timestamps` | Disable proactive timestamp regeneration |
@@ -183,12 +184,12 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 
 ## Defaults and Behavior
 
-- Output container: **MKV**
+- Output container: **MP4**
 - Keyframe interval: **48**
 - Audio target: **AAC stereo 224k** (all tracks)
 - If AAC fails on a file: file processing fails (**no audio-copy fallback**)
-- Subtitles: copied by default (ASS and others preserved)
-- Attachments: copied by default
+- Subtitles: converted to `mov_text` when compatible; incompatible subtitle formats are dropped via retry fallback
+- Attachments: skipped automatically for MP4 container compatibility
 - Container metadata/chapters: stripped by default (`--keep-metadata` to preserve)
 - FFmpeg FPS/speed live progress is on by default (`--no-fps` to disable)
 - Per-file source video stats are shown by default (`--no-stats` to hide)
@@ -211,13 +212,13 @@ The script attempts to classify files as TV episodes or movies from filename pat
 ### TV output
 
 ```text
-<output>/<Show Name>/Season <NN>/<Show Name> - S<NN>E<NN>.mkv
+<output>/<Show Name>/Season <NN>/<Show Name> - S<NN>E<NN>.mp4
 ```
 
 ### Movie output
 
 ```text
-<output>/<Movie Name (Year)>/<Movie Name (Year)>.mkv
+<output>/<Movie Name (Year)>/<Movie Name (Year)>.mp4
 ```
 
 ---
@@ -295,17 +296,18 @@ The script attempts to classify files as TV episodes or movies from filename pat
 
 ### Attachment warnings like "Could not find codec parameters for stream ... Attachment: none"
 
-- These often come from odd font attachments in MKVs.
-- The script maps only needed streams and should still proceed in most cases.
+- These often come from odd source font attachments in MKVs.
+- MP4 output skips attachment streams by design, so these warnings are usually source-side noise.
 
 ### Attachment tag errors like "Attachment stream ... has no filename/mimetype tag"
 
-- Newer script versions automatically retry the file without attachments.
-- If you still need a manual override for a run, use `--no-attachments`.
+- MP4 output does not include attachment streams, so this is generally avoided by default.
+- Manual override remains available: `--no-attachments`.
 
 ### Subtitle mux/copy errors
 
-- Newer script versions automatically retry the file without subtitles if subtitle stream muxing fails.
+- MP4 output converts subtitles to `mov_text` when possible.
+- If subtitle conversion/muxing fails (common with image-based subtitles), the script automatically retries without subtitles.
 - Manual override: run with `--no-subs`.
 
 ### "Too many packets buffered for output stream"

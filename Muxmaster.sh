@@ -16,7 +16,7 @@ VAAPI_PROFILE="main10"
 VAAPI_SW_FORMAT="p010"
 CPU_CRF=19
 CPU_PRESET="slow"
-OUTPUT_CONTAINER="mkv"
+OUTPUT_CONTAINER="mp4"
 KEYFRAME_INT=48              # Keyframes every 48 frames (~2s at 24fps)
 AUDIO_CHANNELS=2
 AUDIO_BITRATE="224k"
@@ -154,8 +154,8 @@ Options:
   --show-fps                Show live ffmpeg encoding FPS/speed (default: on)
   --no-fps                  Disable live ffmpeg FPS/speed progress
   --no-stats                Hide per-file source video stats section
-  --no-subs                 Do not copy subtitle streams
-  --no-attachments          Do not copy attachment streams (fonts/images)
+  --no-subs                 Do not process subtitle streams
+  --no-attachments          Do not include attachment streams (fonts/images)
   --strict                  Disable automatic ffmpeg retry fallbacks
   --clean-timestamps        Enable proactive timestamp regeneration (default: on)
   --no-clean-timestamps     Disable proactive timestamp regeneration
@@ -171,7 +171,7 @@ Options:
   -V, --version             Print script version and exit
   -h, --help                Help
 
-Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), subtitles copied (ASS preserved), keyframes every 48 frames, clean container metadata, proactive timestamp cleanup + anomaly retries
+Encoding defaults: 10-bit HEVC, QP/CRF 19, all audio -> AAC stereo 224k (strict, no audio-copy fallback), output container MP4, keyframes every 48 frames, clean container metadata, proactive timestamp cleanup + anomaly retries
 EOF
     exit "$exit_code"
 }
@@ -324,6 +324,11 @@ get_first_render_device() {
         return 0
     done
     return 1
+}
+
+# Return success when output container is MP4.
+output_container_is_mp4() {
+    [[ "${OUTPUT_CONTAINER,,}" == "mp4" ]]
 }
 
 # Validate required tools and confirm selected encoder path is usable.
@@ -509,7 +514,7 @@ ffmpeg_error_has_attachment_tag_issue() {
 ffmpeg_error_has_subtitle_mux_issue() {
     local err_file="$1"
     [[ -s "$err_file" ]] || return 1
-    grep -Eqi 'Subtitle codec .* is not supported|Could not find tag for codec .* in stream .*subtitle|Error initializing output stream .*subtitle' "$err_file"
+    grep -Eqi 'Subtitle codec .* is not supported|Could not find tag for codec .* in stream .*subtitle|Error initializing output stream .*subtitle|Error while opening encoder for output stream .*subtitle|Subtitle encoding currently only possible from text to text or bitmap to bitmap' "$err_file"
 }
 
 # Return success when ffmpeg reports mux queue overflow.
@@ -533,8 +538,18 @@ ffmpeg_error_has_timestamp_discontinuity() {
 run_remux_with_audio_opts() {
     local input="$1" output="$2" video_stream_idx="$3" metadata_mode="$4" err_file="$5" include_subtitles="$6" include_attachments="$7" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
     shift 9
-    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts
-    local audio_stream_count subtitle_stream_count i
+    local -a audio_opts=("$@") metadata_opts subtitle_opts attachment_opts pre_input_opts timestamp_opts stream_metadata_opts container_opts video_tag_opts
+    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false
+
+    if output_container_is_mp4; then
+        mp4_output=true
+        subtitle_codec="mov_text"
+        container_opts=(-movflags +faststart)
+        video_tag_opts=(-tag:v hvc1)
+    else
+        container_opts=()
+        video_tag_opts=()
+    fi
 
     if [[ "$timestamp_fix" == true ]]; then
         pre_input_opts=(-fflags +genpts)
@@ -551,13 +566,18 @@ run_remux_with_audio_opts() {
     fi
 
     if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
-        subtitle_opts=(-map 0:s? -c:s copy)
+        subtitle_opts=(-map 0:s? -c:s "$subtitle_codec")
     else
         subtitle_opts=()
     fi
 
     if [[ "$KEEP_ATTACHMENTS" == true && "$include_attachments" == true ]]; then
-        attachment_opts=(-map 0:t? -c:t copy)
+        if [[ "$mp4_output" == true ]]; then
+            # MP4 does not support MKV-style attachment streams (fonts/images).
+            attachment_opts=()
+        else
+            attachment_opts=(-map 0:t? -c:t copy)
+        fi
     else
         attachment_opts=()
     fi
@@ -588,9 +608,11 @@ run_remux_with_audio_opts() {
             -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
             -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
             -c:v copy \
+            "${video_tag_opts[@]}" \
             "${metadata_opts[@]}" \
             "${stream_metadata_opts[@]}" \
             "${timestamp_opts[@]}" \
+            "${container_opts[@]}" \
             "$output"
 }
 
@@ -618,8 +640,18 @@ run_remux_attempt() {
 # subtitles/attachments are preserved by default.
 run_encode_attempt() {
     local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" metadata_mode="${6:-}" include_subtitles="${7:-true}" muxing_queue_size="${8:-4096}" timestamp_fix="${9:-false}"
-    local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts
-    local audio_stream_count subtitle_stream_count i
+    local -a audio_opts subtitle_opts attachment_opts metadata_opts pre_input_opts timestamp_opts stream_metadata_opts container_opts video_tag_opts
+    local audio_stream_count subtitle_stream_count i subtitle_codec="copy" mp4_output=false
+
+    if output_container_is_mp4; then
+        mp4_output=true
+        subtitle_codec="mov_text"
+        container_opts=(-movflags +faststart)
+        video_tag_opts=(-tag:v hvc1)
+    else
+        container_opts=()
+        video_tag_opts=()
+    fi
 
     if has_audio_stream "$input"; then
         audio_opts=(-map 0:a -c:a aac -ac "$AUDIO_CHANNELS" -ar 48000 -b:a "$AUDIO_BITRATE")
@@ -632,13 +664,18 @@ run_encode_attempt() {
     fi
 
     if [[ "$KEEP_SUBTITLES" == true && "$include_subtitles" == true ]]; then
-        subtitle_opts=(-map 0:s? -c:s copy)
+        subtitle_opts=(-map 0:s? -c:s "$subtitle_codec")
     else
         subtitle_opts=()
     fi
 
     if [[ "$KEEP_ATTACHMENTS" == true && "$include_attachments" == true ]]; then
-        attachment_opts=(-map 0:t? -c:t copy)
+        if [[ "$mp4_output" == true ]]; then
+            # MP4 does not support MKV-style attachment streams (fonts/images).
+            attachment_opts=()
+        else
+            attachment_opts=(-map 0:t? -c:t copy)
+        fi
     else
         attachment_opts=()
     fi
@@ -689,9 +726,11 @@ run_encode_attempt() {
                 -map "0:${video_stream_idx}" "${audio_opts[@]}" "${subtitle_opts[@]}" "${attachment_opts[@]}" \
                 -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
                 -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
+                "${video_tag_opts[@]}" \
                 "${metadata_opts[@]}" \
                 "${stream_metadata_opts[@]}" \
                 "${timestamp_opts[@]}" \
+                "${container_opts[@]}" \
                 "$output"
     else
         run_ffmpeg_logged "$err_file" \
@@ -704,9 +743,11 @@ run_encode_attempt() {
                 -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
                 -profile:v main10 -pix_fmt yuv420p10le -g "$KEYFRAME_INT" \
                 -x265-params log-level=error \
+                "${video_tag_opts[@]}" \
                 "${metadata_opts[@]}" \
                 "${stream_metadata_opts[@]}" \
                 "${timestamp_opts[@]}" \
+                "${container_opts[@]}" \
                 "$output"
     fi
 }
@@ -910,9 +951,22 @@ process_files() {
     local profile_label="main10"
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
+    log_info "Container: ${OUTPUT_CONTAINER^^}"
     log_info "Audio: All tracks -> ${AUDIO_CHANNELS}ch AAC ${AUDIO_BITRATE} (strict AAC, no source-audio fallback) | Keyframes: ${KEYFRAME_INT}f"
-    [[ "$KEEP_SUBTITLES" == true ]] && log_info "Subtitles: Copy all subtitle streams (ASS and others preserved)"
-    [[ "$KEEP_ATTACHMENTS" == true ]] && log_info "Attachments: Copy font/image attachments"
+    if [[ "$KEEP_SUBTITLES" == true ]]; then
+        if output_container_is_mp4; then
+            log_info "Subtitles: convert to mov_text when compatible (auto-retry without subtitles on incompatible formats)"
+        else
+            log_info "Subtitles: Copy all subtitle streams (ASS and others preserved)"
+        fi
+    fi
+    if [[ "$KEEP_ATTACHMENTS" == true ]]; then
+        if output_container_is_mp4; then
+            log_info "Attachments: disabled for MP4 container compatibility"
+        else
+            log_info "Attachments: Copy font/image attachments"
+        fi
+    fi
     [[ "$CLEAN_METADATA" == true ]] && log_info "Metadata: clean container metadata and chapters"
     [[ "$CLEAN_METADATA" == false ]] && log_info "Metadata: preserve source container metadata and chapters"
     [[ "$SHOW_FFMPEG_FPS" == true ]] && log_info "FFmpeg progress: live FPS/speed enabled"
