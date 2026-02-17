@@ -315,6 +315,17 @@ test_vaapi_profile() {
         -c:v hevc_vaapi -profile:v "$profile" -f null - > /dev/null 2>"$err_file"
 }
 
+# Return first available VAAPI render device path.
+get_first_render_device() {
+    local dev
+    for dev in /dev/dri/renderD*; do
+        [[ -e "$dev" ]] || continue
+        printf '%s\n' "$dev"
+        return 0
+    done
+    return 1
+}
+
 # Validate required tools and confirm selected encoder path is usable.
 check_deps() {
     command -v ffmpeg &>/dev/null || { log_error "ffmpeg not found"; exit 1; }
@@ -322,9 +333,9 @@ check_deps() {
     
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         if [[ ! -e "$VAAPI_DEVICE" ]]; then
-            VAAPI_DEVICE=$(ls /dev/dri/renderD* 2>/dev/null | head -1)
+            VAAPI_DEVICE=$(get_first_render_device || true)
         fi
-        [[ -z "$VAAPI_DEVICE" ]] && { log_error "No VAAPI device"; exit 1; }
+        [[ -z "$VAAPI_DEVICE" || ! -e "$VAAPI_DEVICE" ]] && { log_error "No VAAPI device"; exit 1; }
         
         log_debug "Testing VAAPI device: $VAAPI_DEVICE"
         
@@ -341,7 +352,7 @@ check_deps() {
             log_success "VAAPI ready: $VAAPI_DEVICE (HEVC main)"
         else
             log_error "VAAPI test failed"
-            [[ "$VERBOSE" == true ]] && cat "$vaapi_err"
+            [[ "$VERBOSE" == true ]] && sed 's/^/  /' "$vaapi_err"
             rm -f "$vaapi_err"
             exit 1
         fi
@@ -508,11 +519,11 @@ ffmpeg_error_has_mux_queue_overflow() {
     grep -Eq 'Too many packets buffered for output stream' "$err_file"
 }
 
-# Return success when ffmpeg reports non-monotonic timestamp issues.
+# Return success when ffmpeg reports timestamp/PTS ordering anomalies.
 ffmpeg_error_has_timestamp_discontinuity() {
     local err_file="$1"
     [[ -s "$err_file" ]] || return 1
-    grep -Eqi 'Non-monotonous DTS|non monotonically increasing dts|DTS .*out of order' "$err_file"
+    grep -Eqi 'Non-monotonous DTS|non monotonically increasing dts|invalid, non monotonically increasing dts|DTS .*out of order|PTS .*out of order|pts has no value|missing PTS|Timestamps are unset' "$err_file"
 }
 
 # Core remux executor used by skip-hevc flow.
@@ -850,7 +861,7 @@ encode_file() {
             fi
 
             if [[ "$result" -ne 0 && "$encode_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$ffmpeg_err"; then
-                log_warn "Encode retry: timestamp discontinuity detected; retrying with genpts"
+                log_warn "Encode retry: timestamp/PTS anomaly detected; retrying with genpts"
                 rm -f "$output"
                 encode_timestamp_fix=true
 
@@ -1010,7 +1021,7 @@ process_files() {
                         fi
 
                         if [[ "$remux_ok" != true && "$remux_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$remux_err"; then
-                            log_warn "Remux retry: timestamp discontinuity detected; retrying with genpts"
+                            log_warn "Remux retry: timestamp/PTS anomaly detected; retrying with genpts"
                             rm -f "$out"
                             remux_timestamp_fix=true
 
@@ -1073,15 +1084,24 @@ run_check() {
     log_info "=== System Check ==="
     
     if command -v ffmpeg &>/dev/null; then
-        log_success "ffmpeg: $(ffmpeg -version 2>/dev/null | head -1)"
+        local ffmpeg_version
+        ffmpeg_version=$(ffmpeg -version 2>/dev/null | sed -n '1p')
+        log_success "ffmpeg: ${ffmpeg_version:-unknown}"
     else
         log_error "ffmpeg not found"
     fi
     
     log_info "HEVC encoders:"
-    ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "hevc|265"
+    local hevc_encoders
+    hevc_encoders=$(ffmpeg -hide_banner -encoders 2>/dev/null | grep -E "hevc|265" || true)
+    if [[ -n "$hevc_encoders" ]]; then
+        printf '%s\n' "$hevc_encoders"
+    else
+        log_warn "No HEVC-related encoders reported by ffmpeg"
+    fi
     
-    local dev=$(ls /dev/dri/renderD* 2>/dev/null | head -1)
+    local dev
+    dev=$(get_first_render_device || true)
     if [[ -n "$dev" ]]; then
         log_info "Testing VAAPI on $dev..."
         if ffmpeg -hide_banner -nostdin -init_hw_device vaapi=va:"$dev" \

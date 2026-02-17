@@ -15,6 +15,11 @@ All notable changes to this project are documented in this file.
 
 - Expanded troubleshooting guidance for timestamp issues to include a dedicated clean-remux step before retesting playback.
 
+### Fixed
+
+- Hardened VAAPI render-device detection to avoid brittle shell parsing when `/dev/dri/renderD*` is missing.
+- Expanded FFmpeg timestamp retry detection to include broader DTS/PTS anomaly messages (including missing/invalid PTS patterns).
+
 ## [1.1] - 2026-02-16
 
 ### Added

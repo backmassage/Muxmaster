@@ -315,7 +315,7 @@ The script attempts to classify files as TV episodes or movies from filename pat
 
 ### Non-monotonic DTS / timestamp ordering errors
 
-- Newer script versions automatically retry with generated timestamps.
+- Newer script versions automatically retry with generated timestamps for common DTS/PTS anomalies (including missing/invalid PTS messages).
 - To force timestamp regeneration on the first attempt for every file (recommended for Blu-ray/batch remux sources and Edge MSE audio switching), run:
 
 ```bash
