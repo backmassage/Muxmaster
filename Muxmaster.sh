@@ -12,17 +12,17 @@ set -o pipefail
 # Encoding defaults
 ENCODER_MODE="vaapi"
 VAAPI_DEVICE="/dev/dri/renderD128"
-VAAPI_QP=18
+VAAPI_QP=19
 VAAPI_PROFILE="main10"
 VAAPI_SW_FORMAT="p010"
-CPU_CRF=20
+CPU_CRF=19
 CPU_PRESET="slow"
 CPU_HEVC_PROFILE="main10"
 CPU_PIX_FMT="yuv420p10le"
 OUTPUT_CONTAINER="mkv"
 KEYFRAME_INT=48
 AUDIO_CHANNELS=2
-AUDIO_BITRATE="256k"
+AUDIO_BITRATE="224k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
 
@@ -175,7 +175,7 @@ Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
 
 Encoding Options:
   -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi)
-  -q, --quality <value>     QP for VAAPI, CRF for CPU (defaults: VAAPI=18, CPU=20)
+  -q, --quality <value>     QP for VAAPI, CRF for CPU (defaults: VAAPI=19, CPU=19)
   -p, --preset <preset>     CPU preset (default: slow)
 
 HDR/Color Options:

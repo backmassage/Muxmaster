@@ -11,7 +11,7 @@ Bundled core script: **Muxmaster.sh v1.4.0**
 - Optional HEVC remux mode (`--skip-hevc`) with browser-safety checks
 - AAC audio strategy:
   - copy AAC streams as-is (no AAC-to-AAC re-encode)
-  - otherwise encode non-AAC streams to AAC 48kHz (`256k` target by default)
+  - otherwise encode non-AAC streams to AAC 48kHz (`224k` target by default)
 - HDR handling:
   - preserve metadata (`--hdr preserve`)
   - tonemap to SDR (`--hdr tonemap`)
@@ -54,7 +54,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | Option | Description |
 |---|---|
 | `-m, --mode <vaapi\|cpu>` | Encoder mode (default: `vaapi`) |
-| `-q, --quality <value>` | VAAPI QP or CPU CRF (defaults: VAAPI `18`, CPU `20`) |
+| `-q, --quality <value>` | VAAPI QP or CPU CRF (defaults: VAAPI `19`, CPU `19`) |
 | `-p, --preset <preset>` | CPU x265 preset (default: `slow`) |
 | `--container <mkv\|mp4>` | Output container (default: `mkv`) |
 | `--hdr <preserve\|tonemap>` | HDR handling mode (default: `preserve`) |
@@ -88,7 +88,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
   - VAAPI: `main10` when available, fallback to `main` (8-bit)
   - CPU: `main10`, `yuv420p10le`
 - Audio:
-  - target: AAC, up to stereo, `256k`, 48kHz for non-AAC sources
+  - target: AAC, up to stereo, `224k`, 48kHz for non-AAC sources
   - AAC source streams are copied directly (no AAC-to-AAC re-encode)
 - Subtitles:
   - MKV: copy subtitle streams

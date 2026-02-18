@@ -6,8 +6,8 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- Updated default quality from `19` to decoupled defaults: VAAPI QP `18`, CPU CRF `20`.
-- Updated default AAC audio bitrate from `192k` to `256k`.
+- Set default quality to `19` for both VAAPI QP and CPU CRF.
+- Set default AAC audio bitrate to `224k`.
 - Bumped bundled script version to `Muxmaster.sh v1.4.0`.
 - Updated README defaults and release metadata for `1.4.0`.
 - Polished CLI help wording for audio layout and release summary text.
