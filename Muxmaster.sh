@@ -1,6 +1,6 @@
 #!/bin/bash
 #===============================================================================
-# Muxmaster Media Library Encoder v2.1.1
+# Muxmaster Media Library Encoder v1.3.0
 # Comprehensive HEVC/AAC encoding for Jellyfin optimization
 #===============================================================================
 
@@ -54,7 +54,7 @@ DEINTERLACE_AUTO=true
 INPUT_DIR=""
 OUTPUT_DIR=""
 SCRIPT_NAME="$(basename "$0")"
-SCRIPT_VERSION="2.1.1"
+SCRIPT_VERSION="1.3.0"
 
 # Temp file tracking for cleanup
 declare -a TEMP_FILES=()
