@@ -1149,6 +1149,18 @@ parse_filename() {
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | xargs)
+    # Episodic: [Group] Show 05 - Title (supports 21' style episode tokens)
+    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+([0-9]{1,3})[']?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+        MEDIA_TYPE="tv"
+        SEASON="1"
+        EPISODE="${BASH_REMATCH[3]}"
+        SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | xargs)
+    # Episodic fallback: 05 - Title (derive show name from parent directory)
+    elif [[ "$base" =~ ^([0-9]{1,3})[']?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+        MEDIA_TYPE="tv"
+        SEASON="1"
+        EPISODE="${BASH_REMATCH[1]}"
+        SHOW_NAME=$(echo "$parent" | tr '._' ' ' | xargs)
     # Anime: [Group]Name_Name_01_BD or Name_01
     elif [[ "$base" =~ ^(\[.+\])?(.+)_([0-9]{2,3})(_[^.]*)?$ ]]; then
         MEDIA_TYPE="tv"
