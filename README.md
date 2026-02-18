@@ -2,8 +2,8 @@
 
 > A resilient batch encoder/remuxer for Jellyfin-style media libraries.
 
-Release version: **1.2.3**  
-Bundled core script: **Muxmaster.sh v2.1.0**
+Release version: **1.3.0**  
+Bundled core script: **Muxmaster.sh v2.1.1**
 
 ## Highlights
 
@@ -11,7 +11,7 @@ Bundled core script: **Muxmaster.sh v2.1.0**
 - Optional HEVC remux mode (`--skip-hevc`) with browser-safety checks
 - AAC audio strategy:
   - copy when already AAC and channel-compatible
-  - otherwise encode to AAC 48kHz (`192k` target by default)
+  - otherwise encode to AAC 48kHz (`224k` target by default)
 - HDR handling:
   - preserve metadata (`--hdr preserve`)
   - tonemap to SDR (`--hdr tonemap`)
@@ -54,7 +54,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | Option | Description |
 |---|---|
 | `-m, --mode <vaapi\|cpu>` | Encoder mode (default: `vaapi`) |
-| `-q, --quality <value>` | VAAPI QP or CPU CRF (default: `19`) |
+| `-q, --quality <value>` | VAAPI QP or CPU CRF (default: `18`) |
 | `-p, --preset <preset>` | CPU x265 preset (default: `slow`) |
 | `--container <mkv\|mp4>` | Output container (default: `mkv`) |
 | `--hdr <preserve\|tonemap>` | HDR handling mode (default: `preserve`) |
@@ -88,7 +88,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
   - VAAPI: `main10` when available, fallback to `main` (8-bit)
   - CPU: `main10`, `yuv420p10le`
 - Audio:
-  - target: AAC, up to stereo, `192k`, 48kHz
+  - target: AAC, up to stereo, `224k`, 48kHz
   - copied when already AAC and channel-compatible
 - Subtitles:
   - MKV: copy subtitle streams

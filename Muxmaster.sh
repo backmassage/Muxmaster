@@ -1,6 +1,6 @@
 #!/bin/bash
 #===============================================================================
-# Muxmaster Media Library Encoder v2.1.0
+# Muxmaster Media Library Encoder v2.1.1
 # Comprehensive HEVC/AAC encoding for Jellyfin optimization
 #===============================================================================
 
@@ -12,17 +12,17 @@ set -o pipefail
 # Encoding defaults
 ENCODER_MODE="vaapi"
 VAAPI_DEVICE="/dev/dri/renderD128"
-VAAPI_QP=19
+VAAPI_QP=18
 VAAPI_PROFILE="main10"
 VAAPI_SW_FORMAT="p010"
-CPU_CRF=19
+CPU_CRF=18
 CPU_PRESET="slow"
 CPU_HEVC_PROFILE="main10"
 CPU_PIX_FMT="yuv420p10le"
 OUTPUT_CONTAINER="mkv"
 KEYFRAME_INT=48
 AUDIO_CHANNELS=2
-AUDIO_BITRATE="192k"
+AUDIO_BITRATE="224k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
 
@@ -54,7 +54,7 @@ DEINTERLACE_AUTO=true
 INPUT_DIR=""
 OUTPUT_DIR=""
 SCRIPT_NAME="$(basename "$0")"
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="2.1.1"
 
 # Temp file tracking for cleanup
 declare -a TEMP_FILES=()
@@ -175,7 +175,7 @@ Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
 
 Encoding Options:
   -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi)
-  -q, --quality <value>     QP for VAAPI, CRF for CPU (default: 19)
+  -q, --quality <value>     QP for VAAPI, CRF for CPU (default: 18)
   -p, --preset <preset>     CPU preset (default: slow)
 
 HDR/Color Options:
@@ -586,16 +586,27 @@ get_primary_video_bitrate_label() {
 #------------------------------------------------------------------------------
 # HDR and color space detection
 #------------------------------------------------------------------------------
+get_primary_video_color_fields() {
+    local input="$1"
+    local idx color_transfer color_primaries color_space attached
+
+    while IFS='|' read -r idx color_transfer color_primaries color_space attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" == "1" ]] && continue
+        printf '%s:%s:%s\n' "${color_transfer:-unknown}" "${color_primaries:-unknown}" "${color_space:-unknown}"
+        return 0
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,color_transfer,color_primaries,color_space:stream_disposition=attached_pic \
+        -of compact=p=0:nk=1 "$input" 2>/dev/null)
+
+    printf 'unknown:unknown:unknown\n'
+}
+
 detect_hdr_type() {
     local input="$1"
     local color_transfer color_primaries color_space
 
-    # Get color metadata from the video stream
-    read -r color_transfer color_primaries color_space < <(
-        ffprobe -v error -select_streams v:0 \
-            -show_entries stream=color_transfer,color_primaries,color_space \
-            -of csv=p=0 "$input" 2>/dev/null | head -1 | tr ',' ' '
-    )
+    IFS=':' read -r color_transfer color_primaries color_space <<< "$(get_primary_video_color_fields "$input")"
 
     # Check for HDR indicators
     case "$color_transfer" in
@@ -617,16 +628,7 @@ detect_hdr_type() {
 
 get_color_metadata() {
     local input="$1"
-    local color_transfer color_primaries color_space
-
-    read -r color_transfer color_primaries color_space < <(
-        ffprobe -v error -select_streams v:0 \
-            -show_entries stream=color_transfer,color_primaries,color_space \
-            -of csv=p=0 "$input" 2>/dev/null | head -1 | tr ',' ' '
-    )
-
-    # Return as colon-separated values
-    printf '%s:%s:%s\n' "${color_transfer:-unknown}" "${color_primaries:-unknown}" "${color_space:-unknown}"
+    get_primary_video_color_fields "$input"
 }
 
 #------------------------------------------------------------------------------
@@ -634,17 +636,20 @@ get_color_metadata() {
 #------------------------------------------------------------------------------
 is_interlaced() {
     local input="$1"
-    local field_order
+    local idx field_order attached
 
-    field_order=$(ffprobe -v error -select_streams v:0 \
-        -show_entries stream=field_order \
-        -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
-
-    case "$field_order" in
-        tt|bb|tb|bt)
-            return 0
-            ;;
-    esac
+    while IFS='|' read -r idx field_order attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" == "1" ]] && continue
+        case "$field_order" in
+            tt|bb|tb|bt)
+                return 0
+                ;;
+        esac
+        return 1
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,field_order:stream_disposition=attached_pic \
+        -of compact=p=0:nk=1 "$input" 2>/dev/null)
 
     return 1
 }
@@ -1029,9 +1034,9 @@ run_encode_attempt() {
         local color_meta
         color_meta=$(get_color_metadata "$input")
         IFS=':' read -r ct cp cs <<< "$color_meta"
-        if [[ "$ct" != "unknown" ]]; then
-            color_opts+=(-color_trc "$ct" -color_primaries "$cp" -colorspace "$cs")
-        fi
+        [[ "$ct" != "unknown" ]] && color_opts+=(-color_trc "$ct")
+        [[ "$cp" != "unknown" ]] && color_opts+=(-color_primaries "$cp")
+        [[ "$cs" != "unknown" ]] && color_opts+=(-colorspace "$cs")
     fi
 
     # hvc1 tag for compatibility (MP4 only; MKV uses codec IDs natively)

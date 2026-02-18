@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## [1.3.0] - 2026-02-18
+
+### Changed
+
+- Updated default quality from `19` to `18` for both VAAPI QP and CPU CRF paths.
+- Updated default AAC audio bitrate from `192k` to `224k`.
+- Bumped bundled script version to `Muxmaster.sh v2.1.1`.
+- Updated README defaults and release metadata for `1.3.0`.
+
+### Fixed
+
+- Improved FFmpeg stream analysis for HDR/color/interlace detection by targeting the primary non-attachment video stream, preventing false analysis on files with attached cover-art video streams.
+- Hardened HDR metadata passthrough so ffmpeg only receives valid color flags when metadata is present, reducing encode failures caused by unknown color values.
+
 ## [1.2.3] - 2026-02-17
 
 ### Added
