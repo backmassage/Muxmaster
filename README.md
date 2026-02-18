@@ -2,8 +2,8 @@
 
 > A resilient batch encoder/remuxer for Jellyfin-style media libraries.
 
-Release version: **1.3.0**  
-Bundled core script: **Muxmaster.sh v1.3.0**
+Release version: **1.4.0**  
+Bundled core script: **Muxmaster.sh v1.4.0**
 
 ## Highlights
 
