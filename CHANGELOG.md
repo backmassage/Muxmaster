@@ -17,6 +17,7 @@ All notable changes to this project are documented in this file.
 - Hardened HDR metadata passthrough so ffmpeg only receives valid color flags when metadata is present, reducing encode failures caused by unknown color values.
 - Fixed command-substitution logging contamination in option-builder helpers (`build_audio_opts`, `build_subtitle_opts`, `build_video_filter`) that could corrupt generated FFmpeg argument lists in verbose/warning scenarios.
 - Updated per-stream audio handling so AAC tracks are always copied as-is (no AAC-to-AAC re-encode), while non-AAC tracks are encoded to AAC.
+- Fixed filename tag cleanup to only trim known release tags at token boundaries, preventing accidental title truncation for names containing substrings like `NonAAC`.
 
 ## [1.2.3] - 2026-02-17
 

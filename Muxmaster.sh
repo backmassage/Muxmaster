@@ -1166,9 +1166,9 @@ parse_filename() {
     fi
 
     # Clean tags
-    local tags='(720p|1080p|2160p|4K|UHD|WEB-DL|WEBRip|BluRay|BDRip|BD|DVDRip|HDTV|x264|x265|HEVC|H\.?264|H\.?265|AAC|AC3|DTS|DTS-HD|TrueHD|FLAC|EAC3|DD\+?|Atmos|10bit|HDR|HDR10|HDR10\+|DV|DoVi|Dual\.?Audio|MULTI|REMUX|PROPER|REPACK|EMBER|NF|AMZN|DSNP|HMAX|ATVP).*'
-    SHOW_NAME=$(echo "$SHOW_NAME" | sed -E "s/$tags//i" | sed -E 's/\[[^]]*\]//g' | xargs)
-    MOVIE_NAME=$(echo "$MOVIE_NAME" | sed -E "s/$tags//i" | sed -E 's/\[[^]]*\]//g' | xargs)
+    local tags='720p|1080p|2160p|4K|UHD|WEB-DL|WEBRip|BluRay|BDRip|BD|DVDRip|HDTV|x264|x265|HEVC|H\.?264|H\.?265|AAC|AC3|DTS|DTS-HD|TrueHD|FLAC|EAC3|DD\+?|Atmos|10bit|HDR|HDR10|HDR10\+|DV|DoVi|Dual\.?Audio|MULTI|REMUX|PROPER|REPACK|EMBER|NF|AMZN|DSNP|HMAX|ATVP'
+    SHOW_NAME=$(echo "$SHOW_NAME" | sed -E "s/(^|[[:space:]._-])(${tags})([[:space:]._-]|$).*$//I" | sed -E 's/\[[^]]*\]//g' | xargs)
+    MOVIE_NAME=$(echo "$MOVIE_NAME" | sed -E "s/(^|[[:space:]._-])(${tags})([[:space:]._-]|$).*$//I" | sed -E 's/\[[^]]*\]//g' | xargs)
 
     # Title case
     SHOW_NAME=$(echo "$SHOW_NAME" | sed 's/\b\(.\)/\u\1/g')
