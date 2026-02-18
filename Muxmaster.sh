@@ -58,6 +58,8 @@ SCRIPT_VERSION="1.4.0"
 
 # Temp file tracking for cleanup
 declare -a TEMP_FILES=()
+# Per-file CSV summary rows
+declare -a FILE_SUMMARY_ROWS=()
 
 # ANSI color palette
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
@@ -382,6 +384,42 @@ get_file_size() {
         stat -f%z "$file" 2>/dev/null || echo 0
     else
         stat -c%s "$file" 2>/dev/null || echo 0
+    fi
+}
+
+#------------------------------------------------------------------------------
+# CSV summary helpers
+#------------------------------------------------------------------------------
+csv_escape_field() {
+    local value="${1-}"
+    value=${value//\"/\"\"}
+    printf '"%s"' "$value"
+}
+
+append_file_csv_summary() {
+    local input_file="$1" output_file="$2" media_type="$3" action="$4" video_action="$5" audio_action="$6" status="$7" note="$8"
+    local row
+
+    row="$(csv_escape_field "$input_file"),$(csv_escape_field "$output_file"),$(csv_escape_field "$media_type"),$(csv_escape_field "$action"),$(csv_escape_field "$video_action"),$(csv_escape_field "$audio_action"),$(csv_escape_field "$status"),$(csv_escape_field "$note")"
+    FILE_SUMMARY_ROWS+=("$row")
+}
+
+print_file_csv_summary() {
+    local header="input_file,output_file,media_type,action,video_action,audio_action,status,note"
+    local row
+
+    echo
+    log_info "Per-file summary (CSV)"
+    printf '%s\n' "$header"
+    for row in "${FILE_SUMMARY_ROWS[@]}"; do
+        printf '%s\n' "$row"
+    done
+
+    if [[ -n "$LOG_FILE" ]]; then
+        printf '%s\n' "$header" >> "$LOG_FILE"
+        for row in "${FILE_SUMMARY_ROWS[@]}"; do
+            printf '%s\n' "$row" >> "$LOG_FILE"
+        done
     fi
 }
 
@@ -1458,6 +1496,7 @@ process_files() {
     done < <(find "$INPUT_DIR" -type f -regextype posix-extended -iregex ".*\.($exts)$" -print0 | sort -z)
 
     local total=${#files[@]} current=0 encoded=0 skipped=0 failed=0
+    FILE_SUMMARY_ROWS=()
 
     log_info "Found $total files"
     local profile_label="$CPU_HEVC_PROFILE"
@@ -1489,10 +1528,15 @@ process_files() {
         ((current++))
 
         log_info "[$current/$total] $(basename "$f")"
+        local summary_media_type="unknown"
+        local summary_output=""
+        local summary_audio_action="unknown"
+        local summary_note=""
 
         # Validate file before processing
         if ! validate_input_file "$f"; then
             log_error "Skipping invalid file"
+            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "validate" "unknown" "$summary_audio_action" "failed" "invalid input file"
             ((failed++))
             echo
             continue
@@ -1503,6 +1547,7 @@ process_files() {
         video_idx=$(get_primary_video_stream_index "$f")
         if [[ -z "$video_idx" ]]; then
             log_warn "No video stream found, skipping"
+            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "analyze" "none" "$summary_audio_action" "skipped" "no video stream found"
             ((skipped++))
             echo
             continue
@@ -1516,6 +1561,9 @@ process_files() {
         [[ -z "$video_codec" ]] && video_codec=$(get_codec "$f")
         video_resolution=$(get_primary_video_resolution "$f")
         video_bitrate_label=$(get_primary_video_bitrate_label "$f")
+        summary_media_type="$MEDIA_TYPE"
+        summary_output="$out"
+        summary_audio_action=$(describe_audio_plan "$f")
 
         log_debug "Primary video stream: index=${video_idx}, codec=${video_codec:-unknown}"
 
@@ -1538,12 +1586,14 @@ process_files() {
 
             if ! is_edge_safe_hevc_stream "$source_profile" "$source_pix_fmt"; then
                 allow_hevc_remux=false
+                summary_note="HEVC profile not browser-safe; forced video transcode"
                 log_warn "  HEVC profile '${source_profile:-unknown}' not browser-safe; will re-encode"
             fi
 
             if [[ "$allow_hevc_remux" == true ]]; then
                 if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
                     log_warn "Skip (exists): $(basename "$out")"
+                    append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "remux" "copy" "$summary_audio_action" "skipped" "output exists"
                     ((skipped++))
                     echo
                     continue
@@ -1555,6 +1605,7 @@ process_files() {
 
                 if [[ "$DRY_RUN" == true ]]; then
                     log_success "[DRY] Would remux"
+                    append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "remux" "copy" "$summary_audio_action" "dry_run" "would remux"
                     ((encoded++))
                     echo
                     continue
@@ -1617,6 +1668,7 @@ process_files() {
                         tail -n 20 "$remux_err" | sed 's/^/  /'
                     fi
                     rm -f "$out"
+                    append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "remux" "copy" "$summary_audio_action" "failed" "remux failed"
                     ((failed++))
                     echo
                     continue
@@ -1628,6 +1680,7 @@ process_files() {
                 out_sz=$(get_file_size "$out")
                 [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=100
                 log_success "Remuxed in ${elapsed_rm}s (${ratio}% of original)"
+                append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "remux" "copy" "$summary_audio_action" "ok" "remuxed"
                 ((encoded++))
                 echo
                 continue
@@ -1636,14 +1689,28 @@ process_files() {
 
         if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
             log_warn "Skip (exists)"
+            local skip_note="output exists"
+            [[ -n "$summary_note" ]] && skip_note="${summary_note}; ${skip_note}"
+            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "encode" "transcode" "$summary_audio_action" "skipped" "$skip_note"
             ((skipped++))
             echo
             continue
         fi
 
         if encode_file "$f" "$out" "$video_idx"; then
+            local encode_note="encoded"
+            local encode_status="ok"
+            if [[ "$DRY_RUN" == true ]]; then
+                encode_note="would encode"
+                encode_status="dry_run"
+            fi
+            [[ -n "$summary_note" ]] && encode_note="${summary_note}; ${encode_note}"
+            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "encode" "transcode" "$summary_audio_action" "$encode_status" "$encode_note"
             ((encoded++))
         else
+            local fail_note="encode failed"
+            [[ -n "$summary_note" ]] && fail_note="${summary_note}; ${fail_note}"
+            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "encode" "transcode" "$summary_audio_action" "failed" "$fail_note"
             ((failed++))
         fi
         echo
@@ -1651,6 +1718,7 @@ process_files() {
 
     log_info "=============================="
     log_info "Done: $encoded encoded, $skipped skipped, $failed failed"
+    print_file_csv_summary
 
     return 0
 }
