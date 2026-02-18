@@ -1347,6 +1347,12 @@ parse_filename() {
         SEASON="1"
         EPISODE="${BASH_REMATCH[1]}"
         SHOW_NAME=$(echo "$parent" | tr '._' ' ' | xargs)
+    # Group releases: [Group] Show 05 [Tags] / [Group] Show - 05 (Tags)
+    elif [[ "$base" =~ ^(\[[^]]+\][[:space:]]+)(.+)[[:space:]_.-]+([0-9]{1,3})\'?([[:space:]].*)?$ ]]; then
+        MEDIA_TYPE="tv"
+        SEASON="1"
+        EPISODE="${BASH_REMATCH[3]}"
+        SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
     # Anime: [Group]Name_Name_01_BD or Name_01
     elif [[ "$base" =~ ^(\[.+\])?(.+)_([0-9]{2,3})(_[^.]*)?$ ]]; then
         MEDIA_TYPE="tv"
