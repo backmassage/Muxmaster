@@ -1150,13 +1150,13 @@ parse_filename() {
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | xargs)
     # Episodic: [Group] Show 05 - Title (supports 21' style episode tokens)
-    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+([0-9]{1,3})[']?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+([0-9]{1,3})\'?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | xargs)
     # Episodic fallback: 05 - Title (derive show name from parent directory)
-    elif [[ "$base" =~ ^([0-9]{1,3})[']?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+    elif [[ "$base" =~ ^([0-9]{1,3})\'?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[1]}"
