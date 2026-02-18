@@ -897,6 +897,154 @@ build_audio_opts() {
 }
 
 #------------------------------------------------------------------------------
+# Pre-flight render plan summaries
+#------------------------------------------------------------------------------
+describe_audio_plan() {
+    local input="$1"
+    local stream_count codec i copy_count=0 transcode_count=0
+
+    stream_count=$(get_stream_count "a" "$input")
+    if [[ "$stream_count" -eq 0 ]]; then
+        printf 'transcode=n/a (no audio streams)'
+        return 0
+    fi
+
+    for ((i=0; i<stream_count; i++)); do
+        codec=$(get_audio_codec "$input" "$i")
+        if [[ "$codec" == "aac" ]]; then
+            ((copy_count++))
+        else
+            ((transcode_count++))
+        fi
+    done
+
+    if [[ "$transcode_count" -eq 0 ]]; then
+        printf 'transcode=no (copy all %d AAC stream(s))' "$copy_count"
+    elif [[ "$copy_count" -eq 0 ]]; then
+        printf 'transcode=yes (all %d stream(s) -> AAC %s, 48kHz, up to %dch)' "$stream_count" "$AUDIO_BITRATE" "$AUDIO_CHANNELS"
+    else
+        printf 'transcode=yes (copy %d AAC stream(s), transcode %d stream(s) -> AAC %s, 48kHz, up to %dch)' "$copy_count" "$transcode_count" "$AUDIO_BITRATE" "$AUDIO_CHANNELS"
+    fi
+}
+
+describe_subtitle_plan() {
+    local input="$1"
+    local include_subtitles="$2"
+
+    if [[ "$KEEP_SUBTITLES" != true || "$include_subtitles" != true ]]; then
+        printf 'disabled'
+        return 0
+    fi
+
+    if output_container_is_mp4; then
+        if has_bitmap_subtitles "$input"; then
+            printf 'skip bitmap subtitles (MP4 incompatible)'
+        else
+            printf 'transcode text subtitles to mov_text'
+        fi
+    else
+        printf 'copy subtitle streams'
+    fi
+}
+
+describe_attachment_plan() {
+    local include_attachments="$1"
+
+    if [[ "$KEEP_ATTACHMENTS" != true || "$include_attachments" != true ]]; then
+        printf 'disabled'
+        return 0
+    fi
+
+    if output_container_is_mp4; then
+        printf 'disabled for MP4'
+    else
+        printf 'copy attachments'
+    fi
+}
+
+log_encode_render_plan() {
+    local input="$1" video_stream_idx="$2" include_subtitles="$3" include_attachments="$4" muxing_queue_size="$5" timestamp_fix="$6"
+    local source_video_codec source_codec_label
+    local audio_plan subtitle_plan attachment_plan container_plan hdr_plan deinterlace_plan video_plan hdr_type
+
+    source_video_codec=$(get_primary_video_codec "$input")
+    [[ -z "$source_video_codec" ]] && source_video_codec=$(get_codec "$input")
+    source_codec_label="${source_video_codec:-unknown}"
+
+    if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+        video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> hevc_vaapi, profile=${VAAPI_PROFILE}, QP=${VAAPI_QP}, keyint=${KEYFRAME_INT})"
+    else
+        video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> libx265, CRF=${CPU_CRF}, preset=${CPU_PRESET}, profile=${CPU_HEVC_PROFILE}, pix_fmt=${CPU_PIX_FMT}, keyint=${KEYFRAME_INT})"
+    fi
+
+    audio_plan=$(describe_audio_plan "$input")
+    subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
+    attachment_plan=$(describe_attachment_plan "$include_attachments")
+
+    if output_container_is_mp4; then
+        container_plan="MP4 (faststart + hvc1 tag)"
+    else
+        container_plan="${OUTPUT_CONTAINER^^}"
+    fi
+
+    hdr_type=$(detect_hdr_type "$input")
+    if [[ "$hdr_type" == "hdr10" && "$HANDLE_HDR" == "tonemap" ]]; then
+        hdr_plan="tonemap HDR -> SDR"
+    elif [[ "$hdr_type" == "hdr10" && "$HANDLE_HDR" == "preserve" ]]; then
+        hdr_plan="preserve HDR metadata"
+    else
+        hdr_plan="no HDR transform"
+    fi
+
+    if [[ "$DEINTERLACE_AUTO" == true ]] && is_interlaced "$input"; then
+        deinterlace_plan="auto=yadif (interlaced source detected)"
+    elif [[ "$DEINTERLACE_AUTO" == true ]]; then
+        deinterlace_plan="auto=enabled (progressive source, no yadif)"
+    else
+        deinterlace_plan="disabled"
+    fi
+
+    log_info "Pre-flight render params:"
+    log_info "  Video: ${video_plan}"
+    log_info "  Audio: ${audio_plan}"
+    log_info "  Container: ${container_plan}"
+    log_info "  Subtitles: ${subtitle_plan}"
+    log_info "  Attachments: ${attachment_plan}"
+    log_info "  HDR: ${hdr_plan}"
+    log_info "  Deinterlace: ${deinterlace_plan}"
+    log_info "  Retry knobs: mux_queue=${muxing_queue_size}, timestamp_fix=${timestamp_fix}"
+}
+
+log_remux_render_plan() {
+    local input="$1" video_stream_idx="$2" include_subtitles="$3" include_attachments="$4" muxing_queue_size="$5" timestamp_fix="$6"
+    local source_video_codec source_profile source_pix_fmt
+    local audio_plan subtitle_plan attachment_plan container_plan
+
+    source_video_codec=$(get_primary_video_codec "$input")
+    [[ -z "$source_video_codec" ]] && source_video_codec=$(get_codec "$input")
+    source_profile=$(get_primary_video_profile "$input")
+    source_pix_fmt=$(get_primary_video_pix_fmt "$input")
+
+    audio_plan=$(describe_audio_plan "$input")
+    subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
+    attachment_plan=$(describe_attachment_plan "$include_attachments")
+
+    if output_container_is_mp4; then
+        container_plan="MP4 (faststart + hvc1 tag)"
+    else
+        container_plan="${OUTPUT_CONTAINER^^}"
+    fi
+
+    log_info "Pre-flight render params:"
+    log_info "  Video: transcode=no (copy stream ${video_stream_idx}: ${source_video_codec:-unknown}, profile=${source_profile:-unknown}, pix_fmt=${source_pix_fmt:-unknown})"
+    log_info "  Audio: ${audio_plan}"
+    log_info "  Container: ${container_plan}"
+    log_info "  Subtitles: ${subtitle_plan}"
+    log_info "  Attachments: ${attachment_plan}"
+    log_info "  Retry knobs: mux_queue=${muxing_queue_size}, timestamp_fix=${timestamp_fix}"
+}
+
+#------------------------------------------------------------------------------
 # Build subtitle options
 #------------------------------------------------------------------------------
 build_subtitle_opts() {
@@ -1233,6 +1381,8 @@ encode_file() {
     local retry_count=0
     local max_retries=4
 
+    log_encode_render_plan "$input" "$video_stream_idx" "$encode_include_subtitles" "$encode_include_attachments" "$encode_muxing_queue_size" "$encode_timestamp_fix"
+
     # Try encoding with progressive fallbacks
     while [[ $retry_count -lt $max_retries ]]; do
         if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
@@ -1419,6 +1569,8 @@ process_files() {
                 local remux_timestamp_fix="$CLEAN_TIMESTAMPS"
                 local remux_retry_count=0
                 local remux_max_retries=4
+
+                log_remux_render_plan "$f" "$video_idx" "$remux_include_subtitles" "$remux_include_attachments" "$remux_muxing_queue_size" "$remux_timestamp_fix"
 
                 while [[ $remux_retry_count -lt $remux_max_retries ]]; do
                     if run_remux_attempt "$f" "$out" "$video_idx" "$remux_err" "$remux_include_attachments" "$remux_include_subtitles" "$remux_muxing_queue_size" "$remux_timestamp_fix"; then
