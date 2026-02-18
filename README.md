@@ -43,6 +43,22 @@ Check environment support:
 ./Muxmaster.sh --check
 ```
 
+## Jellyfin Library Audit Utility
+
+Use the bundled crawler script to recursively scan a Jellyfin media directory,
+print concise per-file summaries, and export detailed ffprobe metadata to CSV.
+
+```bash
+chmod +x JellyfinLibraryAudit.py
+./JellyfinLibraryAudit.py "/path/to/jellyfin/library" --csv "/path/to/library_report.csv"
+```
+
+Optional flags:
+
+- `--quiet` suppresses per-file terminal lines (still writes CSV + final totals)
+- `--ffprobe-bin <path>` uses a custom ffprobe binary
+- `--include-ext .ext` adds extra media extensions to scan
+
 ## Command Usage
 
 ```text

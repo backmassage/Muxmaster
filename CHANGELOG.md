@@ -13,6 +13,7 @@ All notable changes to this project are documented in this file.
 - Polished CLI help wording for audio layout and release summary text.
 - Added pre-flight render parameter logging before FFmpeg execution, including whether video/audio are transcoded or copied.
 - Added a per-file CSV summary section at the end of each run with one-line status/action output for every processed file.
+- Added `JellyfinLibraryAudit.py` to recursively crawl media libraries and export detailed ffprobe stream metadata to CSV.
 
 ### Fixed
 
