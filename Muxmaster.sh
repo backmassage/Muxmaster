@@ -15,7 +15,7 @@ VAAPI_DEVICE="/dev/dri/renderD128"
 VAAPI_QP=18
 VAAPI_PROFILE="main10"
 VAAPI_SW_FORMAT="p010"
-CPU_CRF=18
+CPU_CRF=20
 CPU_PRESET="slow"
 CPU_HEVC_PROFILE="main10"
 CPU_PIX_FMT="yuv420p10le"
@@ -175,7 +175,7 @@ Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
 
 Encoding Options:
   -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi)
-  -q, --quality <value>     QP for VAAPI, CRF for CPU (default: 18)
+  -q, --quality <value>     QP for VAAPI, CRF for CPU (defaults: VAAPI=18, CPU=20)
   -p, --preset <preset>     CPU preset (default: slow)
 
 HDR/Color Options:

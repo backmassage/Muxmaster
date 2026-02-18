@@ -54,7 +54,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | Option | Description |
 |---|---|
 | `-m, --mode <vaapi\|cpu>` | Encoder mode (default: `vaapi`) |
-| `-q, --quality <value>` | VAAPI QP or CPU CRF (default: `18`) |
+| `-q, --quality <value>` | VAAPI QP or CPU CRF (defaults: VAAPI `18`, CPU `20`) |
 | `-p, --preset <preset>` | CPU x265 preset (default: `slow`) |
 | `--container <mkv\|mp4>` | Output container (default: `mkv`) |
 | `--hdr <preserve\|tonemap>` | HDR handling mode (default: `preserve`) |
