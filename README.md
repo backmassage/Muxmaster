@@ -19,12 +19,17 @@ Bundled core script: **Muxmaster.sh v1.4.0**
 - Subtitle and attachment retention with safe MP4 behavior
 - Automatic retry fallbacks for common FFmpeg failure modes
 - Safer directory handling (output cannot be inside input)
+- Pre-flight render plan output before each FFmpeg run (video/audio transcode vs copy)
+- End-of-run per-file CSV summary in terminal/log output
+- Bundled `JellyfinLibraryAudit.py` for recursive ffprobe library CSV reporting
 
 ## Requirements
 
 - Bash
 - `ffmpeg`
 - `ffprobe`
+- For JellyfinLibraryAudit utility:
+  - Python 3
 - For VAAPI mode:
   - VAAPI-capable hardware/driver stack
   - Render node (for example `/dev/dri/renderD128`)
