@@ -670,6 +670,46 @@ get_audio_channels() {
     printf '%s\n' "$channels"
 }
 
+get_audio_codec() {
+    local input="$1"
+    local stream_idx="${2:-0}"
+    local codec
+
+    codec=$(ffprobe -v error -select_streams "a:$stream_idx" \
+        -show_entries stream=codec_name \
+        -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
+
+    printf '%s\n' "$codec"
+}
+
+get_audio_bitrate_kbps() {
+    local input="$1"
+    local stream_idx="${2:-0}"
+    local bitrate_bps
+
+    bitrate_bps=$(ffprobe -v error -select_streams "a:$stream_idx" \
+        -show_entries stream=bit_rate \
+        -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
+
+    if [[ "$bitrate_bps" =~ ^[0-9]+$ && "$bitrate_bps" -gt 0 ]]; then
+        printf '%s\n' "$(((bitrate_bps + 500) / 1000))"
+    else
+        printf '\n'
+    fi
+}
+
+audio_bitrate_to_kbps() {
+    local bitrate="$1"
+
+    if [[ "$bitrate" =~ ^([0-9]+)[kK]$ ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+    elif [[ "$bitrate" =~ ^[0-9]+$ && "$bitrate" -gt 0 ]]; then
+        printf '%s\n' "$(((bitrate + 500) / 1000))"
+    else
+        printf '0\n'
+    fi
+}
+
 #------------------------------------------------------------------------------
 # Subtitle format detection
 #------------------------------------------------------------------------------
@@ -787,7 +827,7 @@ build_video_filter() {
 
     # Deinterlace if needed
     if [[ "$DEINTERLACE_AUTO" == true ]] && is_interlaced "$input"; then
-        log_info "  Detected interlaced content, applying yadif deinterlacer"
+        log_info "  Detected interlaced content, applying yadif deinterlacer" >&2
         filters+=("yadif=mode=send_frame:parity=auto:deint=interlaced")
     fi
 
@@ -796,7 +836,7 @@ build_video_filter() {
     hdr_type=$(detect_hdr_type "$input")
 
     if [[ "$hdr_type" == "hdr10" && "$HANDLE_HDR" == "tonemap" ]]; then
-        log_info "  HDR detected, applying tonemapping to SDR"
+        log_info "  HDR detected, applying tonemapping to SDR" >&2
         filters+=("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
     fi
 
@@ -824,9 +864,7 @@ all_audio_is_compatible_aac() {
     [[ "$stream_count" -eq 0 ]] && return 1
 
     for ((i=0; i<stream_count; i++)); do
-        codec=$(ffprobe -v error -select_streams "a:$i" \
-            -show_entries stream=codec_name \
-            -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
+        codec=$(get_audio_codec "$input" "$i")
         [[ "$codec" != "aac" ]] && return 1
 
         channels=$(get_audio_channels "$input" "$i")
@@ -845,32 +883,59 @@ build_audio_opts() {
     elif all_audio_is_compatible_aac "$input" "$AUDIO_CHANNELS"; then
         # Source audio is already AAC with compatible channels — copy to avoid
         # lossy re-encoding and potential size increase
-        log_debug "All audio tracks are AAC with ≤${AUDIO_CHANNELS}ch, copying"
+        log_debug "All audio tracks are AAC with ≤${AUDIO_CHANNELS}ch, copying" >&2
         opts=(-map 0:a -c:a copy)
     else
-        # Inspect all tracks so one mono first track does not force every
-        # encoded track to mono when later tracks are stereo/multi-channel.
-        local stream_count i source_channels max_source_channels=0
+        # Build per-stream audio strategy:
+        # - copy AAC streams that are already channel-compatible
+        # - encode remaining streams to AAC
+        # - when re-encoding AAC, cap bitrate so it is never increased
+        local stream_count i source_channels target_channels source_codec source_bitrate_kbps target_bitrate_kbps
+        local default_bitrate_kbps layout
         stream_count=$(get_stream_count "a" "$input")
+        default_bitrate_kbps=$(audio_bitrate_to_kbps "$AUDIO_BITRATE")
+        [[ "$default_bitrate_kbps" -gt 0 ]] || default_bitrate_kbps=224
+
         for ((i=0; i<stream_count; i++)); do
+            source_codec=$(get_audio_codec "$input" "$i")
             source_channels=$(get_audio_channels "$input" "$i")
-            [[ "$source_channels" -gt "$max_source_channels" ]] && max_source_channels="$source_channels"
+            source_bitrate_kbps=$(get_audio_bitrate_kbps "$input" "$i")
+
+            target_channels="$source_channels"
+            [[ "$target_channels" -lt 1 ]] && target_channels=1
+            [[ "$target_channels" -gt "$AUDIO_CHANNELS" ]] && target_channels="$AUDIO_CHANNELS"
+
+            opts+=(-map "0:a:$i")
+
+            if [[ "$source_codec" == "aac" && "$source_channels" -le "$AUDIO_CHANNELS" ]]; then
+                log_debug "Audio stream a:$i is AAC (${source_channels}ch), copying" >&2
+                opts+=(-c:a:"$i" copy)
+                continue
+            fi
+
+            target_bitrate_kbps="$default_bitrate_kbps"
+            if [[ "$source_codec" == "aac" && "$source_bitrate_kbps" =~ ^[0-9]+$ && "$source_bitrate_kbps" -gt 0 && "$source_bitrate_kbps" -lt "$target_bitrate_kbps" ]]; then
+                # Keep AAC re-encodes at or below source bitrate to avoid
+                # increasing kbps when the source is already AAC.
+                target_bitrate_kbps="$source_bitrate_kbps"
+            fi
+
+            opts+=(-c:a:"$i" aac -ac:a:"$i" "$target_channels" -ar:a:"$i" 48000 -b:a:"$i" "${target_bitrate_kbps}k")
+
+            if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
+                case "$target_channels" in
+                    1) layout="mono" ;;
+                    2) layout="stereo" ;;
+                    *) layout="" ;;
+                esac
+
+                if [[ -n "$layout" ]]; then
+                    opts+=(-filter:a:"$i" "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000:channel_layouts=${layout}")
+                else
+                    opts+=(-filter:a:"$i" "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000")
+                fi
+            fi
         done
-
-        # Only preserve mono when all input tracks are mono.
-        local target_channels="$AUDIO_CHANNELS"
-        if [[ "$max_source_channels" -le 1 && "$AUDIO_CHANNELS" -gt 1 ]]; then
-            target_channels=1
-            log_debug "Preserving mono audio (all source tracks are mono)"
-        fi
-
-        opts=(-map 0:a -c:a aac -ac "$target_channels" -ar 48000 -b:a "$AUDIO_BITRATE")
-
-        if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
-            local layout="stereo"
-            [[ "$target_channels" -eq 1 ]] && layout="mono"
-            opts+=(-filter:a "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000:channel_layouts=${layout}")
-        fi
     fi
 
     printf '%s\n' "${opts[*]}"
@@ -891,7 +956,7 @@ build_subtitle_opts() {
 
     if output_container_is_mp4; then
         if has_bitmap_subtitles "$input"; then
-            log_warn "  Bitmap subtitles cannot be included in MP4 container"
+            log_warn "  Bitmap subtitles cannot be included in MP4 container" >&2
             return
         fi
         subtitle_codec="mov_text"

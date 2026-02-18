@@ -12,6 +12,7 @@ Bundled core script: **Muxmaster.sh v1.3.0**
 - AAC audio strategy:
   - copy when already AAC and channel-compatible
   - otherwise encode to AAC 48kHz (`224k` target by default)
+  - if an AAC track must be re-encoded (for example, channel downmix), bitrate is capped to avoid increasing kbps over the source track
 - HDR handling:
   - preserve metadata (`--hdr preserve`)
   - tonemap to SDR (`--hdr tonemap`)

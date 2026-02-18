@@ -15,6 +15,8 @@ All notable changes to this project are documented in this file.
 
 - Improved FFmpeg stream analysis for HDR/color/interlace detection by targeting the primary non-attachment video stream, preventing false analysis on files with attached cover-art video streams.
 - Hardened HDR metadata passthrough so ffmpeg only receives valid color flags when metadata is present, reducing encode failures caused by unknown color values.
+- Fixed command-substitution logging contamination in option-builder helpers (`build_audio_opts`, `build_subtitle_opts`, `build_video_filter`) that could corrupt generated FFmpeg argument lists in verbose/warning scenarios.
+- Updated per-stream audio handling so AAC tracks are copied when compatible, and AAC tracks that must be re-encoded are bitrate-capped to avoid increasing kbps above the source stream.
 
 ## [1.2.3] - 2026-02-17
 
