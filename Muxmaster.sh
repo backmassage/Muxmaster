@@ -22,7 +22,7 @@ CPU_PIX_FMT="yuv420p10le"
 OUTPUT_CONTAINER="mkv"
 KEYFRAME_INT=48
 AUDIO_CHANNELS=2
-AUDIO_BITRATE="224k"
+AUDIO_BITRATE="256k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
 
@@ -682,34 +682,6 @@ get_audio_codec() {
     printf '%s\n' "$codec"
 }
 
-get_audio_bitrate_kbps() {
-    local input="$1"
-    local stream_idx="${2:-0}"
-    local bitrate_bps
-
-    bitrate_bps=$(ffprobe -v error -select_streams "a:$stream_idx" \
-        -show_entries stream=bit_rate \
-        -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
-
-    if [[ "$bitrate_bps" =~ ^[0-9]+$ && "$bitrate_bps" -gt 0 ]]; then
-        printf '%s\n' "$(((bitrate_bps + 500) / 1000))"
-    else
-        printf '\n'
-    fi
-}
-
-audio_bitrate_to_kbps() {
-    local bitrate="$1"
-
-    if [[ "$bitrate" =~ ^([0-9]+)[kK]$ ]]; then
-        printf '%s\n' "${BASH_REMATCH[1]}"
-    elif [[ "$bitrate" =~ ^[0-9]+$ && "$bitrate" -gt 0 ]]; then
-        printf '%s\n' "$(((bitrate + 500) / 1000))"
-    else
-        printf '0\n'
-    fi
-}
-
 #------------------------------------------------------------------------------
 # Subtitle format detection
 #------------------------------------------------------------------------------
@@ -854,11 +826,10 @@ build_video_filter() {
 # Build audio encoding options
 #------------------------------------------------------------------------------
 
-# Check if all audio streams are already AAC with compatible channels
+# Check if all audio streams are already AAC
 all_audio_is_compatible_aac() {
     local input="$1"
-    local max_channels="$2"
-    local stream_count codec channels i
+    local stream_count codec i
 
     stream_count=$(get_stream_count "a" "$input")
     [[ "$stream_count" -eq 0 ]] && return 1
@@ -866,9 +837,6 @@ all_audio_is_compatible_aac() {
     for ((i=0; i<stream_count; i++)); do
         codec=$(get_audio_codec "$input" "$i")
         [[ "$codec" != "aac" ]] && return 1
-
-        channels=$(get_audio_channels "$input" "$i")
-        [[ "$channels" -gt "$max_channels" ]] && return 1
     done
 
     return 0
@@ -880,26 +848,20 @@ build_audio_opts() {
 
     if ! has_audio_stream "$input"; then
         opts=(-an)
-    elif all_audio_is_compatible_aac "$input" "$AUDIO_CHANNELS"; then
-        # Source audio is already AAC with compatible channels — copy to avoid
-        # lossy re-encoding and potential size increase
-        log_debug "All audio tracks are AAC with ≤${AUDIO_CHANNELS}ch, copying" >&2
+    elif all_audio_is_compatible_aac "$input"; then
+        # Source audio is already AAC — copy to avoid lossy AAC->AAC re-encode
+        log_debug "All audio tracks are AAC, copying" >&2
         opts=(-map 0:a -c:a copy)
     else
         # Build per-stream audio strategy:
-        # - copy AAC streams that are already channel-compatible
+        # - copy AAC streams as-is (never AAC->AAC re-encode)
         # - encode remaining streams to AAC
-        # - when re-encoding AAC, cap bitrate so it is never increased
-        local stream_count i source_channels target_channels source_codec source_bitrate_kbps target_bitrate_kbps
-        local default_bitrate_kbps layout
+        local stream_count i source_channels target_channels source_codec layout
         stream_count=$(get_stream_count "a" "$input")
-        default_bitrate_kbps=$(audio_bitrate_to_kbps "$AUDIO_BITRATE")
-        [[ "$default_bitrate_kbps" -gt 0 ]] || default_bitrate_kbps=224
 
         for ((i=0; i<stream_count; i++)); do
             source_codec=$(get_audio_codec "$input" "$i")
             source_channels=$(get_audio_channels "$input" "$i")
-            source_bitrate_kbps=$(get_audio_bitrate_kbps "$input" "$i")
 
             target_channels="$source_channels"
             [[ "$target_channels" -lt 1 ]] && target_channels=1
@@ -907,20 +869,13 @@ build_audio_opts() {
 
             opts+=(-map "0:a:$i")
 
-            if [[ "$source_codec" == "aac" && "$source_channels" -le "$AUDIO_CHANNELS" ]]; then
-                log_debug "Audio stream a:$i is AAC (${source_channels}ch), copying" >&2
+            if [[ "$source_codec" == "aac" ]]; then
+                log_debug "Audio stream a:$i is AAC, copying" >&2
                 opts+=(-c:a:"$i" copy)
                 continue
             fi
 
-            target_bitrate_kbps="$default_bitrate_kbps"
-            if [[ "$source_codec" == "aac" && "$source_bitrate_kbps" =~ ^[0-9]+$ && "$source_bitrate_kbps" -gt 0 && "$source_bitrate_kbps" -lt "$target_bitrate_kbps" ]]; then
-                # Keep AAC re-encodes at or below source bitrate to avoid
-                # increasing kbps when the source is already AAC.
-                target_bitrate_kbps="$source_bitrate_kbps"
-            fi
-
-            opts+=(-c:a:"$i" aac -ac:a:"$i" "$target_channels" -ar:a:"$i" 48000 -b:a:"$i" "${target_bitrate_kbps}k")
+            opts+=(-c:a:"$i" aac -ac:a:"$i" "$target_channels" -ar:a:"$i" 48000 -b:a:"$i" "$AUDIO_BITRATE")
 
             if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
                 case "$target_channels" in
@@ -1347,7 +1302,7 @@ process_files() {
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
     log_info "Container: ${OUTPUT_CONTAINER^^}"
-    log_info "Audio: AAC passthrough when compatible, otherwise encode to AAC ${AUDIO_BITRATE}"
+    log_info "Audio: AAC passthrough (no AAC->AAC), otherwise encode to AAC ${AUDIO_BITRATE}"
     if output_container_is_mp4; then
         log_info "Compatibility: hvc1 tag for Apple/browser support"
     fi

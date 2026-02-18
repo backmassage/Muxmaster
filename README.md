@@ -10,9 +10,8 @@ Bundled core script: **Muxmaster.sh v1.3.0**
 - HEVC encoding with `vaapi` (default) or `cpu` (`libx265`)
 - Optional HEVC remux mode (`--skip-hevc`) with browser-safety checks
 - AAC audio strategy:
-  - copy when already AAC and channel-compatible
-  - otherwise encode to AAC 48kHz (`224k` target by default)
-  - if an AAC track must be re-encoded (for example, channel downmix), bitrate is capped to avoid increasing kbps over the source track
+  - copy AAC streams as-is (no AAC-to-AAC re-encode)
+  - otherwise encode non-AAC streams to AAC 48kHz (`256k` target by default)
 - HDR handling:
   - preserve metadata (`--hdr preserve`)
   - tonemap to SDR (`--hdr tonemap`)
@@ -89,8 +88,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
   - VAAPI: `main10` when available, fallback to `main` (8-bit)
   - CPU: `main10`, `yuv420p10le`
 - Audio:
-  - target: AAC, up to stereo, `224k`, 48kHz
-  - copied when already AAC and channel-compatible
+  - target: AAC, up to stereo, `256k`, 48kHz for non-AAC sources
+  - AAC source streams are copied directly (no AAC-to-AAC re-encode)
 - Subtitles:
   - MKV: copy subtitle streams
   - MP4: convert text subtitles to `mov_text`, skip bitmap-only subtitle cases
