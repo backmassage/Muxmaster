@@ -197,7 +197,7 @@ Behavior Options:
   --strict                  Disable automatic ffmpeg retry fallbacks
   --clean-timestamps        Enable timestamp regeneration (default: on)
   --no-clean-timestamps     Disable timestamp regeneration
-  --match-audio-layout      Force stereo normalization (default: on)
+  --match-audio-layout      Normalize encoded audio layout (default: on)
   --no-match-audio-layout   Disable audio layout normalization
 
 Display Options:
@@ -214,7 +214,7 @@ Utility:
   -V, --version             Print version
   -h, --help                Help
 
-Encoding: 10-bit HEVC, AAC stereo, MKV container, metadata preserved
+Encoding: 10-bit HEVC, copy AAC or encode non-AAC to AAC, MKV container, metadata preserved
 EOF
     exit "$exit_code"
 }

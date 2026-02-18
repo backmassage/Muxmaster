@@ -10,6 +10,7 @@ All notable changes to this project are documented in this file.
 - Updated default AAC audio bitrate from `192k` to `256k`.
 - Bumped bundled script version to `Muxmaster.sh v1.3.0`.
 - Updated README defaults and release metadata for `1.3.0`.
+- Polished CLI help wording for audio layout and release summary text.
 
 ### Fixed
 
