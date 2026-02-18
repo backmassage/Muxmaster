@@ -1,6 +1,6 @@
 #!/bin/bash
 #===============================================================================
-# Muxmaster Media Library Encoder v2.1.0
+# Muxmaster Media Library Encoder v1.3.0
 # Comprehensive HEVC/AAC encoding for Jellyfin optimization
 #===============================================================================
 
@@ -12,17 +12,17 @@ set -o pipefail
 # Encoding defaults
 ENCODER_MODE="vaapi"
 VAAPI_DEVICE="/dev/dri/renderD128"
-VAAPI_QP=19
+VAAPI_QP=18
 VAAPI_PROFILE="main10"
 VAAPI_SW_FORMAT="p010"
-CPU_CRF=19
+CPU_CRF=20
 CPU_PRESET="slow"
 CPU_HEVC_PROFILE="main10"
 CPU_PIX_FMT="yuv420p10le"
 OUTPUT_CONTAINER="mkv"
 KEYFRAME_INT=48
 AUDIO_CHANNELS=2
-AUDIO_BITRATE="192k"
+AUDIO_BITRATE="256k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
 
@@ -54,7 +54,7 @@ DEINTERLACE_AUTO=true
 INPUT_DIR=""
 OUTPUT_DIR=""
 SCRIPT_NAME="$(basename "$0")"
-SCRIPT_VERSION="2.1.0"
+SCRIPT_VERSION="1.3.0"
 
 # Temp file tracking for cleanup
 declare -a TEMP_FILES=()
@@ -175,7 +175,7 @@ Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
 
 Encoding Options:
   -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi)
-  -q, --quality <value>     QP for VAAPI, CRF for CPU (default: 19)
+  -q, --quality <value>     QP for VAAPI, CRF for CPU (defaults: VAAPI=18, CPU=20)
   -p, --preset <preset>     CPU preset (default: slow)
 
 HDR/Color Options:
@@ -197,7 +197,7 @@ Behavior Options:
   --strict                  Disable automatic ffmpeg retry fallbacks
   --clean-timestamps        Enable timestamp regeneration (default: on)
   --no-clean-timestamps     Disable timestamp regeneration
-  --match-audio-layout      Force stereo normalization (default: on)
+  --match-audio-layout      Normalize encoded audio layout (default: on)
   --no-match-audio-layout   Disable audio layout normalization
 
 Display Options:
@@ -214,7 +214,7 @@ Utility:
   -V, --version             Print version
   -h, --help                Help
 
-Encoding: 10-bit HEVC, AAC stereo, MKV container, metadata preserved
+Encoding: 10-bit HEVC, copy AAC or encode non-AAC to AAC, MKV container, metadata preserved
 EOF
     exit "$exit_code"
 }
@@ -586,16 +586,27 @@ get_primary_video_bitrate_label() {
 #------------------------------------------------------------------------------
 # HDR and color space detection
 #------------------------------------------------------------------------------
+get_primary_video_color_fields() {
+    local input="$1"
+    local idx color_transfer color_primaries color_space attached
+
+    while IFS='|' read -r idx color_transfer color_primaries color_space attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" == "1" ]] && continue
+        printf '%s:%s:%s\n' "${color_transfer:-unknown}" "${color_primaries:-unknown}" "${color_space:-unknown}"
+        return 0
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,color_transfer,color_primaries,color_space:stream_disposition=attached_pic \
+        -of compact=p=0:nk=1 "$input" 2>/dev/null)
+
+    printf 'unknown:unknown:unknown\n'
+}
+
 detect_hdr_type() {
     local input="$1"
     local color_transfer color_primaries color_space
 
-    # Get color metadata from the video stream
-    read -r color_transfer color_primaries color_space < <(
-        ffprobe -v error -select_streams v:0 \
-            -show_entries stream=color_transfer,color_primaries,color_space \
-            -of csv=p=0 "$input" 2>/dev/null | head -1 | tr ',' ' '
-    )
+    IFS=':' read -r color_transfer color_primaries color_space <<< "$(get_primary_video_color_fields "$input")"
 
     # Check for HDR indicators
     case "$color_transfer" in
@@ -617,16 +628,7 @@ detect_hdr_type() {
 
 get_color_metadata() {
     local input="$1"
-    local color_transfer color_primaries color_space
-
-    read -r color_transfer color_primaries color_space < <(
-        ffprobe -v error -select_streams v:0 \
-            -show_entries stream=color_transfer,color_primaries,color_space \
-            -of csv=p=0 "$input" 2>/dev/null | head -1 | tr ',' ' '
-    )
-
-    # Return as colon-separated values
-    printf '%s:%s:%s\n' "${color_transfer:-unknown}" "${color_primaries:-unknown}" "${color_space:-unknown}"
+    get_primary_video_color_fields "$input"
 }
 
 #------------------------------------------------------------------------------
@@ -634,17 +636,20 @@ get_color_metadata() {
 #------------------------------------------------------------------------------
 is_interlaced() {
     local input="$1"
-    local field_order
+    local idx field_order attached
 
-    field_order=$(ffprobe -v error -select_streams v:0 \
-        -show_entries stream=field_order \
-        -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
-
-    case "$field_order" in
-        tt|bb|tb|bt)
-            return 0
-            ;;
-    esac
+    while IFS='|' read -r idx field_order attached; do
+        [[ -z "$idx" ]] && continue
+        [[ "$attached" == "1" ]] && continue
+        case "$field_order" in
+            tt|bb|tb|bt)
+                return 0
+                ;;
+        esac
+        return 1
+    done < <(ffprobe -v error -select_streams v \
+        -show_entries stream=index,field_order:stream_disposition=attached_pic \
+        -of compact=p=0:nk=1 "$input" 2>/dev/null)
 
     return 1
 }
@@ -663,6 +668,18 @@ get_audio_channels() {
 
     [[ "$channels" =~ ^[0-9]+$ ]] || channels=2
     printf '%s\n' "$channels"
+}
+
+get_audio_codec() {
+    local input="$1"
+    local stream_idx="${2:-0}"
+    local codec
+
+    codec=$(ffprobe -v error -select_streams "a:$stream_idx" \
+        -show_entries stream=codec_name \
+        -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
+
+    printf '%s\n' "$codec"
 }
 
 #------------------------------------------------------------------------------
@@ -782,7 +799,7 @@ build_video_filter() {
 
     # Deinterlace if needed
     if [[ "$DEINTERLACE_AUTO" == true ]] && is_interlaced "$input"; then
-        log_info "  Detected interlaced content, applying yadif deinterlacer"
+        log_info "  Detected interlaced content, applying yadif deinterlacer" >&2
         filters+=("yadif=mode=send_frame:parity=auto:deint=interlaced")
     fi
 
@@ -791,7 +808,7 @@ build_video_filter() {
     hdr_type=$(detect_hdr_type "$input")
 
     if [[ "$hdr_type" == "hdr10" && "$HANDLE_HDR" == "tonemap" ]]; then
-        log_info "  HDR detected, applying tonemapping to SDR"
+        log_info "  HDR detected, applying tonemapping to SDR" >&2
         filters+=("zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p")
     fi
 
@@ -809,23 +826,17 @@ build_video_filter() {
 # Build audio encoding options
 #------------------------------------------------------------------------------
 
-# Check if all audio streams are already AAC with compatible channels
+# Check if all audio streams are already AAC
 all_audio_is_compatible_aac() {
     local input="$1"
-    local max_channels="$2"
-    local stream_count codec channels i
+    local stream_count codec i
 
     stream_count=$(get_stream_count "a" "$input")
     [[ "$stream_count" -eq 0 ]] && return 1
 
     for ((i=0; i<stream_count; i++)); do
-        codec=$(ffprobe -v error -select_streams "a:$i" \
-            -show_entries stream=codec_name \
-            -of default=noprint_wrappers=1:nokey=1 "$input" 2>/dev/null | head -1)
+        codec=$(get_audio_codec "$input" "$i")
         [[ "$codec" != "aac" ]] && return 1
-
-        channels=$(get_audio_channels "$input" "$i")
-        [[ "$channels" -gt "$max_channels" ]] && return 1
     done
 
     return 0
@@ -837,35 +848,49 @@ build_audio_opts() {
 
     if ! has_audio_stream "$input"; then
         opts=(-an)
-    elif all_audio_is_compatible_aac "$input" "$AUDIO_CHANNELS"; then
-        # Source audio is already AAC with compatible channels — copy to avoid
-        # lossy re-encoding and potential size increase
-        log_debug "All audio tracks are AAC with ≤${AUDIO_CHANNELS}ch, copying"
+    elif all_audio_is_compatible_aac "$input"; then
+        # Source audio is already AAC — copy to avoid lossy AAC->AAC re-encode
+        log_debug "All audio tracks are AAC, copying" >&2
         opts=(-map 0:a -c:a copy)
     else
-        # Inspect all tracks so one mono first track does not force every
-        # encoded track to mono when later tracks are stereo/multi-channel.
-        local stream_count i source_channels max_source_channels=0
+        # Build per-stream audio strategy:
+        # - copy AAC streams as-is (never AAC->AAC re-encode)
+        # - encode remaining streams to AAC
+        local stream_count i source_channels target_channels source_codec layout
         stream_count=$(get_stream_count "a" "$input")
+
         for ((i=0; i<stream_count; i++)); do
+            source_codec=$(get_audio_codec "$input" "$i")
             source_channels=$(get_audio_channels "$input" "$i")
-            [[ "$source_channels" -gt "$max_source_channels" ]] && max_source_channels="$source_channels"
+
+            target_channels="$source_channels"
+            [[ "$target_channels" -lt 1 ]] && target_channels=1
+            [[ "$target_channels" -gt "$AUDIO_CHANNELS" ]] && target_channels="$AUDIO_CHANNELS"
+
+            opts+=(-map "0:a:$i")
+
+            if [[ "$source_codec" == "aac" ]]; then
+                log_debug "Audio stream a:$i is AAC, copying" >&2
+                opts+=(-c:a:"$i" copy)
+                continue
+            fi
+
+            opts+=(-c:a:"$i" aac -ac:a:"$i" "$target_channels" -ar:a:"$i" 48000 -b:a:"$i" "$AUDIO_BITRATE")
+
+            if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
+                case "$target_channels" in
+                    1) layout="mono" ;;
+                    2) layout="stereo" ;;
+                    *) layout="" ;;
+                esac
+
+                if [[ -n "$layout" ]]; then
+                    opts+=(-filter:a:"$i" "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000:channel_layouts=${layout}")
+                else
+                    opts+=(-filter:a:"$i" "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000")
+                fi
+            fi
         done
-
-        # Only preserve mono when all input tracks are mono.
-        local target_channels="$AUDIO_CHANNELS"
-        if [[ "$max_source_channels" -le 1 && "$AUDIO_CHANNELS" -gt 1 ]]; then
-            target_channels=1
-            log_debug "Preserving mono audio (all source tracks are mono)"
-        fi
-
-        opts=(-map 0:a -c:a aac -ac "$target_channels" -ar 48000 -b:a "$AUDIO_BITRATE")
-
-        if [[ "$MATCH_AUDIO_LAYOUT" == true ]]; then
-            local layout="stereo"
-            [[ "$target_channels" -eq 1 ]] && layout="mono"
-            opts+=(-filter:a "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000:channel_layouts=${layout}")
-        fi
     fi
 
     printf '%s\n' "${opts[*]}"
@@ -886,7 +911,7 @@ build_subtitle_opts() {
 
     if output_container_is_mp4; then
         if has_bitmap_subtitles "$input"; then
-            log_warn "  Bitmap subtitles cannot be included in MP4 container"
+            log_warn "  Bitmap subtitles cannot be included in MP4 container" >&2
             return
         fi
         subtitle_codec="mov_text"
@@ -1029,9 +1054,9 @@ run_encode_attempt() {
         local color_meta
         color_meta=$(get_color_metadata "$input")
         IFS=':' read -r ct cp cs <<< "$color_meta"
-        if [[ "$ct" != "unknown" ]]; then
-            color_opts+=(-color_trc "$ct" -color_primaries "$cp" -colorspace "$cs")
-        fi
+        [[ "$ct" != "unknown" ]] && color_opts+=(-color_trc "$ct")
+        [[ "$cp" != "unknown" ]] && color_opts+=(-color_primaries "$cp")
+        [[ "$cs" != "unknown" ]] && color_opts+=(-colorspace "$cs")
     fi
 
     # hvc1 tag for compatibility (MP4 only; MKV uses codec IDs natively)
@@ -1141,9 +1166,9 @@ parse_filename() {
     fi
 
     # Clean tags
-    local tags='(720p|1080p|2160p|4K|UHD|WEB-DL|WEBRip|BluRay|BDRip|BD|DVDRip|HDTV|x264|x265|HEVC|H\.?264|H\.?265|AAC|AC3|DTS|DTS-HD|TrueHD|FLAC|EAC3|DD\+?|Atmos|10bit|HDR|HDR10|HDR10\+|DV|DoVi|Dual\.?Audio|MULTI|REMUX|PROPER|REPACK|EMBER|NF|AMZN|DSNP|HMAX|ATVP).*'
-    SHOW_NAME=$(echo "$SHOW_NAME" | sed -E "s/$tags//i" | sed -E 's/\[[^]]*\]//g' | xargs)
-    MOVIE_NAME=$(echo "$MOVIE_NAME" | sed -E "s/$tags//i" | sed -E 's/\[[^]]*\]//g' | xargs)
+    local tags='720p|1080p|2160p|4K|UHD|WEB-DL|WEBRip|BluRay|BDRip|BD|DVDRip|HDTV|x264|x265|HEVC|H\.?264|H\.?265|AAC|AC3|DTS|DTS-HD|TrueHD|FLAC|EAC3|DD\+?|Atmos|10bit|HDR|HDR10|HDR10\+|DV|DoVi|Dual\.?Audio|MULTI|REMUX|PROPER|REPACK|EMBER|NF|AMZN|DSNP|HMAX|ATVP'
+    SHOW_NAME=$(echo "$SHOW_NAME" | sed -E "s/(^|[[:space:]._-])(${tags})([[:space:]._-]|$).*$//I" | sed -E 's/\[[^]]*\]//g' | xargs)
+    MOVIE_NAME=$(echo "$MOVIE_NAME" | sed -E "s/(^|[[:space:]._-])(${tags})([[:space:]._-]|$).*$//I" | sed -E 's/\[[^]]*\]//g' | xargs)
 
     # Title case
     SHOW_NAME=$(echo "$SHOW_NAME" | sed 's/\b\(.\)/\u\1/g')
@@ -1277,7 +1302,7 @@ process_files() {
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
     log_info "Container: ${OUTPUT_CONTAINER^^}"
-    log_info "Audio: AAC passthrough when compatible, otherwise encode to AAC ${AUDIO_BITRATE}"
+    log_info "Audio: AAC passthrough (no AAC->AAC), otherwise encode to AAC ${AUDIO_BITRATE}"
     if output_container_is_mp4; then
         log_info "Compatibility: hvc1 tag for Apple/browser support"
     fi
