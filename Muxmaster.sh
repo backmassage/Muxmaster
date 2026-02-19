@@ -1751,6 +1751,45 @@ parse_filename() {
             SEASON="1"
             EPISODE="$ep_major"
         fi
+    # Named TV specials with numeric index: Show OP/ED/PV/Special/Menu - 01
+    elif [[ "$base" =~ ^(.+)[[:space:]_.-]+(OP|ED|PV|Special|Menu)[[:space:]_.-]*-[[:space:]]*([0-9]{1,3})([^[:alnum:]]|$) ]]; then
+        local special_kind special_num special_offset
+        MEDIA_TYPE="tv"
+        SEASON="0"
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[1]}" | tr '._' ' ' | sed -E 's/[[:space:]]*-[[:space:]]*/ /g' | sed 's/[[:space:]-]*$//')")
+        special_kind=$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:lower:]' '[:upper:]')
+        special_num="${BASH_REMATCH[3]}"
+        special_num=$((10#$special_num))
+
+        case "$special_kind" in
+            OP)      special_offset=100 ;;
+            ED)      special_offset=200 ;;
+            PV)      special_offset=300 ;;
+            SPECIAL) special_offset=400 ;;
+            MENU)    special_offset=500 ;;
+            *)       special_offset=900 ;;
+        esac
+        EPISODE=$((special_offset + special_num))
+    # Named TV specials without explicit index: Show - Recap / Day Breakers / documentary extras
+    elif [[ "$base" =~ ^(.+)[[:space:]]*-[[:space:]]*(Recap|Day[[:space:]]+Breakers|BTS[[:space:]]+Documentary|Convention[[:space:]]+Panel)$ ]]; then
+        local special_kind special_offset
+        MEDIA_TYPE="tv"
+        SEASON="0"
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[1]}" | tr '._' ' ' | sed -E 's/[[:space:]]*-[[:space:]]*/ /g' | sed 's/[[:space:]-]*$//')")
+        special_kind=$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:upper:]' '[:lower:]')
+
+        case "$special_kind" in
+            recap)             special_offset=601 ;;
+            day\ breakers)     special_offset=602 ;;
+            bts\ documentary)  special_offset=603 ;;
+            convention\ panel) special_offset=604 ;;
+            *)                 special_offset=699 ;;
+        esac
+        EPISODE="$special_offset"
+    # Numbered movie-part naming: "Title The Movie 1 - Part Name"
+    elif [[ "$base" =~ ^(.+[[:space:]]The[[:space:]]Movie)[[:space:]]([0-9]{1,2})[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+        MEDIA_TYPE="movie"
+        MOVIE_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} - ${BASH_REMATCH[3]}" | tr '._' ' ' | sed -E 's/\[[^]]*\]//g')")
     # Anime: [Group] Name - 05
     elif [[ "$base" =~ ^(\[.+\])?[[:space:]]*(.+)[[:space:]]+-[[:space:]]*([0-9]{1,3})([[:space:]]|\[|v[0-9]|$) ]]; then
         local parsed_show
@@ -1781,11 +1820,20 @@ parse_filename() {
         SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ')")
     # Group releases: [Group] Show 05 [Tags] / [Group] Show - 05 (Tags)
     elif [[ "$base" =~ ^(\[[^]]+\][[:space:]]+)(.+)[[:space:]_.-]+([0-9]{1,3})\'?([Vv][0-9]+)?([[:space:]].*)?$ ]]; then
+        local show_no_year parent_year_label
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
-        SHOW_NAME=$(trim_whitespace "$(echo "$SHOW_NAME" | sed -E 's/[[:space:]]+(19[0-9]{2}|20[0-9]{2})$//')")
+        if [[ "$SHOW_NAME" =~ ^(.+)[[:space:]]+(19[0-9]{2}|20[0-9]{2})$ ]]; then
+            show_no_year=$(trim_whitespace "${BASH_REMATCH[1]}")
+            if [[ "$parent" =~ \(([0-9]{4}(-[0-9]{4})?)\) ]]; then
+                parent_year_label="${BASH_REMATCH[1]}"
+                SHOW_NAME="${show_no_year} (${parent_year_label})"
+            else
+                SHOW_NAME="$show_no_year"
+            fi
+        fi
     # Anime: [Group]Name_Name_01_BD or Name_01
     elif [[ "$base" =~ ^(\[.+\])?(.+)_([0-9]{2,3})(_[^.]*)?$ ]]; then
         MEDIA_TYPE="tv"
