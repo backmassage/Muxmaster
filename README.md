@@ -26,7 +26,7 @@ Bundled core script: **Muxmaster.sh v1.4.0**
 - Pre-flight render plan output before each FFmpeg run (video/audio transcode vs copy)
 - Pink pre-flight conversion summary line (`audio in -> out`, `video in -> out`, `bitrate in -> expected`)
 - Pre-flight input and estimate summary (input resolution/bitrate + rough output bitrate range)
-- End-of-run per-file CSV summary in terminal/log output
+- Simple end-of-run totals summary (`encoded`, `skipped`, `failed`)
 
 ## Requirements
 

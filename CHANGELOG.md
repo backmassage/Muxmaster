@@ -2,6 +2,12 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Changed
+
+- Removed the end-of-run per-file CSV reporting output from `Muxmaster.sh` to simplify the processing flow; the script now keeps the standard totals summary (`encoded`, `skipped`, `failed`).
+
 ## [1.4.0] - 2026-02-18
 
 ### Changed
