@@ -1705,14 +1705,14 @@ parse_filename() {
         SEASON="${BASH_REMATCH[2]}"
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(trim_whitespace "$(echo "$base" | sed -E 's/[[:space:]._-]*[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
-        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | sed -E 's/[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed -E 's/[[:space:]._-]*([Ss]eason[[:space:]_.-]*[0-9]{1,2}|[Ss][0-9]{1,2}|[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Vv][0-9]+)?)([[:space:]].*)?$//' | sed 's/[[:space:]-]*$//')")
     # 1x01 pattern (supports optional v2 suffix like 1x01v2)
     elif [[ "$base" =~ (^|[^0-9])([0-9]{1,2})[xX]([0-9]{1,3})([Vv][0-9]+)?([^0-9]|$) ]]; then
         MEDIA_TYPE="tv"
         SEASON="${BASH_REMATCH[2]}"
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(trim_whitespace "$(echo "$base" | sed -E 's/[[:space:]._-]*[0-9]{1,2}[xX][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
-        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed -E 's/[[:space:]._-]*([Ss]eason[[:space:]_.-]*[0-9]{1,2}|[Ss][0-9]{1,2})([[:space:]].*)?$//' | sed 's/[[:space:]-]*$//')")
     # OP/ED special patterns: Show.S01.NCED1 / S01ED-Title
     elif [[ "$base" =~ ^(.*)[[:space:]_.-]*[Ss]([0-9]{1,2})[[:space:]_.-]*(NC)?(OP|ED)([0-9]{0,2})([^[:alnum:]]|$) ]]; then
         local special_num oped_kind show_from_name show_from_parent
@@ -1785,6 +1785,7 @@ parse_filename() {
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        SHOW_NAME=$(trim_whitespace "$(echo "$SHOW_NAME" | sed -E 's/[[:space:]]+(19[0-9]{2}|20[0-9]{2})$//')")
     # Anime: [Group]Name_Name_01_BD or Name_01
     elif [[ "$base" =~ ^(\[.+\])?(.+)_([0-9]{2,3})(_[^.]*)?$ ]]; then
         MEDIA_TYPE="tv"
