@@ -758,11 +758,13 @@ estimate_quality_ratio_per_mille() {
 estimate_transcode_video_output_range() {
     local input_resolution="$1"
     local input_bitrate_bps="$2"
-    local selected_vaapi_qp="$3"
-    local selected_cpu_crf="$4"
+    local source_video_codec="$3"
+    local selected_vaapi_qp="$4"
+    local selected_cpu_crf="$5"
     local quality_value ratio_per_mille
     local input_kbps low_ratio high_ratio low_kbps high_kbps low_pct high_pct
     local width height pixels
+    local source_codec_lower
 
     if ! [[ "$input_bitrate_bps" =~ ^[0-9]+$ && "$input_bitrate_bps" -gt 0 ]]; then
         printf 'unknown\tunknown\tunknown\tunknown\n'
@@ -778,6 +780,17 @@ estimate_transcode_video_output_range() {
     fi
 
     ratio_per_mille=$(estimate_quality_ratio_per_mille "$ENCODER_MODE" "$quality_value")
+
+    source_codec_lower=$(printf '%s' "$source_video_codec" | tr '[:upper:]' '[:lower:]')
+    # Source codec bias: re-encoding from modern codecs often yields smaller gains.
+    case "$source_codec_lower" in
+        h264|avc|avc1|hevc|h265|vp9|av1)
+            ratio_per_mille=$((ratio_per_mille + 110))
+            ;;
+        mpeg2video|mpeg4|wmv3|vc1)
+            ratio_per_mille=$((ratio_per_mille - 60))
+            ;;
+    esac
 
     # Resolution bias: low-res tends to keep proportionally more overhead after re-encode.
     if [[ "$input_resolution" =~ ^([0-9]+)x([0-9]+)$ ]]; then
@@ -804,9 +817,9 @@ estimate_transcode_video_output_range() {
         ratio_per_mille=$((ratio_per_mille - 20))
     fi
 
-    ratio_per_mille=$(clamp_int "$ratio_per_mille" 220 980)
-    low_ratio=$((ratio_per_mille * 80 / 100))
-    high_ratio=$((ratio_per_mille * 120 / 100))
+    ratio_per_mille=$(clamp_int "$ratio_per_mille" 220 1050)
+    low_ratio=$((ratio_per_mille * 75 / 100))
+    high_ratio=$((ratio_per_mille * 145 / 100))
     low_kbps=$(((input_kbps * low_ratio + 500) / 1000))
     high_kbps=$(((input_kbps * high_ratio + 500) / 1000))
     low_pct=$(((low_ratio + 5) / 10))
@@ -1310,7 +1323,7 @@ log_encode_render_plan() {
     input_resolution=$(get_primary_video_resolution "$input")
     input_bitrate_bps=$(get_primary_video_bitrate_bps "$input")
     input_bitrate_label=$(format_bitrate_label "$input_bitrate_bps")
-    IFS=$'\t' read -r est_low_kbps est_high_kbps est_low_pct est_high_pct <<< "$(estimate_transcode_video_output_range "$input_resolution" "$input_bitrate_bps" "$selected_vaapi_qp" "$selected_cpu_crf")"
+    IFS=$'\t' read -r est_low_kbps est_high_kbps est_low_pct est_high_pct <<< "$(estimate_transcode_video_output_range "$input_resolution" "$input_bitrate_bps" "$source_codec_label" "$selected_vaapi_qp" "$selected_cpu_crf")"
 
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> hevc_vaapi, profile=${VAAPI_PROFILE}, QP=${selected_vaapi_qp}, keyint=${KEYFRAME_INT})"
