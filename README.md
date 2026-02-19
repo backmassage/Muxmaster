@@ -12,6 +12,9 @@ Bundled core script: **Muxmaster.sh v1.4.0**
 - AAC audio strategy:
   - copy AAC streams as-is (no AAC-to-AAC re-encode)
   - otherwise encode non-AAC streams to AAC 48kHz (`224k` target by default)
+- Smart per-file quality adaptation (default on):
+  - adjusts CPU CRF / VAAPI QP using source resolution + bitrate
+  - applies one tighter retry pass if output grows significantly (>105%)
 - HDR handling:
   - preserve metadata (`--hdr preserve`)
   - tonemap to SDR (`--hdr tonemap`)
@@ -87,6 +90,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `-f, --force` | Overwrite existing output files |
 | `-d, --dry-run` | Preview actions without writing files |
 | `--strict` | Disable auto-retry fallbacks |
+| `--smart-quality` | Enable per-file quality adaptation (default: on) |
+| `--no-smart-quality` | Disable per-file quality adaptation |
 | `--clean-timestamps` | Enable timestamp regeneration (default: on) |
 | `--no-clean-timestamps` | Disable timestamp regeneration |
 | `--match-audio-layout` | Normalize encoded audio layout (default: on) |

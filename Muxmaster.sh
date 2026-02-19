@@ -50,6 +50,7 @@ CLEAN_TIMESTAMPS=true
 MATCH_AUDIO_LAYOUT=true
 HANDLE_HDR="preserve"
 DEINTERLACE_AUTO=true
+SMART_QUALITY=true
 
 INPUT_DIR=""
 OUTPUT_DIR=""
@@ -197,6 +198,8 @@ Output Options:
 Behavior Options:
   -d, --dry-run             Preview only
   --strict                  Disable automatic ffmpeg retry fallbacks
+  --smart-quality           Adapt quality per file using source resolution/bitrate (default: on)
+  --no-smart-quality        Use fixed quality values only
   --clean-timestamps        Enable timestamp regeneration (default: on)
   --no-clean-timestamps     Disable timestamp regeneration
   --match-audio-layout      Normalize encoded audio layout (default: on)
@@ -253,6 +256,16 @@ trim_whitespace() {
     printf '%s\n' "$input" | sed -E 's/[[:space:]]+/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//'
 }
 
+clamp_int() {
+    local value="$1"
+    local min="$2"
+    local max="$3"
+
+    (( value < min )) && value="$min"
+    (( value > max )) && value="$max"
+    printf '%s\n' "$value"
+}
+
 #------------------------------------------------------------------------------
 # Argument parsing
 #------------------------------------------------------------------------------
@@ -303,6 +316,8 @@ parse_args() {
             --no-subs) KEEP_SUBTITLES=false; shift ;;
             --no-attachments) KEEP_ATTACHMENTS=false; shift ;;
             --strict) STRICT_MODE=true; shift ;;
+            --smart-quality) SMART_QUALITY=true; shift ;;
+            --no-smart-quality) SMART_QUALITY=false; shift ;;
             --clean-timestamps) CLEAN_TIMESTAMPS=true; shift ;;
             --no-clean-timestamps) CLEAN_TIMESTAMPS=false; shift ;;
             --match-audio-layout) MATCH_AUDIO_LAYOUT=true; shift ;;
@@ -942,6 +957,83 @@ build_audio_opts() {
 #------------------------------------------------------------------------------
 # Pre-flight render plan summaries
 #------------------------------------------------------------------------------
+compute_smart_quality_settings() {
+    local input="$1"
+    local selected_vaapi_qp="$VAAPI_QP"
+    local selected_cpu_crf="$CPU_CRF"
+    local note="fixed defaults"
+    local res width height pixels=0 bitrate_bps=0 bitrate_kbps=0 cpu_adj=0 vaapi_adj=0
+    local resolution_label="unknown" bitrate_label="unknown"
+
+    if [[ -n "$QUALITY_OVERRIDE" ]]; then
+        note="manual --quality override (${QUALITY_OVERRIDE})"
+        printf '%s\t%s\t%s\n' "$selected_vaapi_qp" "$selected_cpu_crf" "$note"
+        return 0
+    fi
+
+    if [[ "$SMART_QUALITY" != true ]]; then
+        note="smart quality disabled"
+        printf '%s\t%s\t%s\n' "$selected_vaapi_qp" "$selected_cpu_crf" "$note"
+        return 0
+    fi
+
+    res=$(get_primary_video_resolution "$input")
+    if [[ "$res" =~ ^([0-9]+)x([0-9]+)$ ]]; then
+        width="${BASH_REMATCH[1]}"
+        height="${BASH_REMATCH[2]}"
+        pixels=$((width * height))
+        resolution_label="${width}x${height}"
+    fi
+
+    bitrate_bps=$(get_primary_video_bitrate_bps "$input")
+    if [[ "$bitrate_bps" =~ ^[0-9]+$ && "$bitrate_bps" -gt 0 ]]; then
+        bitrate_kbps=$(((bitrate_bps + 500) / 1000))
+        bitrate_label="${bitrate_kbps}kb/s"
+    fi
+
+    # Resolution-driven baseline adjustment:
+    # lower-res content generally needs higher CRF/QP to avoid oversized outputs.
+    if (( pixels > 0 )); then
+        if (( pixels <= 640 * 360 )); then
+            cpu_adj=$((cpu_adj + 3))
+            vaapi_adj=$((vaapi_adj + 3))
+        elif (( pixels <= 1280 * 720 )); then
+            cpu_adj=$((cpu_adj + 2))
+            vaapi_adj=$((vaapi_adj + 2))
+        elif (( pixels <= 1920 * 1080 )); then
+            cpu_adj=$((cpu_adj + 1))
+            vaapi_adj=$((vaapi_adj + 1))
+        elif (( pixels >= 3840 * 2160 )); then
+            cpu_adj=$((cpu_adj - 1))
+            vaapi_adj=$((vaapi_adj - 1))
+        fi
+    fi
+
+    # Bitrate adjustment: low-bitrate sources get slightly more compression;
+    # very high bitrate masters lean toward quality.
+    if (( bitrate_kbps > 0 )); then
+        if (( bitrate_kbps < 1200 )); then
+            cpu_adj=$((cpu_adj + 2))
+            vaapi_adj=$((vaapi_adj + 2))
+        elif (( bitrate_kbps < 2500 )); then
+            cpu_adj=$((cpu_adj + 1))
+            vaapi_adj=$((vaapi_adj + 1))
+        elif (( bitrate_kbps > 25000 )); then
+            cpu_adj=$((cpu_adj - 2))
+            vaapi_adj=$((vaapi_adj - 2))
+        elif (( bitrate_kbps > 12000 )); then
+            cpu_adj=$((cpu_adj - 1))
+            vaapi_adj=$((vaapi_adj - 1))
+        fi
+    fi
+
+    selected_cpu_crf=$(clamp_int "$((CPU_CRF + cpu_adj))" 16 30)
+    selected_vaapi_qp=$(clamp_int "$((VAAPI_QP + vaapi_adj))" 14 36)
+    note="smart (${resolution_label}, ${bitrate_label}, cpu_adj=${cpu_adj}, vaapi_adj=${vaapi_adj})"
+
+    printf '%s\t%s\t%s\n' "$selected_vaapi_qp" "$selected_cpu_crf" "$note"
+}
+
 describe_audio_plan() {
     local input="$1"
     local stream_count codec i copy_count=0 transcode_count=0
@@ -1006,7 +1098,7 @@ describe_attachment_plan() {
 }
 
 log_encode_render_plan() {
-    local input="$1" video_stream_idx="$2" include_subtitles="$3" include_attachments="$4" muxing_queue_size="$5" timestamp_fix="$6"
+    local input="$1" video_stream_idx="$2" include_subtitles="$3" include_attachments="$4" muxing_queue_size="$5" timestamp_fix="$6" selected_vaapi_qp="$7" selected_cpu_crf="$8" quality_mode_note="$9"
     local source_video_codec source_codec_label
     local audio_plan subtitle_plan attachment_plan container_plan hdr_plan deinterlace_plan video_plan hdr_type
 
@@ -1015,9 +1107,9 @@ log_encode_render_plan() {
     source_codec_label="${source_video_codec:-unknown}"
 
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
-        video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> hevc_vaapi, profile=${VAAPI_PROFILE}, QP=${VAAPI_QP}, keyint=${KEYFRAME_INT})"
+        video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> hevc_vaapi, profile=${VAAPI_PROFILE}, QP=${selected_vaapi_qp}, keyint=${KEYFRAME_INT})"
     else
-        video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> libx265, CRF=${CPU_CRF}, preset=${CPU_PRESET}, profile=${CPU_HEVC_PROFILE}, pix_fmt=${CPU_PIX_FMT}, keyint=${KEYFRAME_INT})"
+        video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> libx265, CRF=${selected_cpu_crf}, preset=${CPU_PRESET}, profile=${CPU_HEVC_PROFILE}, pix_fmt=${CPU_PIX_FMT}, keyint=${KEYFRAME_INT})"
     fi
 
     audio_plan=$(describe_audio_plan "$input")
@@ -1048,6 +1140,7 @@ log_encode_render_plan() {
     fi
 
     log_info "Pre-flight render params:"
+    log_info "  Quality mode: ${quality_mode_note}"
     log_info "  Video: ${video_plan}"
     log_info "  Audio: ${audio_plan}"
     log_info "  Container: ${container_plan}"
@@ -1199,7 +1292,7 @@ run_remux_attempt() {
 # Full transcode (video + audio encode)
 #------------------------------------------------------------------------------
 run_encode_attempt() {
-    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" include_subtitles="${6:-true}" muxing_queue_size="${7:-4096}" timestamp_fix="${8:-false}"
+    local input="$1" output="$2" video_stream_idx="$3" err_file="$4" include_attachments="${5:-true}" include_subtitles="${6:-true}" muxing_queue_size="${7:-4096}" timestamp_fix="${8:-false}" selected_vaapi_qp="${9:-$VAAPI_QP}" selected_cpu_crf="${10:-$CPU_CRF}"
     local -a audio_opts_array=() subtitle_opts_array=() attachment_opts=() pre_input_opts=() timestamp_opts=() stream_disposition_opts=() container_opts=() tag_opts=() color_opts=()
     local audio_stream_count=0 i mp4_output=false vf_chain
 
@@ -1282,7 +1375,7 @@ run_encode_attempt() {
                 ${vf_opts[@]+"${vf_opts[@]}"} \
                 -map "0:${video_stream_idx}" ${audio_opts_array[@]+"${audio_opts_array[@]}"} ${subtitle_opts_array[@]+"${subtitle_opts_array[@]}"} ${attachment_opts[@]+"${attachment_opts[@]}"} \
                 -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
-                -c:v hevc_vaapi -qp "$VAAPI_QP" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
+                -c:v hevc_vaapi -qp "$selected_vaapi_qp" -profile:v "$VAAPI_PROFILE" -g "$KEYFRAME_INT" \
                 ${tag_opts[@]+"${tag_opts[@]}"} \
                 ${color_opts[@]+"${color_opts[@]}"} \
                 ${stream_disposition_opts[@]+"${stream_disposition_opts[@]}"} \
@@ -1304,7 +1397,7 @@ run_encode_attempt() {
                 ${vf_opts[@]+"${vf_opts[@]}"} \
                 -map "0:${video_stream_idx}" ${audio_opts_array[@]+"${audio_opts_array[@]}"} ${subtitle_opts_array[@]+"${subtitle_opts_array[@]}"} ${attachment_opts[@]+"${attachment_opts[@]}"} \
                 -dn -max_muxing_queue_size "$muxing_queue_size" -max_interleave_delta 0 \
-                -c:v libx265 -crf "$CPU_CRF" -preset "$CPU_PRESET" \
+                -c:v libx265 -crf "$selected_cpu_crf" -preset "$CPU_PRESET" \
                 -profile:v "$CPU_HEVC_PROFILE" -pix_fmt "$CPU_PIX_FMT" -g "$KEYFRAME_INT" \
                 -x265-params "log-level=error:open-gop=0" \
                 ${tag_opts[@]+"${tag_opts[@]}"} \
@@ -1436,70 +1529,92 @@ encode_file() {
     local encode_timestamp_fix="$CLEAN_TIMESTAMPS"
     local retry_count=0
     local max_retries=4
+    local encode_vaapi_qp encode_cpu_crf encode_quality_note
+    IFS=$'\t' read -r encode_vaapi_qp encode_cpu_crf encode_quality_note <<< "$(compute_smart_quality_settings "$input")"
 
-    log_encode_render_plan "$input" "$video_stream_idx" "$encode_include_subtitles" "$encode_include_attachments" "$encode_muxing_queue_size" "$encode_timestamp_fix"
+    local quality_pass=0
+    local max_quality_passes=2
 
-    # Try encoding with progressive fallbacks
-    while [[ $retry_count -lt $max_retries ]]; do
-        if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix"; then
-            encode_result=0
+    while (( quality_pass < max_quality_passes )); do
+        retry_count=0
+        encode_result=1
+
+        log_encode_render_plan "$input" "$video_stream_idx" "$encode_include_subtitles" "$encode_include_attachments" "$encode_muxing_queue_size" "$encode_timestamp_fix" "$encode_vaapi_qp" "$encode_cpu_crf" "$encode_quality_note"
+
+        # Try encoding with progressive fallbacks
+        while [[ $retry_count -lt $max_retries ]]; do
+            if run_encode_attempt "$input" "$output" "$video_stream_idx" "$ffmpeg_err" "$encode_include_attachments" "$encode_include_subtitles" "$encode_muxing_queue_size" "$encode_timestamp_fix" "$encode_vaapi_qp" "$encode_cpu_crf"; then
+                encode_result=0
+                break
+            fi
+
+            [[ "$STRICT_MODE" == true ]] && break
+
+            ((retry_count++))
+
+            if [[ "$encode_include_attachments" == true ]] && ffmpeg_error_has_attachment_tag_issue "$ffmpeg_err"; then
+                log_warn "Retry $retry_count: removing attachments"
+                encode_include_attachments=false
+                rm -f "$output"
+                continue
+            fi
+
+            if [[ "$encode_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$ffmpeg_err"; then
+                log_warn "Retry $retry_count: removing subtitles"
+                encode_include_subtitles=false
+                rm -f "$output"
+                continue
+            fi
+
+            if [[ "$encode_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$ffmpeg_err"; then
+                log_warn "Retry $retry_count: increasing mux queue to 16384"
+                encode_muxing_queue_size=16384
+                rm -f "$output"
+                continue
+            fi
+
+            if [[ "$encode_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$ffmpeg_err"; then
+                log_warn "Retry $retry_count: enabling timestamp fix"
+                encode_timestamp_fix=true
+                rm -f "$output"
+                continue
+            fi
+
+            # No matching fix found, stop retrying
             break
+        done
+
+        if [[ $encode_result -eq 0 && -f "$output" ]]; then
+            local in_sz out_sz ratio
+            in_sz=$(get_file_size "$input")
+            out_sz=$(get_file_size "$output")
+            [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=0
+
+            if [[ "$SMART_QUALITY" == true && -z "$QUALITY_OVERRIDE" && "$ratio" -gt 105 && $((quality_pass + 1)) -lt "$max_quality_passes" ]]; then
+                log_warn "Output is larger than source (${ratio}%), retrying with tighter quality settings"
+                encode_cpu_crf=$(clamp_int "$((encode_cpu_crf + 2))" 16 30)
+                encode_vaapi_qp=$(clamp_int "$((encode_vaapi_qp + 2))" 14 36)
+                encode_quality_note="smart retry (tighter): CPU_CRF=${encode_cpu_crf}, VAAPI_QP=${encode_vaapi_qp}"
+                rm -f "$output"
+                ((quality_pass++))
+                continue
+            fi
+
+            local elapsed=$(( $(date +%s) - start ))
+            log_success "Done in ${elapsed}s (${ratio}%)"
+            return 0
         fi
 
-        [[ "$STRICT_MODE" == true ]] && break
-
-        ((retry_count++))
-
-        if [[ "$encode_include_attachments" == true ]] && ffmpeg_error_has_attachment_tag_issue "$ffmpeg_err"; then
-            log_warn "Retry $retry_count: removing attachments"
-            encode_include_attachments=false
-            rm -f "$output"
-            continue
-        fi
-
-        if [[ "$encode_include_subtitles" == true ]] && ffmpeg_error_has_subtitle_mux_issue "$ffmpeg_err"; then
-            log_warn "Retry $retry_count: removing subtitles"
-            encode_include_subtitles=false
-            rm -f "$output"
-            continue
-        fi
-
-        if [[ "$encode_muxing_queue_size" -lt 16384 ]] && ffmpeg_error_has_mux_queue_overflow "$ffmpeg_err"; then
-            log_warn "Retry $retry_count: increasing mux queue to 16384"
-            encode_muxing_queue_size=16384
-            rm -f "$output"
-            continue
-        fi
-
-        if [[ "$encode_timestamp_fix" != true ]] && ffmpeg_error_has_timestamp_discontinuity "$ffmpeg_err"; then
-            log_warn "Retry $retry_count: enabling timestamp fix"
-            encode_timestamp_fix=true
-            rm -f "$output"
-            continue
-        fi
-
-        # No matching fix found, stop retrying
         break
     done
 
-    local elapsed=$(( $(date +%s) - start ))
-
-    if [[ $encode_result -eq 0 && -f "$output" ]]; then
-        local in_sz out_sz ratio
-        in_sz=$(get_file_size "$input")
-        out_sz=$(get_file_size "$output")
-        [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=0
-        log_success "Done in ${elapsed}s (${ratio}%)"
-        return 0
-    else
-        log_error "Failed!"
-        if [[ -s "$ffmpeg_err" ]]; then
-            log_error "Last ffmpeg output:"
-            tail -n 20 "$ffmpeg_err" | sed 's/^/  /'
-        fi
-        rm -f "$output"
-        return 1
+    log_error "Failed!"
+    if [[ -s "$ffmpeg_err" ]]; then
+        log_error "Last ffmpeg output:"
+        tail -n 20 "$ffmpeg_err" | sed 's/^/  /'
     fi
+    rm -f "$output"
+    return 1
 }
 
 #------------------------------------------------------------------------------
@@ -1520,6 +1635,13 @@ process_files() {
     local profile_label="$CPU_HEVC_PROFILE"
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
+    if [[ -n "$QUALITY_OVERRIDE" ]]; then
+        log_info "Quality mode: manual --quality override (${QUALITY_OVERRIDE})"
+    elif [[ "$SMART_QUALITY" == true ]]; then
+        log_info "Quality mode: smart per-file adaptation (resolution/bitrate)"
+    else
+        log_info "Quality mode: fixed defaults"
+    fi
     log_info "Container: ${OUTPUT_CONTAINER^^}"
     log_info "Audio: AAC passthrough (no AAC->AAC), otherwise encode to AAC ${AUDIO_BITRATE}"
     if output_container_is_mp4; then
