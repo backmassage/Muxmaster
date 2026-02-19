@@ -683,6 +683,139 @@ get_primary_video_bitrate_label() {
 }
 
 #------------------------------------------------------------------------------
+# Rough output bitrate estimation helpers (pre-flight visibility)
+#------------------------------------------------------------------------------
+estimate_quality_ratio_per_mille() {
+    local mode="$1"
+    local quality="$2"
+    local ratio=600
+
+    if [[ "$mode" == "vaapi" ]]; then
+        # hevc_vaapi QP tends to require a higher ratio than libx265 at similar perceived quality.
+        if (( quality <= 14 )); then
+            ratio=930
+        elif (( quality == 15 )); then
+            ratio=900
+        elif (( quality == 16 )); then
+            ratio=860
+        elif (( quality == 17 )); then
+            ratio=820
+        elif (( quality == 18 )); then
+            ratio=770
+        elif (( quality == 19 )); then
+            ratio=730
+        elif (( quality == 20 )); then
+            ratio=680
+        elif (( quality == 21 )); then
+            ratio=640
+        elif (( quality == 22 )); then
+            ratio=590
+        elif (( quality == 23 )); then
+            ratio=550
+        elif (( quality == 24 )); then
+            ratio=510
+        elif (( quality == 25 )); then
+            ratio=470
+        elif (( quality == 26 )); then
+            ratio=430
+        else
+            ratio=390
+        fi
+    else
+        # libx265 CRF generally compresses more efficiently than VAAPI QP.
+        if (( quality <= 16 )); then
+            ratio=900
+        elif (( quality == 17 )); then
+            ratio=820
+        elif (( quality == 18 )); then
+            ratio=740
+        elif (( quality == 19 )); then
+            ratio=660
+        elif (( quality == 20 )); then
+            ratio=590
+        elif (( quality == 21 )); then
+            ratio=520
+        elif (( quality == 22 )); then
+            ratio=460
+        elif (( quality == 23 )); then
+            ratio=410
+        elif (( quality == 24 )); then
+            ratio=360
+        elif (( quality == 25 )); then
+            ratio=320
+        elif (( quality == 26 )); then
+            ratio=290
+        elif (( quality == 27 )); then
+            ratio=260
+        else
+            ratio=230
+        fi
+    fi
+
+    printf '%s\n' "$ratio"
+}
+
+estimate_transcode_video_output_range() {
+    local input_resolution="$1"
+    local input_bitrate_bps="$2"
+    local selected_vaapi_qp="$3"
+    local selected_cpu_crf="$4"
+    local quality_value ratio_per_mille
+    local input_kbps low_ratio high_ratio low_kbps high_kbps low_pct high_pct
+    local width height pixels
+
+    if ! [[ "$input_bitrate_bps" =~ ^[0-9]+$ && "$input_bitrate_bps" -gt 0 ]]; then
+        printf 'unknown\tunknown\tunknown\tunknown\n'
+        return 0
+    fi
+
+    input_kbps=$(((input_bitrate_bps + 500) / 1000))
+
+    if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+        quality_value="$selected_vaapi_qp"
+    else
+        quality_value="$selected_cpu_crf"
+    fi
+
+    ratio_per_mille=$(estimate_quality_ratio_per_mille "$ENCODER_MODE" "$quality_value")
+
+    # Resolution bias: low-res tends to keep proportionally more overhead after re-encode.
+    if [[ "$input_resolution" =~ ^([0-9]+)x([0-9]+)$ ]]; then
+        width="${BASH_REMATCH[1]}"
+        height="${BASH_REMATCH[2]}"
+        pixels=$((width * height))
+        if (( pixels <= 854 * 480 )); then
+            ratio_per_mille=$((ratio_per_mille + 80))
+        elif (( pixels <= 1280 * 720 )); then
+            ratio_per_mille=$((ratio_per_mille + 40))
+        elif (( pixels >= 3840 * 2160 )); then
+            ratio_per_mille=$((ratio_per_mille - 40))
+        fi
+    fi
+
+    # Bitrate bias: low-bitrate sources often shrink less (or may grow), high-bitrate masters shrink more.
+    if (( input_kbps < 1500 )); then
+        ratio_per_mille=$((ratio_per_mille + 120))
+    elif (( input_kbps < 3000 )); then
+        ratio_per_mille=$((ratio_per_mille + 70))
+    elif (( input_kbps > 30000 )); then
+        ratio_per_mille=$((ratio_per_mille - 50))
+    elif (( input_kbps > 15000 )); then
+        ratio_per_mille=$((ratio_per_mille - 20))
+    fi
+
+    ratio_per_mille=$(clamp_int "$ratio_per_mille" 220 980)
+    low_ratio=$((ratio_per_mille * 80 / 100))
+    high_ratio=$((ratio_per_mille * 120 / 100))
+    low_kbps=$(((input_kbps * low_ratio + 500) / 1000))
+    high_kbps=$(((input_kbps * high_ratio + 500) / 1000))
+    low_pct=$(((low_ratio + 5) / 10))
+    high_pct=$(((high_ratio + 5) / 10))
+
+    printf '%s\t%s\t%s\t%s\n' "$low_kbps" "$high_kbps" "$low_pct" "$high_pct"
+}
+
+#------------------------------------------------------------------------------
 # HDR and color space detection
 #------------------------------------------------------------------------------
 get_primary_video_color_fields() {
@@ -1168,10 +1301,16 @@ log_encode_render_plan() {
     local input="$1" video_stream_idx="$2" include_subtitles="$3" include_attachments="$4" muxing_queue_size="$5" timestamp_fix="$6" selected_vaapi_qp="$7" selected_cpu_crf="$8" quality_mode_note="$9"
     local source_video_codec source_codec_label
     local audio_plan subtitle_plan attachment_plan container_plan hdr_plan deinterlace_plan video_plan hdr_type
+    local input_resolution input_bitrate_bps input_bitrate_label
+    local est_low_kbps est_high_kbps est_low_pct est_high_pct
 
     source_video_codec=$(get_primary_video_codec "$input")
     [[ -z "$source_video_codec" ]] && source_video_codec=$(get_codec "$input")
     source_codec_label="${source_video_codec:-unknown}"
+    input_resolution=$(get_primary_video_resolution "$input")
+    input_bitrate_bps=$(get_primary_video_bitrate_bps "$input")
+    input_bitrate_label=$(format_bitrate_label "$input_bitrate_bps")
+    IFS=$'\t' read -r est_low_kbps est_high_kbps est_low_pct est_high_pct <<< "$(estimate_transcode_video_output_range "$input_resolution" "$input_bitrate_bps" "$selected_vaapi_qp" "$selected_cpu_crf")"
 
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> hevc_vaapi, profile=${VAAPI_PROFILE}, QP=${selected_vaapi_qp}, keyint=${KEYFRAME_INT})"
@@ -1208,6 +1347,12 @@ log_encode_render_plan() {
 
     log_info "Pre-flight render params:"
     log_info "  Quality mode: ${quality_mode_note}"
+    log_info "  Input video: ${input_resolution} | ${input_bitrate_label} | ${source_codec_label}"
+    if [[ "$est_low_kbps" != "unknown" ]]; then
+        log_info "  Estimated output: video ~${est_low_kbps}-${est_high_kbps} kb/s (~${est_low_pct}-${est_high_pct}% of source bitrate, rough)"
+    else
+        log_info "  Estimated output: unavailable (could not determine source bitrate)"
+    fi
     log_info "  Video: ${video_plan}"
     log_info "  Audio: ${audio_plan}"
     log_info "  Container: ${container_plan}"
@@ -1222,11 +1367,15 @@ log_remux_render_plan() {
     local input="$1" video_stream_idx="$2" include_subtitles="$3" include_attachments="$4" muxing_queue_size="$5" timestamp_fix="$6"
     local source_video_codec source_profile source_pix_fmt
     local audio_plan subtitle_plan attachment_plan container_plan
+    local input_resolution input_bitrate_bps input_bitrate_label
 
     source_video_codec=$(get_primary_video_codec "$input")
     [[ -z "$source_video_codec" ]] && source_video_codec=$(get_codec "$input")
     source_profile=$(get_primary_video_profile "$input")
     source_pix_fmt=$(get_primary_video_pix_fmt "$input")
+    input_resolution=$(get_primary_video_resolution "$input")
+    input_bitrate_bps=$(get_primary_video_bitrate_bps "$input")
+    input_bitrate_label=$(format_bitrate_label "$input_bitrate_bps")
 
     audio_plan=$(describe_audio_plan "$input")
     subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
@@ -1239,6 +1388,8 @@ log_remux_render_plan() {
     fi
 
     log_info "Pre-flight render params:"
+    log_info "  Input video: ${input_resolution} | ${input_bitrate_label} | ${source_video_codec:-unknown}"
+    log_info "  Estimated output: video copied (~same bitrate); total file size depends on audio/subtitles/container"
     log_info "  Video: transcode=no (copy stream ${video_stream_idx}: ${source_video_codec:-unknown}, profile=${source_profile:-unknown}, pix_fmt=${source_pix_fmt:-unknown})"
     log_info "  Audio: ${audio_plan}"
     log_info "  Container: ${container_plan}"

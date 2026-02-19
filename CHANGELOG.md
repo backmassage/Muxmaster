@@ -17,6 +17,7 @@ All notable changes to this project are documented in this file.
 - Added smart per-file quality adaptation (resolution/bitrate-aware CRF/QP) with a one-pass tighter retry when output size grows significantly.
 - Updated smart quality math to use separate CPU (`libx265` CRF) and VAAPI (`hevc_vaapi` QP) adaptation curves instead of a mirrored adjustment.
 - Added explicit fixed-quality overrides `--cpu-crf` and `--vaapi-qp` (with `--quality` kept for active-mode compatibility).
+- Added pre-flight input/output estimate logging that shows source resolution/bitrate and a rough encoded output bitrate range.
 
 ### Fixed
 
