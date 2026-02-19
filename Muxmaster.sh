@@ -1286,6 +1286,13 @@ describe_audio_conversion_short() {
 describe_subtitle_plan() {
     local input="$1"
     local include_subtitles="$2"
+    local subtitle_count
+
+    subtitle_count=$(get_stream_count "s" "$input")
+    if [[ "$subtitle_count" -eq 0 ]]; then
+        printf 'none (no subtitle streams)'
+        return 0
+    fi
 
     if [[ "$KEEP_SUBTITLES" != true || "$include_subtitles" != true ]]; then
         printf 'disabled'
@@ -1304,7 +1311,15 @@ describe_subtitle_plan() {
 }
 
 describe_attachment_plan() {
-    local include_attachments="$1"
+    local input="$1"
+    local include_attachments="$2"
+    local attachment_count
+
+    attachment_count=$(get_stream_count "t" "$input")
+    if [[ "$attachment_count" -eq 0 ]]; then
+        printf 'none (no attachment streams)'
+        return 0
+    fi
 
     if [[ "$KEEP_ATTACHMENTS" != true || "$include_attachments" != true ]]; then
         printf 'disabled'
@@ -1314,7 +1329,7 @@ describe_attachment_plan() {
     if output_container_is_mp4; then
         printf 'disabled for MP4'
     else
-        printf 'copy attachments'
+        printf 'copy %d attachment stream(s)' "$attachment_count"
     fi
 }
 
@@ -1343,7 +1358,7 @@ log_encode_render_plan() {
     audio_plan=$(describe_audio_plan "$input")
     audio_conversion=$(describe_audio_conversion_short "$input")
     subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
-    attachment_plan=$(describe_attachment_plan "$include_attachments")
+    attachment_plan=$(describe_attachment_plan "$input" "$include_attachments")
 
     if output_container_is_mp4; then
         container_plan="MP4 (faststart + hvc1 tag)"
@@ -1417,7 +1432,7 @@ log_remux_render_plan() {
     audio_plan=$(describe_audio_plan "$input")
     audio_conversion=$(describe_audio_conversion_short "$input")
     subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
-    attachment_plan=$(describe_attachment_plan "$include_attachments")
+    attachment_plan=$(describe_attachment_plan "$input" "$include_attachments")
 
     if output_container_is_mp4; then
         container_plan="MP4 (faststart + hvc1 tag)"
@@ -1448,10 +1463,14 @@ build_subtitle_opts() {
     local include_subtitles="$2"
     local -a opts=()
     local subtitle_codec="copy"
+    local subtitle_count
 
     if [[ "$KEEP_SUBTITLES" != true || "$include_subtitles" != true ]]; then
         return
     fi
+
+    subtitle_count=$(get_stream_count "s" "$input")
+    [[ "$subtitle_count" -eq 0 ]] && return
 
     if output_container_is_mp4; then
         if has_bitmap_subtitles "$input"; then
@@ -1694,6 +1713,44 @@ parse_filename() {
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(trim_whitespace "$(echo "$base" | sed -E 's/[[:space:]._-]*[0-9]{1,2}[xX][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
         [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+    # OP/ED special patterns: Show.S01.NCED1 / S01ED-Title
+    elif [[ "$base" =~ ^(.*)[[:space:]_.-]*[Ss]([0-9]{1,2})[[:space:]_.-]*(NC)?(OP|ED)([0-9]{0,2})([^[:alnum:]]|$) ]]; then
+        local special_num oped_kind show_from_name show_from_parent
+        MEDIA_TYPE="tv"
+        SEASON="${BASH_REMATCH[2]}"
+        special_num="${BASH_REMATCH[5]}"
+        [[ -z "$special_num" ]] && special_num=1
+        special_num=$((10#$special_num))
+        oped_kind=$(printf '%s' "${BASH_REMATCH[4]}" | tr '[:lower:]' '[:upper:]')
+        if [[ "$oped_kind" == "OP" ]]; then
+            EPISODE=$((100 + special_num))
+        else
+            EPISODE=$((200 + special_num))
+        fi
+
+        show_from_name=$(trim_whitespace "$(echo "${BASH_REMATCH[1]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        if [[ -n "$show_from_name" ]]; then
+            SHOW_NAME="$show_from_name"
+        else
+            show_from_parent=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed -E 's/[[:space:]]+[Ss][0-9]{1,2}([[:space:]].*)?$//' | sed 's/[[:space:]-]*$//')")
+            [[ -z "$show_from_parent" ]] && show_from_parent=$(trim_whitespace "$(echo "$parent" | tr '._' ' ')")
+            SHOW_NAME="$show_from_parent"
+        fi
+    # Episodic keyword pattern: Show - Episode 16.5 - Title
+    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+[Ee]pisode[[:space:]_.-]+([0-9]{1,3})([._]([0-9]{1,2}))?([[:space:]][^-]*)?[[:space:]]*-[[:space:]]+(.+)$ ]]; then
+        local ep_major ep_minor
+        MEDIA_TYPE="tv"
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        ep_major="${BASH_REMATCH[3]}"
+        ep_minor="${BASH_REMATCH[5]}"
+
+        if [[ -n "$ep_minor" ]]; then
+            SEASON="0"
+            EPISODE="${ep_major}${ep_minor}"
+        else
+            SEASON="1"
+            EPISODE="$ep_major"
+        fi
     # Anime: [Group] Name - 05
     elif [[ "$base" =~ ^(\[.+\])?[[:space:]]*(.+)[[:space:]]+-[[:space:]]*([0-9]{1,3})([[:space:]]|\[|v[0-9]|$) ]]; then
         local parsed_show
