@@ -1696,12 +1696,22 @@ parse_filename() {
         [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
     # Anime: [Group] Name - 05
     elif [[ "$base" =~ ^(\[.+\])?[[:space:]]*(.+)[[:space:]]+-[[:space:]]*([0-9]{1,3})([[:space:]]|\[|v[0-9]|$) ]]; then
+        local parsed_show
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
-        SHOW_NAME=$(trim_whitespace "${BASH_REMATCH[2]}")
+        parsed_show=$(trim_whitespace "${BASH_REMATCH[2]}")
+
+        # If greedy matching consumed a prior episode token (e.g. "Show - 027 - 800 Years..."),
+        # recover the intended earlier episode number and trim it back out of the show title.
+        if [[ "$parsed_show" =~ ^(.+)[[:space:]]-[[:space:]]([0-9]{1,3})$ ]]; then
+            SHOW_NAME=$(trim_whitespace "${BASH_REMATCH[1]}")
+            EPISODE="${BASH_REMATCH[2]}"
+        else
+            SHOW_NAME="$parsed_show"
+        fi
     # Episodic: [Group] Show 05 - Title (supports 21' style episode tokens)
-    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+([0-9]{1,3})\'?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+([0-9]{1,3})\'?[[:space:]]+-[[:space:]]+(.+)$ ]]; then
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
