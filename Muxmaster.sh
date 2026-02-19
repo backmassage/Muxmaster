@@ -1329,6 +1329,13 @@ parse_filename() {
         EPISODE="${BASH_REMATCH[2]}"
         SHOW_NAME=$(echo "$base" | sed -E 's/[[:space:]._-]*[Ss][0-9]+[Ee][0-9]+.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
         [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(echo "$parent" | sed -E 's/[Ss][0-9]+.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
+    # 1x01 pattern (season x episode)
+    elif [[ "$base" =~ ([0-9]{1,2})[xX]([0-9]{1,3}) ]]; then
+        MEDIA_TYPE="tv"
+        SEASON="${BASH_REMATCH[1]}"
+        EPISODE="${BASH_REMATCH[2]}"
+        SHOW_NAME=$(echo "$base" | sed -E 's/[[:space:]._-]*[0-9]{1,2}[xX][0-9]{1,3}.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
+        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(echo "$parent" | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
     # Anime: [Group] Name - 05
     elif [[ "$base" =~ ^(\[.+\])?[[:space:]]*(.+)[[:space:]]+-[[:space:]]*([0-9]{1,3})([[:space:]]|\[|v[0-9]|$) ]]; then
         MEDIA_TYPE="tv"
