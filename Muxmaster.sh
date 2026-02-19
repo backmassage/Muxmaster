@@ -44,6 +44,9 @@ LOG_FILE=""
 VERBOSE=false
 CHECK_ONLY=false
 QUALITY_OVERRIDE=""
+CPU_CRF_FIXED_OVERRIDE=""
+VAAPI_QP_FIXED_OVERRIDE=""
+ACTIVE_QUALITY_OVERRIDE=""
 COLOR_MODE="auto"
 STRICT_MODE=false
 CLEAN_TIMESTAMPS=true
@@ -178,7 +181,9 @@ Usage: $SCRIPT_NAME [OPTIONS] <input_dir> <output_dir>
 
 Encoding Options:
   -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi)
-  -q, --quality <value>     QP for VAAPI, CRF for CPU (defaults: VAAPI=19, CPU=19)
+  -q, --quality <value>     Fixed quality for active mode (QP for VAAPI, CRF for CPU)
+  --cpu-crf <value>         Fixed CPU CRF override (takes precedence over --quality in CPU mode)
+  --vaapi-qp <value>        Fixed VAAPI QP override (takes precedence over --quality in VAAPI mode)
   -p, --preset <preset>     CPU preset (default: slow)
 
 HDR/Color Options:
@@ -288,6 +293,16 @@ parse_args() {
                 QUALITY_OVERRIDE="$2"
                 shift 2
                 ;;
+            --cpu-crf)
+                require_option_value "$1" "${2-}"
+                CPU_CRF_FIXED_OVERRIDE="$2"
+                shift 2
+                ;;
+            --vaapi-qp)
+                require_option_value "$1" "${2-}"
+                VAAPI_QP_FIXED_OVERRIDE="$2"
+                shift 2
+                ;;
             -p|--preset)
                 require_option_value "$1" "${2-}"
                 CPU_PRESET="$2"
@@ -369,15 +384,41 @@ parse_args() {
             ;;
     esac
 
-    if [[ -n "$QUALITY_OVERRIDE" ]]; then
-        if ! [[ "$QUALITY_OVERRIDE" =~ ^[0-9]+$ ]]; then
-            log_error "Quality must be a whole number (got '$QUALITY_OVERRIDE')"
-            exit 1
-        fi
+    if [[ -n "$QUALITY_OVERRIDE" ]] && ! [[ "$QUALITY_OVERRIDE" =~ ^[0-9]+$ ]]; then
+        log_error "Quality must be a whole number (got '$QUALITY_OVERRIDE')"
+        exit 1
+    fi
+    if [[ -n "$CPU_CRF_FIXED_OVERRIDE" ]] && ! [[ "$CPU_CRF_FIXED_OVERRIDE" =~ ^[0-9]+$ ]]; then
+        log_error "CPU CRF must be a whole number (got '$CPU_CRF_FIXED_OVERRIDE')"
+        exit 1
+    fi
+    if [[ -n "$VAAPI_QP_FIXED_OVERRIDE" ]] && ! [[ "$VAAPI_QP_FIXED_OVERRIDE" =~ ^[0-9]+$ ]]; then
+        log_error "VAAPI QP must be a whole number (got '$VAAPI_QP_FIXED_OVERRIDE')"
+        exit 1
+    fi
 
-        if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+    # Allow explicit per-mode fixed values while keeping -q/--quality for compatibility.
+    # Mode-specific flags take precedence over --quality when both are provided.
+    if [[ -n "$CPU_CRF_FIXED_OVERRIDE" ]]; then
+        CPU_CRF="$CPU_CRF_FIXED_OVERRIDE"
+    fi
+    if [[ -n "$VAAPI_QP_FIXED_OVERRIDE" ]]; then
+        VAAPI_QP="$VAAPI_QP_FIXED_OVERRIDE"
+    fi
+
+    ACTIVE_QUALITY_OVERRIDE=""
+    if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+        if [[ -n "$VAAPI_QP_FIXED_OVERRIDE" ]]; then
+            ACTIVE_QUALITY_OVERRIDE="$VAAPI_QP_FIXED_OVERRIDE"
+        elif [[ -n "$QUALITY_OVERRIDE" ]]; then
+            ACTIVE_QUALITY_OVERRIDE="$QUALITY_OVERRIDE"
             VAAPI_QP="$QUALITY_OVERRIDE"
-        else
+        fi
+    else
+        if [[ -n "$CPU_CRF_FIXED_OVERRIDE" ]]; then
+            ACTIVE_QUALITY_OVERRIDE="$CPU_CRF_FIXED_OVERRIDE"
+        elif [[ -n "$QUALITY_OVERRIDE" ]]; then
+            ACTIVE_QUALITY_OVERRIDE="$QUALITY_OVERRIDE"
             CPU_CRF="$QUALITY_OVERRIDE"
         fi
     fi
@@ -965,8 +1006,12 @@ compute_smart_quality_settings() {
     local res width height pixels=0 bitrate_bps=0 bitrate_kbps=0 cpu_adj=0 vaapi_adj=0
     local resolution_label="unknown" bitrate_label="unknown"
 
-    if [[ -n "$QUALITY_OVERRIDE" ]]; then
-        note="manual --quality override (${QUALITY_OVERRIDE})"
+    if [[ -n "$ACTIVE_QUALITY_OVERRIDE" ]]; then
+        if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+            note="manual fixed override (VAAPI_QP=${selected_vaapi_qp})"
+        else
+            note="manual fixed override (CPU_CRF=${selected_cpu_crf})"
+        fi
         printf '%s\t%s\t%s\n' "$selected_vaapi_qp" "$selected_cpu_crf" "$note"
         return 0
     fi
@@ -991,45 +1036,67 @@ compute_smart_quality_settings() {
         bitrate_label="${bitrate_kbps}kb/s"
     fi
 
-    # Resolution-driven baseline adjustment:
-    # lower-res content generally needs higher CRF/QP to avoid oversized outputs.
+    # CPU curve: finer quality control, moderately quality-biased on high-res masters.
     if (( pixels > 0 )); then
         if (( pixels <= 640 * 360 )); then
+            cpu_adj=$((cpu_adj + 4))
+        elif (( pixels <= 854 * 480 )); then
             cpu_adj=$((cpu_adj + 3))
-            vaapi_adj=$((vaapi_adj + 3))
         elif (( pixels <= 1280 * 720 )); then
             cpu_adj=$((cpu_adj + 2))
-            vaapi_adj=$((vaapi_adj + 2))
         elif (( pixels <= 1920 * 1080 )); then
             cpu_adj=$((cpu_adj + 1))
+        elif (( pixels >= 3840 * 2160 )); then
+            cpu_adj=$((cpu_adj - 2))
+        elif (( pixels >= 2560 * 1440 )); then
+            cpu_adj=$((cpu_adj - 1))
+        fi
+    fi
+
+    # VAAPI curve: generally needs a slightly different QP ramp than CPU CRF.
+    if (( pixels > 0 )); then
+        if (( pixels <= 640 * 360 )); then
+            vaapi_adj=$((vaapi_adj + 6))
+        elif (( pixels <= 854 * 480 )); then
+            vaapi_adj=$((vaapi_adj + 4))
+        elif (( pixels <= 1280 * 720 )); then
+            vaapi_adj=$((vaapi_adj + 3))
+        elif (( pixels <= 1920 * 1080 )); then
             vaapi_adj=$((vaapi_adj + 1))
         elif (( pixels >= 3840 * 2160 )); then
-            cpu_adj=$((cpu_adj - 1))
             vaapi_adj=$((vaapi_adj - 1))
         fi
     fi
 
-    # Bitrate adjustment: low-bitrate sources get slightly more compression;
-    # very high bitrate masters lean toward quality.
+    # CPU bitrate adaptation.
     if (( bitrate_kbps > 0 )); then
         if (( bitrate_kbps < 1200 )); then
             cpu_adj=$((cpu_adj + 2))
-            vaapi_adj=$((vaapi_adj + 2))
         elif (( bitrate_kbps < 2500 )); then
             cpu_adj=$((cpu_adj + 1))
-            vaapi_adj=$((vaapi_adj + 1))
-        elif (( bitrate_kbps > 25000 )); then
+        elif (( bitrate_kbps > 35000 )); then
             cpu_adj=$((cpu_adj - 2))
-            vaapi_adj=$((vaapi_adj - 2))
-        elif (( bitrate_kbps > 12000 )); then
+        elif (( bitrate_kbps > 18000 )); then
             cpu_adj=$((cpu_adj - 1))
+        fi
+    fi
+
+    # VAAPI bitrate adaptation.
+    if (( bitrate_kbps > 0 )); then
+        if (( bitrate_kbps < 1200 )); then
+            vaapi_adj=$((vaapi_adj + 3))
+        elif (( bitrate_kbps < 2500 )); then
+            vaapi_adj=$((vaapi_adj + 2))
+        elif (( bitrate_kbps > 30000 )); then
+            vaapi_adj=$((vaapi_adj - 2))
+        elif (( bitrate_kbps > 16000 )); then
             vaapi_adj=$((vaapi_adj - 1))
         fi
     fi
 
     selected_cpu_crf=$(clamp_int "$((CPU_CRF + cpu_adj))" 16 30)
     selected_vaapi_qp=$(clamp_int "$((VAAPI_QP + vaapi_adj))" 14 36)
-    note="smart (${resolution_label}, ${bitrate_label}, cpu_adj=${cpu_adj}, vaapi_adj=${vaapi_adj})"
+    note="smart (${resolution_label}, ${bitrate_label}, cpu_adj=${cpu_adj}->CRF=${selected_cpu_crf}, vaapi_adj=${vaapi_adj}->QP=${selected_vaapi_qp}, mode=${ENCODER_MODE})"
 
     printf '%s\t%s\t%s\n' "$selected_vaapi_qp" "$selected_cpu_crf" "$note"
 }
@@ -1590,7 +1657,7 @@ encode_file() {
             out_sz=$(get_file_size "$output")
             [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=0
 
-            if [[ "$SMART_QUALITY" == true && -z "$QUALITY_OVERRIDE" && "$ratio" -gt 105 && $((quality_pass + 1)) -lt "$max_quality_passes" ]]; then
+            if [[ "$SMART_QUALITY" == true && -z "$ACTIVE_QUALITY_OVERRIDE" && "$ratio" -gt 105 && $((quality_pass + 1)) -lt "$max_quality_passes" ]]; then
                 log_warn "Output is larger than source (${ratio}%), retrying with tighter quality settings"
                 encode_cpu_crf=$(clamp_int "$((encode_cpu_crf + 2))" 16 30)
                 encode_vaapi_qp=$(clamp_int "$((encode_vaapi_qp + 2))" 14 36)
@@ -1635,10 +1702,14 @@ process_files() {
     local profile_label="$CPU_HEVC_PROFILE"
     [[ "$ENCODER_MODE" == "vaapi" ]] && profile_label="$VAAPI_PROFILE"
     log_info "Mode: $ENCODER_MODE (HEVC ${profile_label}), QP/CRF: $([[ $ENCODER_MODE == vaapi ]] && echo $VAAPI_QP || echo $CPU_CRF)"
-    if [[ -n "$QUALITY_OVERRIDE" ]]; then
-        log_info "Quality mode: manual --quality override (${QUALITY_OVERRIDE})"
+    if [[ -n "$ACTIVE_QUALITY_OVERRIDE" ]]; then
+        if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+            log_info "Quality mode: manual fixed override (VAAPI_QP=${ACTIVE_QUALITY_OVERRIDE})"
+        else
+            log_info "Quality mode: manual fixed override (CPU_CRF=${ACTIVE_QUALITY_OVERRIDE})"
+        fi
     elif [[ "$SMART_QUALITY" == true ]]; then
-        log_info "Quality mode: smart per-file adaptation (resolution/bitrate)"
+        log_info "Quality mode: smart per-file adaptation (mode-specific CPU/VAAPI curves)"
     else
         log_info "Quality mode: fixed defaults"
     fi

@@ -15,6 +15,8 @@ All notable changes to this project are documented in this file.
 - Added a per-file CSV summary section at the end of each run with one-line status/action output for every processed file.
 - Added `JellyfinLibraryAudit.py` to recursively crawl media libraries and export detailed ffprobe stream metadata to CSV.
 - Added smart per-file quality adaptation (resolution/bitrate-aware CRF/QP) with a one-pass tighter retry when output size grows significantly.
+- Updated smart quality math to use separate CPU (`libx265` CRF) and VAAPI (`hevc_vaapi` QP) adaptation curves instead of a mirrored adjustment.
+- Added explicit fixed-quality overrides `--cpu-crf` and `--vaapi-qp` (with `--quality` kept for active-mode compatibility).
 
 ### Fixed
 

@@ -13,8 +13,9 @@ Bundled core script: **Muxmaster.sh v1.4.0**
   - copy AAC streams as-is (no AAC-to-AAC re-encode)
   - otherwise encode non-AAC streams to AAC 48kHz (`224k` target by default)
 - Smart per-file quality adaptation (default on):
-  - adjusts CPU CRF / VAAPI QP using source resolution + bitrate
+  - uses separate adaptation curves for CPU CRF vs VAAPI QP using source resolution + bitrate
   - applies one tighter retry pass if output grows significantly (>105%)
+  - supports fixed manual overrides with `--quality`, `--cpu-crf`, and `--vaapi-qp`
 - HDR handling:
   - preserve metadata (`--hdr preserve`)
   - tonemap to SDR (`--hdr tonemap`)
@@ -78,7 +79,9 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | Option | Description |
 |---|---|
 | `-m, --mode <vaapi\|cpu>` | Encoder mode (default: `vaapi`) |
-| `-q, --quality <value>` | VAAPI QP or CPU CRF (defaults: VAAPI `19`, CPU `19`) |
+| `-q, --quality <value>` | Fixed quality for active mode (VAAPI QP or CPU CRF) |
+| `--cpu-crf <value>` | Fixed CPU CRF override (takes precedence over `--quality` in CPU mode) |
+| `--vaapi-qp <value>` | Fixed VAAPI QP override (takes precedence over `--quality` in VAAPI mode) |
 | `-p, --preset <preset>` | CPU x265 preset (default: `slow`) |
 | `--container <mkv\|mp4>` | Output container (default: `mkv`) |
 | `--hdr <preserve\|tonemap>` | HDR handling mode (default: `preserve`) |
