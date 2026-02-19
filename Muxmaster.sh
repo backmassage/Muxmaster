@@ -1953,7 +1953,9 @@ process_files() {
 
     while IFS= read -r -d '' f; do
         files+=("$f")
-    done < <(find "$INPUT_DIR" -type f -regextype posix-extended -iregex ".*\.($exts)$" -print0 | sort -z)
+    done < <(find "$INPUT_DIR" \
+        -type d -iname "extras" -prune -o \
+        -type f -regextype posix-extended -iregex ".*\.($exts)$" -print0 | sort -z)
 
     local total=${#files[@]} current=0 encoded=0 skipped=0 failed=0
 
