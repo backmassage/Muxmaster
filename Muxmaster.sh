@@ -248,6 +248,11 @@ normalize_dir_arg() {
     printf '%s\n' "$path"
 }
 
+trim_whitespace() {
+    local input="$1"
+    printf '%s\n' "$input" | sed -E 's/[[:space:]]+/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
 #------------------------------------------------------------------------------
 # Argument parsing
 #------------------------------------------------------------------------------
@@ -1322,64 +1327,64 @@ parse_filename() {
 
     MEDIA_TYPE="" SHOW_NAME="" SEASON="" EPISODE="" MOVIE_NAME="" YEAR=""
 
-    # SxxExx pattern
-    if [[ "$base" =~ [Ss]([0-9]{1,2})[Ee]([0-9]{1,3}) ]]; then
+    # SxxExx pattern (supports optional v2 suffix like S01E01v2)
+    if [[ "$base" =~ (^|[^[:alnum:]])[Ss]([0-9]{1,2})[Ee]([0-9]{1,3})([Vv][0-9]+)?([^[:alnum:]]|$) ]]; then
         MEDIA_TYPE="tv"
-        SEASON="${BASH_REMATCH[1]}"
-        EPISODE="${BASH_REMATCH[2]}"
-        SHOW_NAME=$(echo "$base" | sed -E 's/[[:space:]._-]*[Ss][0-9]+[Ee][0-9]+.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
-        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(echo "$parent" | sed -E 's/[Ss][0-9]+.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
-    # 1x01 pattern (season x episode)
-    elif [[ "$base" =~ ([0-9]{1,2})[xX]([0-9]{1,3}) ]]; then
+        SEASON="${BASH_REMATCH[2]}"
+        EPISODE="${BASH_REMATCH[3]}"
+        SHOW_NAME=$(trim_whitespace "$(echo "$base" | sed -E 's/[[:space:]._-]*[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | sed -E 's/[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+    # 1x01 pattern (supports optional v2 suffix like 1x01v2)
+    elif [[ "$base" =~ (^|[^0-9])([0-9]{1,2})[xX]([0-9]{1,3})([Vv][0-9]+)?([^0-9]|$) ]]; then
         MEDIA_TYPE="tv"
-        SEASON="${BASH_REMATCH[1]}"
-        EPISODE="${BASH_REMATCH[2]}"
-        SHOW_NAME=$(echo "$base" | sed -E 's/[[:space:]._-]*[0-9]{1,2}[xX][0-9]{1,3}.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
-        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(echo "$parent" | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
+        SEASON="${BASH_REMATCH[2]}"
+        EPISODE="${BASH_REMATCH[3]}"
+        SHOW_NAME=$(trim_whitespace "$(echo "$base" | sed -E 's/[[:space:]._-]*[0-9]{1,2}[xX][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
     # Anime: [Group] Name - 05
     elif [[ "$base" =~ ^(\[.+\])?[[:space:]]*(.+)[[:space:]]+-[[:space:]]*([0-9]{1,3})([[:space:]]|\[|v[0-9]|$) ]]; then
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
-        SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | xargs)
+        SHOW_NAME=$(trim_whitespace "${BASH_REMATCH[2]}")
     # Episodic: [Group] Show 05 - Title (supports 21' style episode tokens)
     elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+([0-9]{1,3})\'?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
-        SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | xargs)
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[2]}" | tr '._' ' ')")
     # Episodic fallback: 05 - Title (derive show name from parent directory)
     elif [[ "$base" =~ ^([0-9]{1,3})\'?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[1]}"
-        SHOW_NAME=$(echo "$parent" | tr '._' ' ' | xargs)
+        SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ')")
     # Group releases: [Group] Show 05 [Tags] / [Group] Show - 05 (Tags)
-    elif [[ "$base" =~ ^(\[[^]]+\][[:space:]]+)(.+)[[:space:]_.-]+([0-9]{1,3})\'?([[:space:]].*)?$ ]]; then
+    elif [[ "$base" =~ ^(\[[^]]+\][[:space:]]+)(.+)[[:space:]_.-]+([0-9]{1,3})\'?([Vv][0-9]+)?([[:space:]].*)?$ ]]; then
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
-        SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//' | xargs)
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
     # Anime: [Group]Name_Name_01_BD or Name_01
     elif [[ "$base" =~ ^(\[.+\])?(.+)_([0-9]{2,3})(_[^.]*)?$ ]]; then
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
-        SHOW_NAME=$(echo "${BASH_REMATCH[2]}" | tr '_' ' ' | xargs)
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[2]}" | tr '_' ' ')")
     # Movie with year
     elif [[ "$base" =~ (.+)[._[:space:]]\(?((19[0-9]{2}|20[0-9]{2}))\)? ]]; then
         MEDIA_TYPE="movie"
-        MOVIE_NAME=$(echo "${BASH_REMATCH[1]}" | tr '._' ' ' | xargs)
+        MOVIE_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[1]}" | tr '._' ' ')")
         YEAR="${BASH_REMATCH[2]}"
     else
         MEDIA_TYPE="movie"
-        MOVIE_NAME=$(echo "$base" | tr '._' ' ' | xargs)
+        MOVIE_NAME=$(trim_whitespace "$(echo "$base" | tr '._' ' ')")
     fi
 
     # Clean tags
     local tags='720p|1080p|2160p|4K|UHD|WEB-DL|WEBRip|BluRay|BDRip|BD|DVDRip|HDTV|x264|x265|HEVC|H\.?264|H\.?265|AAC|AC3|DTS|DTS-HD|TrueHD|FLAC|EAC3|DD\+?|Atmos|10bit|HDR|HDR10|HDR10\+|DV|DoVi|Dual\.?Audio|MULTI|REMUX|PROPER|REPACK|EMBER|NF|AMZN|DSNP|HMAX|ATVP'
-    SHOW_NAME=$(echo "$SHOW_NAME" | sed -E "s/(^|[[:space:]._-])(${tags})([[:space:]._-]|$).*$//I" | sed -E 's/\[[^]]*\]//g' | xargs)
-    MOVIE_NAME=$(echo "$MOVIE_NAME" | sed -E "s/(^|[[:space:]._-])(${tags})([[:space:]._-]|$).*$//I" | sed -E 's/\[[^]]*\]//g' | xargs)
+    SHOW_NAME=$(trim_whitespace "$(echo "$SHOW_NAME" | sed -E "s/(^|[[:space:]._-])(${tags})([[:space:]._-]|$).*$//I" | sed -E 's/\[[^]]*\]//g')")
+    MOVIE_NAME=$(trim_whitespace "$(echo "$MOVIE_NAME" | sed -E "s/(^|[[:space:]._-])(${tags})([[:space:]._-]|$).*$//I" | sed -E 's/\[[^]]*\]//g')")
 
     # Title case
     SHOW_NAME=$(echo "$SHOW_NAME" | sed 's/\b\(.\)/\u\1/g')

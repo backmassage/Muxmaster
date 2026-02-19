@@ -20,6 +20,8 @@ All notable changes to this project are documented in this file.
 - Improved filename classification for episodic releases named like `Show 01 - Episode Title` (including `21'` episode notation) so they are treated as TV episodes instead of separate movies/folders.
 - Improved episodic detection for fansub/group release names like `[Group] Show 01 [Tags]` and `[Group] Show - 01 (Tags)` so they map to TV folders correctly.
 - Added support for `1x01` season/episode naming so releases like `1x01 - Episode Title` map to TV folders instead of movie folders.
+- Hardened episode-token matching to avoid false positives from resolution tags (for example `1920x1080`) and added support for `01v2`-style episode suffixes.
+- Replaced `xargs`-based title trimming in filename parsing to avoid quote-related parse errors on titles containing apostrophes.
 - Improved FFmpeg stream analysis for HDR/color/interlace detection by targeting the primary non-attachment video stream, preventing false analysis on files with attached cover-art video streams.
 - Hardened HDR metadata passthrough so ffmpeg only receives valid color flags when metadata is present, reducing encode failures caused by unknown color values.
 - Fixed command-substitution logging contamination in option-builder helpers (`build_audio_opts`, `build_subtitle_opts`, `build_video_filter`) that could corrupt generated FFmpeg argument lists in verbose/warning scenarios.
