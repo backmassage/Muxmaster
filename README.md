@@ -27,15 +27,12 @@ Bundled core script: **Muxmaster.sh v1.4.0**
 - Pink pre-flight conversion summary line (`audio in -> out`, `video in -> out`, `bitrate in -> expected`)
 - Pre-flight input and estimate summary (input resolution/bitrate + rough output bitrate range)
 - End-of-run per-file CSV summary in terminal/log output
-- Bundled `JellyfinLibraryAudit.py` for recursive ffprobe library CSV reporting
 
 ## Requirements
 
 - Bash
 - `ffmpeg`
 - `ffprobe`
-- For JellyfinLibraryAudit utility:
-  - Python 3
 - For VAAPI mode:
   - VAAPI-capable hardware/driver stack
   - Render node (for example `/dev/dri/renderD128`)
@@ -53,22 +50,6 @@ Check environment support:
 ```bash
 ./Muxmaster.sh --check
 ```
-
-## Jellyfin Library Audit Utility
-
-Use the bundled crawler script to recursively scan a Jellyfin media directory,
-print concise per-file summaries, and export detailed ffprobe metadata to CSV.
-
-```bash
-chmod +x JellyfinLibraryAudit.py
-./JellyfinLibraryAudit.py "/path/to/jellyfin/library" --csv "/path/to/library_report.csv"
-```
-
-Optional flags:
-
-- `--quiet` suppresses per-file terminal lines (still writes CSV + final totals)
-- `--ffprobe-bin <path>` uses a custom ffprobe binary
-- `--include-ext .ext` adds extra media extensions to scan
 
 ## Command Usage
 

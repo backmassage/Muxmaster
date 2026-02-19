@@ -120,7 +120,7 @@ init_colors() {
 # Banner
 #------------------------------------------------------------------------------
 print_banner() {
-    if [[ -n "$CYAN" ]]; then
+    if [[ -n "$MAGENTA" ]]; then
         printf '%b' $'\033[1;95m'
     fi
 
@@ -132,7 +132,7 @@ print_banner() {
 |_|  |_|\__,_/_/\_\_|  |_|\__,_|___/\__\___|_|
 EOF
 
-    if [[ -n "$CYAN" ]]; then
+    if [[ -n "$MAGENTA" ]]; then
         printf '%b\n' "$NC"
     fi
 }

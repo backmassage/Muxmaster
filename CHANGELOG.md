@@ -13,7 +13,7 @@ All notable changes to this project are documented in this file.
 - Polished CLI help wording for audio layout and release summary text.
 - Added pre-flight render parameter logging before FFmpeg execution, including whether video/audio are transcoded or copied.
 - Added a per-file CSV summary section at the end of each run with one-line status/action output for every processed file.
-- Added `JellyfinLibraryAudit.py` to recursively crawl media libraries and export detailed ffprobe stream metadata to CSV.
+- Removed bundled `JellyfinLibraryAudit.py` from the final 1.4 release package to keep distribution focused on the core `Muxmaster.sh` workflow.
 - Added smart per-file quality adaptation (resolution/bitrate-aware CRF/QP) with a one-pass tighter retry when output size grows significantly.
 - Updated smart quality math to use separate CPU (`libx265` CRF) and VAAPI (`hevc_vaapi` QP) adaptation curves instead of a mirrored adjustment.
 - Added explicit fixed-quality overrides `--cpu-crf` and `--vaapi-qp` (with `--quality` kept for active-mode compatibility).
