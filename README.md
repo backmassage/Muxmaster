@@ -2,8 +2,8 @@
 
 > A resilient batch encoder/remuxer for Jellyfin-style media libraries.
 
-Release version: **1.3.0**  
-Bundled core script: **Muxmaster.sh v1.3.0**
+Release version: **1.4.0**  
+Bundled core script: **Muxmaster.sh v1.4.0**
 
 ## Highlights
 
@@ -11,7 +11,11 @@ Bundled core script: **Muxmaster.sh v1.3.0**
 - Optional HEVC remux mode (`--skip-hevc`) with browser-safety checks
 - AAC audio strategy:
   - copy AAC streams as-is (no AAC-to-AAC re-encode)
-  - otherwise encode non-AAC streams to AAC 48kHz (`256k` target by default)
+  - otherwise encode non-AAC streams to AAC 48kHz (`224k` target by default)
+- Smart per-file quality adaptation (default on):
+  - uses separate adaptation curves for CPU CRF vs VAAPI QP using source resolution + bitrate
+  - applies one tighter retry pass if output grows significantly (>105%)
+  - supports fixed manual overrides with `--quality`, `--cpu-crf`, and `--vaapi-qp`
 - HDR handling:
   - preserve metadata (`--hdr preserve`)
   - tonemap to SDR (`--hdr tonemap`)
@@ -19,6 +23,10 @@ Bundled core script: **Muxmaster.sh v1.3.0**
 - Subtitle and attachment retention with safe MP4 behavior
 - Automatic retry fallbacks for common FFmpeg failure modes
 - Safer directory handling (output cannot be inside input)
+- Pre-flight render plan output before each FFmpeg run (video/audio transcode vs copy)
+- Pink pre-flight conversion summary line (`audio in -> out`, `video in -> out`, `bitrate in -> expected`)
+- Pre-flight input and estimate summary (input resolution/bitrate + rough output bitrate range)
+- End-of-run per-file CSV summary in terminal/log output
 
 ## Requirements
 
@@ -54,7 +62,9 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | Option | Description |
 |---|---|
 | `-m, --mode <vaapi\|cpu>` | Encoder mode (default: `vaapi`) |
-| `-q, --quality <value>` | VAAPI QP or CPU CRF (defaults: VAAPI `18`, CPU `20`) |
+| `-q, --quality <value>` | Fixed quality for active mode (VAAPI QP or CPU CRF) |
+| `--cpu-crf <value>` | Fixed CPU CRF override (takes precedence over `--quality` in CPU mode) |
+| `--vaapi-qp <value>` | Fixed VAAPI QP override (takes precedence over `--quality` in VAAPI mode) |
 | `-p, --preset <preset>` | CPU x265 preset (default: `slow`) |
 | `--container <mkv\|mp4>` | Output container (default: `mkv`) |
 | `--hdr <preserve\|tonemap>` | HDR handling mode (default: `preserve`) |
@@ -66,6 +76,8 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
 | `-f, --force` | Overwrite existing output files |
 | `-d, --dry-run` | Preview actions without writing files |
 | `--strict` | Disable auto-retry fallbacks |
+| `--smart-quality` | Enable per-file quality adaptation (default: on) |
+| `--no-smart-quality` | Disable per-file quality adaptation |
 | `--clean-timestamps` | Enable timestamp regeneration (default: on) |
 | `--no-clean-timestamps` | Disable timestamp regeneration |
 | `--match-audio-layout` | Normalize encoded audio layout (default: on) |
@@ -88,7 +100,7 @@ Muxmaster.sh [OPTIONS] <input_dir> <output_dir>
   - VAAPI: `main10` when available, fallback to `main` (8-bit)
   - CPU: `main10`, `yuv420p10le`
 - Audio:
-  - target: AAC, up to stereo, `256k`, 48kHz for non-AAC sources
+  - target: AAC, up to stereo, `224k`, 48kHz for non-AAC sources
   - AAC source streams are copied directly (no AAC-to-AAC re-encode)
 - Subtitles:
   - MKV: copy subtitle streams

@@ -2,18 +2,31 @@
 
 All notable changes to this project are documented in this file.
 
-## [1.3.0] - 2026-02-18
+## [1.4.0] - 2026-02-18
 
 ### Changed
 
-- Updated default quality from `19` to decoupled defaults: VAAPI QP `18`, CPU CRF `20`.
-- Updated default AAC audio bitrate from `192k` to `256k`.
-- Bumped bundled script version to `Muxmaster.sh v1.3.0`.
-- Updated README defaults and release metadata for `1.3.0`.
+- Set default quality to `19` for both VAAPI QP and CPU CRF.
+- Set default AAC audio bitrate to `224k`.
+- Bumped bundled script version to `Muxmaster.sh v1.4.0`.
+- Updated README defaults and release metadata for `1.4.0`.
 - Polished CLI help wording for audio layout and release summary text.
+- Added pre-flight render parameter logging before FFmpeg execution, including whether video/audio are transcoded or copied.
+- Added a per-file CSV summary section at the end of each run with one-line status/action output for every processed file.
+- Removed bundled `JellyfinLibraryAudit.py` from the final 1.4 release package to keep distribution focused on the core `Muxmaster.sh` workflow.
+- Added smart per-file quality adaptation (resolution/bitrate-aware CRF/QP) with a one-pass tighter retry when output size grows significantly.
+- Updated smart quality math to use separate CPU (`libx265` CRF) and VAAPI (`hevc_vaapi` QP) adaptation curves instead of a mirrored adjustment.
+- Added explicit fixed-quality overrides `--cpu-crf` and `--vaapi-qp` (with `--quality` kept for active-mode compatibility).
+- Added pre-flight input/output estimate logging that shows source resolution/bitrate and a rough encoded output bitrate range.
+- Added a pink pre-flight conversion summary line showing `audio in -> out`, `video in -> out`, and `bitrate in -> expected bitrate`.
 
 ### Fixed
 
+- Improved filename classification for episodic releases named like `Show 01 - Episode Title` (including `21'` episode notation) so they are treated as TV episodes instead of separate movies/folders.
+- Improved episodic detection for fansub/group release names like `[Group] Show 01 [Tags]` and `[Group] Show - 01 (Tags)` so they map to TV folders correctly.
+- Added support for `1x01` season/episode naming so releases like `1x01 - Episode Title` map to TV folders instead of movie folders.
+- Hardened episode-token matching to avoid false positives from resolution tags (for example `1920x1080`) and added support for `01v2`-style episode suffixes.
+- Replaced `xargs`-based title trimming in filename parsing to avoid quote-related parse errors on titles containing apostrophes.
 - Improved FFmpeg stream analysis for HDR/color/interlace detection by targeting the primary non-attachment video stream, preventing false analysis on files with attached cover-art video streams.
 - Hardened HDR metadata passthrough so ffmpeg only receives valid color flags when metadata is present, reducing encode failures caused by unknown color values.
 - Fixed command-substitution logging contamination in option-builder helpers (`build_audio_opts`, `build_subtitle_opts`, `build_video_filter`) that could corrupt generated FFmpeg argument lists in verbose/warning scenarios.
