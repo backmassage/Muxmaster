@@ -66,7 +66,7 @@ declare -a TEMP_FILES=()
 declare -a FILE_SUMMARY_ROWS=()
 
 # ANSI color palette
-RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
+RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; MAGENTA=""; NC=""
 
 #------------------------------------------------------------------------------
 # Cleanup trap - ensures temp files are removed on exit/interrupt
@@ -109,9 +109,10 @@ init_colors() {
         YELLOW=$'\033[1;93m'
         BLUE=$'\033[1;94m'
         CYAN=$'\033[1;96m'
+        MAGENTA=$'\033[1;95m'
         NC=$'\033[0m'
     else
-        RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; NC=""
+        RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; MAGENTA=""; NC=""
     fi
 }
 
@@ -164,6 +165,7 @@ log_info()    { log_line "INFO" "$BLUE" "$1"; }
 log_success() { log_line "SUCCESS" "$GREEN" "$1"; }
 log_warn()    { log_line "WARN" "$YELLOW" "$1"; }
 log_error()   { log_line "ERROR" "$RED" "$1"; }
+log_render()  { log_line "RENDER" "$MAGENTA" "$1"; }
 log_debug()   { [[ "$VERBOSE" == true ]] && log_line "DEBUG" "$CYAN" "$1"; return 0; }
 
 #------------------------------------------------------------------------------
@@ -1275,6 +1277,50 @@ describe_audio_plan() {
     fi
 }
 
+format_codec_label() {
+    local codec="${1:-unknown}"
+    [[ -z "$codec" ]] && codec="unknown"
+    printf '%s\n' "${codec^^}"
+}
+
+describe_audio_conversion_short() {
+    local input="$1"
+    local stream_count codec codec_label source_codecs="" output_label
+    local i copy_count=0 transcode_count=0
+
+    stream_count=$(get_stream_count "a" "$input")
+    if [[ "$stream_count" -eq 0 ]]; then
+        printf 'none -> none'
+        return 0
+    fi
+
+    for ((i=0; i<stream_count; i++)); do
+        codec=$(get_audio_codec "$input" "$i")
+        [[ -z "$codec" ]] && codec="unknown"
+        codec_label=$(format_codec_label "$codec")
+
+        if [[ ",$source_codecs," != *",$codec_label,"* ]]; then
+            source_codecs="${source_codecs:+${source_codecs},}${codec_label}"
+        fi
+
+        if [[ "$codec" == "aac" ]]; then
+            ((copy_count++))
+        else
+            ((transcode_count++))
+        fi
+    done
+
+    if [[ "$transcode_count" -eq 0 ]]; then
+        output_label="AAC (copy)"
+    elif [[ "$copy_count" -eq 0 ]]; then
+        output_label="AAC (${AUDIO_BITRATE})"
+    else
+        output_label="AAC (copy + transcode ${AUDIO_BITRATE})"
+    fi
+
+    printf '%s -> %s' "$source_codecs" "$output_label"
+}
+
 describe_subtitle_plan() {
     local input="$1"
     local include_subtitles="$2"
@@ -1316,6 +1362,7 @@ log_encode_render_plan() {
     local audio_plan subtitle_plan attachment_plan container_plan hdr_plan deinterlace_plan video_plan hdr_type
     local input_resolution input_bitrate_bps input_bitrate_label
     local est_low_kbps est_high_kbps est_low_pct est_high_pct
+    local audio_conversion video_conversion bitrate_conversion
 
     source_video_codec=$(get_primary_video_codec "$input")
     [[ -z "$source_video_codec" ]] && source_video_codec=$(get_codec "$input")
@@ -1332,6 +1379,7 @@ log_encode_render_plan() {
     fi
 
     audio_plan=$(describe_audio_plan "$input")
+    audio_conversion=$(describe_audio_conversion_short "$input")
     subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
     attachment_plan=$(describe_attachment_plan "$include_attachments")
 
@@ -1358,7 +1406,20 @@ log_encode_render_plan() {
         deinterlace_plan="disabled"
     fi
 
+    if [[ "$ENCODER_MODE" == "vaapi" ]]; then
+        video_conversion="$(format_codec_label "$source_codec_label") -> HEVC (VAAPI QP=${selected_vaapi_qp})"
+    else
+        video_conversion="$(format_codec_label "$source_codec_label") -> HEVC (x265 CRF=${selected_cpu_crf})"
+    fi
+
+    if [[ "$est_low_kbps" != "unknown" ]]; then
+        bitrate_conversion="${input_bitrate_label} -> ~${est_low_kbps}-${est_high_kbps} kb/s"
+    else
+        bitrate_conversion="${input_bitrate_label} -> unknown"
+    fi
+
     log_info "Pre-flight render params:"
+    log_render "Conversion: audio ${audio_conversion} | video ${video_conversion} | bitrate ${bitrate_conversion}"
     log_info "  Quality mode: ${quality_mode_note}"
     log_info "  Input video: ${input_resolution} | ${input_bitrate_label} | ${source_codec_label}"
     if [[ "$est_low_kbps" != "unknown" ]]; then
@@ -1381,6 +1442,7 @@ log_remux_render_plan() {
     local source_video_codec source_profile source_pix_fmt
     local audio_plan subtitle_plan attachment_plan container_plan
     local input_resolution input_bitrate_bps input_bitrate_label
+    local audio_conversion video_conversion bitrate_conversion
 
     source_video_codec=$(get_primary_video_codec "$input")
     [[ -z "$source_video_codec" ]] && source_video_codec=$(get_codec "$input")
@@ -1391,6 +1453,7 @@ log_remux_render_plan() {
     input_bitrate_label=$(format_bitrate_label "$input_bitrate_bps")
 
     audio_plan=$(describe_audio_plan "$input")
+    audio_conversion=$(describe_audio_conversion_short "$input")
     subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
     attachment_plan=$(describe_attachment_plan "$include_attachments")
 
@@ -1400,7 +1463,11 @@ log_remux_render_plan() {
         container_plan="${OUTPUT_CONTAINER^^}"
     fi
 
+    video_conversion="$(format_codec_label "${source_video_codec:-unknown}") -> $(format_codec_label "${source_video_codec:-unknown}") (copy)"
+    bitrate_conversion="${input_bitrate_label} -> ~same (video copy)"
+
     log_info "Pre-flight render params:"
+    log_render "Conversion: audio ${audio_conversion} | video ${video_conversion} | bitrate ${bitrate_conversion}"
     log_info "  Input video: ${input_resolution} | ${input_bitrate_label} | ${source_video_codec:-unknown}"
     log_info "  Estimated output: video copied (~same bitrate); total file size depends on audio/subtitles/container"
     log_info "  Video: transcode=no (copy stream ${video_stream_idx}: ${source_video_codec:-unknown}, profile=${source_profile:-unknown}, pix_fmt=${source_pix_fmt:-unknown})"

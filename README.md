@@ -24,6 +24,7 @@ Bundled core script: **Muxmaster.sh v1.4.0**
 - Automatic retry fallbacks for common FFmpeg failure modes
 - Safer directory handling (output cannot be inside input)
 - Pre-flight render plan output before each FFmpeg run (video/audio transcode vs copy)
+- Pink pre-flight conversion summary line (`audio in -> out`, `video in -> out`, `bitrate in -> expected`)
 - Pre-flight input and estimate summary (input resolution/bitrate + rough output bitrate range)
 - End-of-run per-file CSV summary in terminal/log output
 - Bundled `JellyfinLibraryAudit.py` for recursive ffprobe library CSV reporting
