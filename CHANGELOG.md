@@ -6,7 +6,28 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- Removed the end-of-run per-file CSV reporting output from `Muxmaster.sh` to simplify the processing flow; the script now keeps the standard totals summary (`encoded`, `skipped`, `failed`).
+- No unreleased changes yet.
+
+## [1.5.0] - 2026-02-19
+
+### Changed
+
+- Bumped bundled script version to `Muxmaster.sh v1.5.0`.
+- Updated README release metadata for `1.5.0`.
+- Removed end-of-run per-file CSV reporting output; the script now keeps standard totals summary (`encoded`, `skipped`, `failed`).
+- Added `_docs/show-parsing-design.md` to document parser and output-mapping architecture.
+- Updated file discovery to ignore media files inside any `Extras` directory (case-insensitive).
+- Improved pre-flight render plan reporting to correctly indicate when subtitle/attachment streams are absent.
+
+### Fixed
+
+- Prevented filename parsing collisions between grouped era releases (for example `Berserk` 1997 vs `Berserk` 2016/2017) by using parent-year disambiguation when available.
+- Fixed special-content parsing so OP/ED/PV/Menu/Special/Recap-style entries map as TV specials under `Season 00` instead of splitting into pseudo-shows or movies.
+- Added episodic keyword parsing for names like `Show - Episode 16.5 - Title` and mapped decimal episodes to `Season 00` special numbering.
+- Fixed greedy episodic extraction for names like `Show - 027 - 800 Years...` so episode indexing remains correct.
+- Fixed false TV classification from codec tags in movie names (for example `H.265`).
+- Added movie-part parsing for `... The Movie 1 - Part Name` style files so they are treated as movies instead of TV episodes.
+- Improved fallback show-name cleanup to avoid inconsistent names caused by trailing season tokens in parent directories.
 
 ## [1.4.0] - 2026-02-18
 

@@ -2,8 +2,8 @@
 
 > A resilient batch encoder/remuxer for Jellyfin-style media libraries.
 
-Release version: **1.4.0**  
-Bundled core script: **Muxmaster.sh v1.4.0**
+Release version: **1.5.0**  
+Bundled core script: **Muxmaster.sh v1.5.0**
 
 ## Highlights
 
@@ -27,6 +27,8 @@ Bundled core script: **Muxmaster.sh v1.4.0**
 - Pink pre-flight conversion summary line (`audio in -> out`, `video in -> out`, `bitrate in -> expected`)
 - Pre-flight input and estimate summary (input resolution/bitrate + rough output bitrate range)
 - Simple end-of-run totals summary (`encoded`, `skipped`, `failed`)
+- Ignores files found under `Extras` directories
+- Stronger show parsing for specials and grouped/year-tagged anime releases
 
 ## Requirements
 
@@ -131,6 +133,12 @@ Movie:
 
 ```text
 <output>/<Movie Name (Year)>/<Movie Name (Year)>.<container>
+```
+
+TV specials (OP/ED/PV/Menu/Recap/etc.) are mapped to Season 00:
+
+```text
+<output>/<Show Name>/Season 00/<Show Name> - S00E<NN>.<container>
 ```
 
 ## Safety Notes
