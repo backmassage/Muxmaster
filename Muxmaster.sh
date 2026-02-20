@@ -226,7 +226,7 @@ Utility:
   -V, --version             Print version
   -h, --help                Help
 
-Encoding: 10-bit HEVC, copy AAC or encode non-AAC to AAC, MKV container, metadata preserved
+Encoding: 10-bit HEVC, copy AAC or encode non-AAC to AAC (default 256k), MKV container, metadata preserved
 EOF
     exit "$exit_code"
 }
