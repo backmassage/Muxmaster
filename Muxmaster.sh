@@ -1,6 +1,6 @@
 #!/bin/bash
 #===============================================================================
-# Muxmaster Media Library Encoder v1.5.0
+# Muxmaster Media Library Encoder v1.6.0
 # Comprehensive HEVC/AAC encoding for Jellyfin optimization
 #===============================================================================
 
@@ -22,7 +22,7 @@ CPU_PIX_FMT="yuv420p10le"
 OUTPUT_CONTAINER="mkv"
 KEYFRAME_INT=48
 AUDIO_CHANNELS=2
-AUDIO_BITRATE="224k"
+AUDIO_BITRATE="256k"
 FFMPEG_PROBESIZE="100M"
 FFMPEG_ANALYZEDURATION="100M"
 
@@ -58,13 +58,13 @@ SMART_QUALITY=true
 INPUT_DIR=""
 OUTPUT_DIR=""
 SCRIPT_NAME="$(basename "$0")"
-SCRIPT_VERSION="1.5.0"
+SCRIPT_VERSION="1.6.0"
 
 # Temp file tracking for cleanup
 declare -a TEMP_FILES=()
 
 # ANSI color palette
-RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; MAGENTA=""; NC=""
+RED=""; GREEN=""; YELLOW=""; ORANGE=""; BLUE=""; CYAN=""; MAGENTA=""; NC=""
 
 #------------------------------------------------------------------------------
 # Cleanup trap - ensures temp files are removed on exit/interrupt
@@ -105,12 +105,13 @@ init_colors() {
         RED=$'\033[1;91m'
         GREEN=$'\033[1;92m'
         YELLOW=$'\033[1;93m'
+        ORANGE=$'\033[1;38;5;208m'
         BLUE=$'\033[1;94m'
         CYAN=$'\033[1;96m'
         MAGENTA=$'\033[1;95m'
         NC=$'\033[0m'
     else
-        RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; MAGENTA=""; NC=""
+        RED=""; GREEN=""; YELLOW=""; ORANGE=""; BLUE=""; CYAN=""; MAGENTA=""; NC=""
     fi
 }
 
@@ -164,6 +165,7 @@ log_success() { log_line "SUCCESS" "$GREEN" "$1"; }
 log_warn()    { log_line "WARN" "$YELLOW" "$1"; }
 log_error()   { log_line "ERROR" "$RED" "$1"; }
 log_render()  { log_line "RENDER" "$MAGENTA" "$1"; }
+log_outlier() { log_line "OUTLIER" "$ORANGE" "$1"; }
 log_debug()   { [[ "$VERBOSE" == true ]] && log_line "DEBUG" "$CYAN" "$1"; return 0; }
 
 #------------------------------------------------------------------------------
@@ -448,6 +450,34 @@ get_file_size() {
     fi
 }
 
+# Human-readable byte formatter for final summary reporting.
+format_bytes() {
+    local bytes="$1"
+    local sign=""
+    local -a units=(B KiB MiB GiB TiB PiB)
+    local unit_index=0
+    local remainder=0
+
+    [[ "$bytes" =~ ^-?[0-9]+$ ]] || { printf 'unknown\n'; return 0; }
+
+    if (( bytes < 0 )); then
+        sign="-"
+        bytes=$((-bytes))
+    fi
+
+    while (( bytes >= 1024 && unit_index < ${#units[@]} - 1 )); do
+        remainder=$((bytes % 1024))
+        bytes=$((bytes / 1024))
+        ((unit_index++))
+    done
+
+    if (( unit_index == 0 )); then
+        printf '%s%d %s\n' "$sign" "$bytes" "${units[$unit_index]}"
+    else
+        printf '%s%d.%d %s\n' "$sign" "$bytes" "$((remainder * 10 / 1024))" "${units[$unit_index]}"
+    fi
+}
+
 #------------------------------------------------------------------------------
 # VAAPI device and encoder tests
 #------------------------------------------------------------------------------
@@ -644,6 +674,70 @@ get_primary_video_bitrate_label() {
     local bitrate_bps
     bitrate_bps=$(get_primary_video_bitrate_bps "$1")
     format_bitrate_label "$bitrate_bps"
+}
+
+#------------------------------------------------------------------------------
+# Source bitrate outlier detection by resolution tier
+#------------------------------------------------------------------------------
+# Returns: low_kbps<TAB>high_kbps<TAB>tier_label
+get_expected_bitrate_range_kbps() {
+    local resolution="$1"
+    local width height pixels
+
+    if [[ "$resolution" =~ ^([0-9]+)x([0-9]+)$ ]]; then
+        width="${BASH_REMATCH[1]}"
+        height="${BASH_REMATCH[2]}"
+        pixels=$((width * height))
+    else
+        printf '0\t0\tunknown\n'
+        return 0
+    fi
+
+    # Conservative ranges to flag obvious bitrate outliers without over-triggering.
+    if (( pixels <= 640 * 360 )); then
+        printf '250\t1800\t<=360p\n'
+    elif (( pixels <= 854 * 480 )); then
+        printf '500\t2500\t<=480p\n'
+    elif (( pixels <= 1280 * 720 )); then
+        printf '1000\t5000\t<=720p\n'
+    elif (( pixels <= 1920 * 1080 )); then
+        printf '2500\t10000\t<=1080p\n'
+    elif (( pixels <= 2560 * 1440 )); then
+        printf '5000\t18000\t<=1440p\n'
+    elif (( pixels <= 3840 * 2160 )); then
+        printf '10000\t45000\t<=2160p\n'
+    else
+        printf '15000\t65000\t>2160p\n'
+    fi
+}
+
+# Returns: status<TAB>source_kbps<TAB>low_kbps<TAB>high_kbps<TAB>tier_label
+# status is one of: high, low, normal, unknown
+assess_bitrate_outlier() {
+    local resolution="$1"
+    local bitrate_bps="$2"
+    local bitrate_kbps low_kbps high_kbps tier_label
+
+    if ! [[ "$bitrate_bps" =~ ^[0-9]+$ && "$bitrate_bps" -gt 0 ]]; then
+        printf 'unknown\t0\t0\t0\tunknown\n'
+        return 0
+    fi
+
+    bitrate_kbps=$(((bitrate_bps + 500) / 1000))
+    IFS=$'\t' read -r low_kbps high_kbps tier_label <<< "$(get_expected_bitrate_range_kbps "$resolution")"
+
+    if ! [[ "$low_kbps" =~ ^[0-9]+$ && "$high_kbps" =~ ^[0-9]+$ && "$high_kbps" -gt "$low_kbps" ]]; then
+        printf 'unknown\t%s\t0\t0\t%s\n' "$bitrate_kbps" "${tier_label:-unknown}"
+        return 0
+    fi
+
+    if (( bitrate_kbps < low_kbps )); then
+        printf 'low\t%s\t%s\t%s\t%s\n' "$bitrate_kbps" "$low_kbps" "$high_kbps" "$tier_label"
+    elif (( bitrate_kbps > high_kbps )); then
+        printf 'high\t%s\t%s\t%s\t%s\n' "$bitrate_kbps" "$low_kbps" "$high_kbps" "$tier_label"
+    else
+        printf 'normal\t%s\t%s\t%s\t%s\n' "$bitrate_kbps" "$low_kbps" "$high_kbps" "$tier_label"
+    fi
 }
 
 #------------------------------------------------------------------------------
@@ -1204,8 +1298,9 @@ compute_smart_quality_settings() {
         fi
     fi
 
-    selected_cpu_crf=$(clamp_int "$((CPU_CRF + cpu_adj))" 16 30)
-    selected_vaapi_qp=$(clamp_int "$((VAAPI_QP + vaapi_adj))" 14 36)
+    # V1.6 tuning: lower smart-selected quality values by 1 step for both render paths.
+    selected_cpu_crf=$(clamp_int "$((CPU_CRF + cpu_adj - 1))" 16 30)
+    selected_vaapi_qp=$(clamp_int "$((VAAPI_QP + vaapi_adj - 1))" 14 36)
     note="smart (${resolution_label}, ${bitrate_label}, cpu_adj=${cpu_adj}->CRF=${selected_cpu_crf}, vaapi_adj=${vaapi_adj}->QP=${selected_vaapi_qp}, mode=${ENCODER_MODE})"
 
     printf '%s\t%s\t%s\n' "$selected_vaapi_qp" "$selected_cpu_crf" "$note"
@@ -2007,6 +2102,7 @@ process_files() {
         -type f -regextype posix-extended -iregex ".*\.($exts)$" -print0 | sort -z)
 
     local total=${#files[@]} current=0 encoded=0 skipped=0 failed=0
+    local total_input_bytes=0 total_output_bytes=0
 
     log_info "Found $total files"
     local profile_label="$CPU_HEVC_PROFILE"
@@ -2071,11 +2167,14 @@ process_files() {
         parse_filename "$(basename "$f")" "$(basename "$(dirname "$f")")"
         local out
         out=$(get_output_path)
-        local video_codec video_resolution video_bitrate_label
+        local video_codec video_resolution video_bitrate_bps video_bitrate_label
+        local bitrate_outlier_status source_bitrate_kbps outlier_low_kbps outlier_high_kbps outlier_tier
         video_codec=$(get_primary_video_codec "$f")
         [[ -z "$video_codec" ]] && video_codec=$(get_codec "$f")
         video_resolution=$(get_primary_video_resolution "$f")
-        video_bitrate_label=$(get_primary_video_bitrate_label "$f")
+        video_bitrate_bps=$(get_primary_video_bitrate_bps "$f")
+        video_bitrate_label=$(format_bitrate_label "$video_bitrate_bps")
+        IFS=$'\t' read -r bitrate_outlier_status source_bitrate_kbps outlier_low_kbps outlier_high_kbps outlier_tier <<< "$(assess_bitrate_outlier "$video_resolution" "$video_bitrate_bps")"
 
         log_debug "Primary video stream: index=${video_idx}, codec=${video_codec:-unknown}"
 
@@ -2087,6 +2186,11 @@ process_files() {
             local interlace_label=""
             is_interlaced "$f" && interlace_label=" [Interlaced]"
             log_info "  Video: ${video_resolution} | ${video_bitrate_label} | ${video_codec:-unknown}${hdr_label}${interlace_label}"
+        fi
+
+        # Flag unusual bitrate-vs-resolution combinations to aid source triage.
+        if [[ "$bitrate_outlier_status" == "high" || "$bitrate_outlier_status" == "low" ]]; then
+            log_outlier "  Bitrate outlier (${bitrate_outlier_status}): ${source_bitrate_kbps} kb/s for ${video_resolution}; expected ${outlier_low_kbps}-${outlier_high_kbps} kb/s (${outlier_tier})"
         fi
 
         # Check if already HEVC - copy video, encode audio only
@@ -2187,6 +2291,8 @@ process_files() {
                 in_sz=$(get_file_size "$f")
                 out_sz=$(get_file_size "$out")
                 [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=100
+                total_input_bytes=$((total_input_bytes + in_sz))
+                total_output_bytes=$((total_output_bytes + out_sz))
                 log_success "Remuxed in ${elapsed_rm}s (${ratio}% of original)"
                 ((encoded++))
                 echo
@@ -2203,14 +2309,33 @@ process_files() {
 
         if encode_file "$f" "$out" "$video_idx"; then
             ((encoded++))
+            if [[ "$DRY_RUN" != true && -f "$out" ]]; then
+                local enc_in_sz enc_out_sz
+                enc_in_sz=$(get_file_size "$f")
+                enc_out_sz=$(get_file_size "$out")
+                total_input_bytes=$((total_input_bytes + enc_in_sz))
+                total_output_bytes=$((total_output_bytes + enc_out_sz))
+            fi
         else
             ((failed++))
         fi
         echo
     done
 
+    # End-of-run summary includes processed count and aggregate space savings.
+    local total_space_saved_bytes=$((total_input_bytes - total_output_bytes))
+
     log_info "=============================="
     log_info "Done: $encoded encoded, $skipped skipped, $failed failed"
+    log_info "Summary report:"
+    log_info "  Total files processed: $current"
+    if [[ "$DRY_RUN" == true ]]; then
+        log_info "  Total space saved: n/a (dry run)"
+    elif (( total_space_saved_bytes >= 0 )); then
+        log_success "  Total space saved: $(format_bytes "$total_space_saved_bytes") (input $(format_bytes "$total_input_bytes") -> output $(format_bytes "$total_output_bytes"))"
+    else
+        log_warn "  Total space saved: -$(format_bytes "$((-total_space_saved_bytes))") (overall output is larger)"
+    fi
 
     return 0
 }
