@@ -1,6 +1,6 @@
 #!/bin/bash
 #===============================================================================
-# Muxmaster Media Library Encoder v1.4.0
+# Muxmaster Media Library Encoder v1.5.0
 # Comprehensive HEVC/AAC encoding for Jellyfin optimization
 #===============================================================================
 
@@ -58,12 +58,10 @@ SMART_QUALITY=true
 INPUT_DIR=""
 OUTPUT_DIR=""
 SCRIPT_NAME="$(basename "$0")"
-SCRIPT_VERSION="1.4.0"
+SCRIPT_VERSION="1.5.0"
 
 # Temp file tracking for cleanup
 declare -a TEMP_FILES=()
-# Per-file CSV summary rows
-declare -a FILE_SUMMARY_ROWS=()
 
 # ANSI color palette
 RED=""; GREEN=""; YELLOW=""; BLUE=""; CYAN=""; MAGENTA=""; NC=""
@@ -447,42 +445,6 @@ get_file_size() {
         stat -f%z "$file" 2>/dev/null || echo 0
     else
         stat -c%s "$file" 2>/dev/null || echo 0
-    fi
-}
-
-#------------------------------------------------------------------------------
-# CSV summary helpers
-#------------------------------------------------------------------------------
-csv_escape_field() {
-    local value="${1-}"
-    value=${value//\"/\"\"}
-    printf '"%s"' "$value"
-}
-
-append_file_csv_summary() {
-    local input_file="$1" output_file="$2" media_type="$3" action="$4" video_action="$5" audio_action="$6" status="$7" note="$8"
-    local row
-
-    row="$(csv_escape_field "$input_file"),$(csv_escape_field "$output_file"),$(csv_escape_field "$media_type"),$(csv_escape_field "$action"),$(csv_escape_field "$video_action"),$(csv_escape_field "$audio_action"),$(csv_escape_field "$status"),$(csv_escape_field "$note")"
-    FILE_SUMMARY_ROWS+=("$row")
-}
-
-print_file_csv_summary() {
-    local header="input_file,output_file,media_type,action,video_action,audio_action,status,note"
-    local row
-
-    echo
-    log_info "Per-file summary (CSV)"
-    printf '%s\n' "$header"
-    for row in "${FILE_SUMMARY_ROWS[@]}"; do
-        printf '%s\n' "$row"
-    done
-
-    if [[ -n "$LOG_FILE" ]]; then
-        printf '%s\n' "$header" >> "$LOG_FILE"
-        for row in "${FILE_SUMMARY_ROWS[@]}"; do
-            printf '%s\n' "$row" >> "$LOG_FILE"
-        done
     fi
 }
 
@@ -1324,6 +1286,13 @@ describe_audio_conversion_short() {
 describe_subtitle_plan() {
     local input="$1"
     local include_subtitles="$2"
+    local subtitle_count
+
+    subtitle_count=$(get_stream_count "s" "$input")
+    if [[ "$subtitle_count" -eq 0 ]]; then
+        printf 'none (no subtitle streams)'
+        return 0
+    fi
 
     if [[ "$KEEP_SUBTITLES" != true || "$include_subtitles" != true ]]; then
         printf 'disabled'
@@ -1342,7 +1311,15 @@ describe_subtitle_plan() {
 }
 
 describe_attachment_plan() {
-    local include_attachments="$1"
+    local input="$1"
+    local include_attachments="$2"
+    local attachment_count
+
+    attachment_count=$(get_stream_count "t" "$input")
+    if [[ "$attachment_count" -eq 0 ]]; then
+        printf 'none (no attachment streams)'
+        return 0
+    fi
 
     if [[ "$KEEP_ATTACHMENTS" != true || "$include_attachments" != true ]]; then
         printf 'disabled'
@@ -1352,7 +1329,7 @@ describe_attachment_plan() {
     if output_container_is_mp4; then
         printf 'disabled for MP4'
     else
-        printf 'copy attachments'
+        printf 'copy %d attachment stream(s)' "$attachment_count"
     fi
 }
 
@@ -1381,7 +1358,7 @@ log_encode_render_plan() {
     audio_plan=$(describe_audio_plan "$input")
     audio_conversion=$(describe_audio_conversion_short "$input")
     subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
-    attachment_plan=$(describe_attachment_plan "$include_attachments")
+    attachment_plan=$(describe_attachment_plan "$input" "$include_attachments")
 
     if output_container_is_mp4; then
         container_plan="MP4 (faststart + hvc1 tag)"
@@ -1455,7 +1432,7 @@ log_remux_render_plan() {
     audio_plan=$(describe_audio_plan "$input")
     audio_conversion=$(describe_audio_conversion_short "$input")
     subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
-    attachment_plan=$(describe_attachment_plan "$include_attachments")
+    attachment_plan=$(describe_attachment_plan "$input" "$include_attachments")
 
     if output_container_is_mp4; then
         container_plan="MP4 (faststart + hvc1 tag)"
@@ -1486,10 +1463,14 @@ build_subtitle_opts() {
     local include_subtitles="$2"
     local -a opts=()
     local subtitle_codec="copy"
+    local subtitle_count
 
     if [[ "$KEEP_SUBTITLES" != true || "$include_subtitles" != true ]]; then
         return
     fi
+
+    subtitle_count=$(get_stream_count "s" "$input")
+    [[ "$subtitle_count" -eq 0 ]] && return
 
     if output_container_is_mp4; then
         if has_bitmap_subtitles "$input"; then
@@ -1724,22 +1705,109 @@ parse_filename() {
         SEASON="${BASH_REMATCH[2]}"
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(trim_whitespace "$(echo "$base" | sed -E 's/[[:space:]._-]*[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
-        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | sed -E 's/[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed -E 's/[[:space:]._-]*([Ss]eason[[:space:]_.-]*[0-9]{1,2}|[Ss][0-9]{1,2}|[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Vv][0-9]+)?)([[:space:]].*)?$//' | sed 's/[[:space:]-]*$//')")
     # 1x01 pattern (supports optional v2 suffix like 1x01v2)
     elif [[ "$base" =~ (^|[^0-9])([0-9]{1,2})[xX]([0-9]{1,3})([Vv][0-9]+)?([^0-9]|$) ]]; then
         MEDIA_TYPE="tv"
         SEASON="${BASH_REMATCH[2]}"
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(trim_whitespace "$(echo "$base" | sed -E 's/[[:space:]._-]*[0-9]{1,2}[xX][0-9]{1,3}([Vv][0-9]+)?[^[:space:]]*.*//' | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
-        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        [[ -z "$SHOW_NAME" ]] && SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed -E 's/[[:space:]._-]*([Ss]eason[[:space:]_.-]*[0-9]{1,2}|[Ss][0-9]{1,2})([[:space:]].*)?$//' | sed 's/[[:space:]-]*$//')")
+    # OP/ED special patterns: Show.S01.NCED1 / S01ED-Title
+    elif [[ "$base" =~ ^(.*)[[:space:]_.-]*[Ss]([0-9]{1,2})[[:space:]_.-]*(NC)?(OP|ED)([0-9]{0,2})([^[:alnum:]]|$) ]]; then
+        local special_num oped_kind show_from_name show_from_parent
+        MEDIA_TYPE="tv"
+        SEASON="${BASH_REMATCH[2]}"
+        special_num="${BASH_REMATCH[5]}"
+        [[ -z "$special_num" ]] && special_num=1
+        special_num=$((10#$special_num))
+        oped_kind=$(printf '%s' "${BASH_REMATCH[4]}" | tr '[:lower:]' '[:upper:]')
+        if [[ "$oped_kind" == "OP" ]]; then
+            EPISODE=$((100 + special_num))
+        else
+            EPISODE=$((200 + special_num))
+        fi
+
+        show_from_name=$(trim_whitespace "$(echo "${BASH_REMATCH[1]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        if [[ -n "$show_from_name" ]]; then
+            SHOW_NAME="$show_from_name"
+        else
+            show_from_parent=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed -E 's/[[:space:]]+[Ss][0-9]{1,2}([[:space:]].*)?$//' | sed 's/[[:space:]-]*$//')")
+            [[ -z "$show_from_parent" ]] && show_from_parent=$(trim_whitespace "$(echo "$parent" | tr '._' ' ')")
+            SHOW_NAME="$show_from_parent"
+        fi
+    # Episodic keyword pattern: Show - Episode 16.5 - Title
+    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+[Ee]pisode[[:space:]_.-]+([0-9]{1,3})([._]([0-9]{1,2}))?([[:space:]][^-]*)?[[:space:]]*-[[:space:]]+(.+)$ ]]; then
+        local ep_major ep_minor
+        MEDIA_TYPE="tv"
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        ep_major="${BASH_REMATCH[3]}"
+        ep_minor="${BASH_REMATCH[5]}"
+
+        if [[ -n "$ep_minor" ]]; then
+            SEASON="0"
+            EPISODE="${ep_major}${ep_minor}"
+        else
+            SEASON="1"
+            EPISODE="$ep_major"
+        fi
+    # Named TV specials with numeric index: Show OP/ED/PV/Special/Menu - 01
+    elif [[ "$base" =~ ^(.+)[[:space:]_.-]+(OP|ED|PV|Special|Menu)[[:space:]_.-]*-[[:space:]]*([0-9]{1,3})([^[:alnum:]]|$) ]]; then
+        local special_kind special_num special_offset
+        MEDIA_TYPE="tv"
+        SEASON="0"
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[1]}" | tr '._' ' ' | sed -E 's/[[:space:]]*-[[:space:]]*/ /g' | sed 's/[[:space:]-]*$//')")
+        special_kind=$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:lower:]' '[:upper:]')
+        special_num="${BASH_REMATCH[3]}"
+        special_num=$((10#$special_num))
+
+        case "$special_kind" in
+            OP)      special_offset=100 ;;
+            ED)      special_offset=200 ;;
+            PV)      special_offset=300 ;;
+            SPECIAL) special_offset=400 ;;
+            MENU)    special_offset=500 ;;
+            *)       special_offset=900 ;;
+        esac
+        EPISODE=$((special_offset + special_num))
+    # Named TV specials without explicit index: Show - Recap / Day Breakers / documentary extras
+    elif [[ "$base" =~ ^(.+)[[:space:]]*-[[:space:]]*(Recap|Day[[:space:]]+Breakers|BTS[[:space:]]+Documentary|Convention[[:space:]]+Panel)$ ]]; then
+        local special_kind special_offset
+        MEDIA_TYPE="tv"
+        SEASON="0"
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[1]}" | tr '._' ' ' | sed -E 's/[[:space:]]*-[[:space:]]*/ /g' | sed 's/[[:space:]-]*$//')")
+        special_kind=$(printf '%s' "${BASH_REMATCH[2]}" | tr '[:upper:]' '[:lower:]')
+
+        case "$special_kind" in
+            recap)             special_offset=601 ;;
+            day\ breakers)     special_offset=602 ;;
+            bts\ documentary)  special_offset=603 ;;
+            convention\ panel) special_offset=604 ;;
+            *)                 special_offset=699 ;;
+        esac
+        EPISODE="$special_offset"
+    # Numbered movie-part naming: "Title The Movie 1 - Part Name"
+    elif [[ "$base" =~ ^(.+[[:space:]]The[[:space:]]Movie)[[:space:]]([0-9]{1,2})[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+        MEDIA_TYPE="movie"
+        MOVIE_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[1]} ${BASH_REMATCH[2]} - ${BASH_REMATCH[3]}" | tr '._' ' ' | sed -E 's/\[[^]]*\]//g')")
     # Anime: [Group] Name - 05
     elif [[ "$base" =~ ^(\[.+\])?[[:space:]]*(.+)[[:space:]]+-[[:space:]]*([0-9]{1,3})([[:space:]]|\[|v[0-9]|$) ]]; then
+        local parsed_show
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
-        SHOW_NAME=$(trim_whitespace "${BASH_REMATCH[2]}")
+        parsed_show=$(trim_whitespace "${BASH_REMATCH[2]}")
+
+        # If greedy matching consumed a prior episode token (e.g. "Show - 027 - 800 Years..."),
+        # recover the intended earlier episode number and trim it back out of the show title.
+        if [[ "$parsed_show" =~ ^(.+)[[:space:]]-[[:space:]]([0-9]{1,3})$ ]]; then
+            SHOW_NAME=$(trim_whitespace "${BASH_REMATCH[1]}")
+            EPISODE="${BASH_REMATCH[2]}"
+        else
+            SHOW_NAME="$parsed_show"
+        fi
     # Episodic: [Group] Show 05 - Title (supports 21' style episode tokens)
-    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+([0-9]{1,3})\'?[[:space:]]*-[[:space:]]*(.+)$ ]]; then
+    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+([0-9]{1,3})\'?[[:space:]]+-[[:space:]]+(.+)$ ]]; then
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
@@ -1752,10 +1820,20 @@ parse_filename() {
         SHOW_NAME=$(trim_whitespace "$(echo "$parent" | tr '._' ' ')")
     # Group releases: [Group] Show 05 [Tags] / [Group] Show - 05 (Tags)
     elif [[ "$base" =~ ^(\[[^]]+\][[:space:]]+)(.+)[[:space:]_.-]+([0-9]{1,3})\'?([Vv][0-9]+)?([[:space:]].*)?$ ]]; then
+        local show_no_year parent_year_label
         MEDIA_TYPE="tv"
         SEASON="1"
         EPISODE="${BASH_REMATCH[3]}"
         SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        if [[ "$SHOW_NAME" =~ ^(.+)[[:space:]]+(19[0-9]{2}|20[0-9]{2})$ ]]; then
+            show_no_year=$(trim_whitespace "${BASH_REMATCH[1]}")
+            if [[ "$parent" =~ \(([0-9]{4}(-[0-9]{4})?)\) ]]; then
+                parent_year_label="${BASH_REMATCH[1]}"
+                SHOW_NAME="${show_no_year} (${parent_year_label})"
+            else
+                SHOW_NAME="$show_no_year"
+            fi
+        fi
     # Anime: [Group]Name_Name_01_BD or Name_01
     elif [[ "$base" =~ ^(\[.+\])?(.+)_([0-9]{2,3})(_[^.]*)?$ ]]; then
         MEDIA_TYPE="tv"
@@ -1924,10 +2002,11 @@ process_files() {
 
     while IFS= read -r -d '' f; do
         files+=("$f")
-    done < <(find "$INPUT_DIR" -type f -regextype posix-extended -iregex ".*\.($exts)$" -print0 | sort -z)
+    done < <(find "$INPUT_DIR" \
+        -type d -iname "extras" -prune -o \
+        -type f -regextype posix-extended -iregex ".*\.($exts)$" -print0 | sort -z)
 
     local total=${#files[@]} current=0 encoded=0 skipped=0 failed=0
-    FILE_SUMMARY_ROWS=()
 
     log_info "Found $total files"
     local profile_label="$CPU_HEVC_PROFILE"
@@ -1970,15 +2049,10 @@ process_files() {
         ((current++))
 
         log_info "[$current/$total] $(basename "$f")"
-        local summary_media_type="unknown"
-        local summary_output=""
-        local summary_audio_action="unknown"
-        local summary_note=""
 
         # Validate file before processing
         if ! validate_input_file "$f"; then
             log_error "Skipping invalid file"
-            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "validate" "unknown" "$summary_audio_action" "failed" "invalid input file"
             ((failed++))
             echo
             continue
@@ -1989,7 +2063,6 @@ process_files() {
         video_idx=$(get_primary_video_stream_index "$f")
         if [[ -z "$video_idx" ]]; then
             log_warn "No video stream found, skipping"
-            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "analyze" "none" "$summary_audio_action" "skipped" "no video stream found"
             ((skipped++))
             echo
             continue
@@ -2003,9 +2076,6 @@ process_files() {
         [[ -z "$video_codec" ]] && video_codec=$(get_codec "$f")
         video_resolution=$(get_primary_video_resolution "$f")
         video_bitrate_label=$(get_primary_video_bitrate_label "$f")
-        summary_media_type="$MEDIA_TYPE"
-        summary_output="$out"
-        summary_audio_action=$(describe_audio_plan "$f")
 
         log_debug "Primary video stream: index=${video_idx}, codec=${video_codec:-unknown}"
 
@@ -2028,14 +2098,12 @@ process_files() {
 
             if ! is_edge_safe_hevc_stream "$source_profile" "$source_pix_fmt"; then
                 allow_hevc_remux=false
-                summary_note="HEVC profile not browser-safe; forced video transcode"
                 log_warn "  HEVC profile '${source_profile:-unknown}' not browser-safe; will re-encode"
             fi
 
             if [[ "$allow_hevc_remux" == true ]]; then
                 if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
                     log_warn "Skip (exists): $(basename "$out")"
-                    append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "remux" "copy" "$summary_audio_action" "skipped" "output exists"
                     ((skipped++))
                     echo
                     continue
@@ -2047,7 +2115,6 @@ process_files() {
 
                 if [[ "$DRY_RUN" == true ]]; then
                     log_success "[DRY] Would remux"
-                    append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "remux" "copy" "$summary_audio_action" "dry_run" "would remux"
                     ((encoded++))
                     echo
                     continue
@@ -2110,7 +2177,6 @@ process_files() {
                         tail -n 20 "$remux_err" | sed 's/^/  /'
                     fi
                     rm -f "$out"
-                    append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "remux" "copy" "$summary_audio_action" "failed" "remux failed"
                     ((failed++))
                     echo
                     continue
@@ -2122,7 +2188,6 @@ process_files() {
                 out_sz=$(get_file_size "$out")
                 [[ $in_sz -gt 0 ]] && ratio=$((out_sz * 100 / in_sz)) || ratio=100
                 log_success "Remuxed in ${elapsed_rm}s (${ratio}% of original)"
-                append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "remux" "copy" "$summary_audio_action" "ok" "remuxed"
                 ((encoded++))
                 echo
                 continue
@@ -2131,28 +2196,14 @@ process_files() {
 
         if [[ "$SKIP_EXISTING" == true && -f "$out" ]]; then
             log_warn "Skip (exists)"
-            local skip_note="output exists"
-            [[ -n "$summary_note" ]] && skip_note="${summary_note}; ${skip_note}"
-            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "encode" "transcode" "$summary_audio_action" "skipped" "$skip_note"
             ((skipped++))
             echo
             continue
         fi
 
         if encode_file "$f" "$out" "$video_idx"; then
-            local encode_note="encoded"
-            local encode_status="ok"
-            if [[ "$DRY_RUN" == true ]]; then
-                encode_note="would encode"
-                encode_status="dry_run"
-            fi
-            [[ -n "$summary_note" ]] && encode_note="${summary_note}; ${encode_note}"
-            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "encode" "transcode" "$summary_audio_action" "$encode_status" "$encode_note"
             ((encoded++))
         else
-            local fail_note="encode failed"
-            [[ -n "$summary_note" ]] && fail_note="${summary_note}; ${fail_note}"
-            append_file_csv_summary "$f" "$summary_output" "$summary_media_type" "encode" "transcode" "$summary_audio_action" "failed" "$fail_note"
             ((failed++))
         fi
         echo
@@ -2160,7 +2211,6 @@ process_files() {
 
     log_info "=============================="
     log_info "Done: $encoded encoded, $skipped skipped, $failed failed"
-    print_file_csv_summary
 
     return 0
 }
