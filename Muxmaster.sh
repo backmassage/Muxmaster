@@ -263,6 +263,22 @@ trim_whitespace() {
     printf '%s\n' "$input" | sed -E 's/[[:space:]]+/ /g; s/^[[:space:]]+//; s/[[:space:]]+$//'
 }
 
+extract_parent_season_hint() {
+    local parent="$1"
+
+    if [[ "$parent" =~ (^|[^[:alnum:]])[Ss]eason[[:space:]_.-]*([0-9]{1,2})([^[:alnum:]]|$) ]]; then
+        printf '%d\n' "$((10#${BASH_REMATCH[2]}))"
+        return 0
+    fi
+
+    if [[ "$parent" =~ (^|[^[:alnum:]])[Ss]([0-9]{1,2})([^[:alnum:]]|$) ]]; then
+        printf '%d\n' "$((10#${BASH_REMATCH[2]}))"
+        return 0
+    fi
+
+    printf '\n'
+}
+
 clamp_int() {
     local value="$1"
     local min="$2"
@@ -1826,8 +1842,26 @@ run_encode_attempt() {
 #------------------------------------------------------------------------------
 parse_filename() {
     local filename="$1"
-    local parent="$2"
+    local parent_input="$2"
+    local parent="$parent_input"
+    local parent_lower
     local base="${filename%.*}"
+
+    # If parse context is a full path and we're inside a "specials-like" subfolder,
+    # prefer the grandparent folder as naming context (helps NC/Extras layouts).
+    if [[ "$parent_input" == */* ]]; then
+        parent=$(basename "$parent_input")
+        parent_lower="${parent,,}"
+        case "$parent_lower" in
+            extras|extra|specials|bonus|featurettes|nc|ncop*|nced*)
+                local grandparent
+                grandparent=$(basename "$(dirname "$parent_input")")
+                if [[ -n "$grandparent" && "$grandparent" != "." && "$grandparent" != "/" ]]; then
+                    parent="$grandparent"
+                fi
+                ;;
+        esac
+    fi
 
     MEDIA_TYPE="" SHOW_NAME="" SEASON="" EPISODE="" MOVIE_NAME="" YEAR=""
 
@@ -1867,6 +1901,21 @@ parse_filename() {
             show_from_parent=$(trim_whitespace "$(echo "$parent" | tr '._' ' ' | sed -E 's/[[:space:]]+[Ss][0-9]{1,2}([[:space:]].*)?$//' | sed 's/[[:space:]-]*$//')")
             [[ -z "$show_from_parent" ]] && show_from_parent=$(trim_whitespace "$(echo "$parent" | tr '._' ' ')")
             SHOW_NAME="$show_from_parent"
+        fi
+    # Creditless OP/ED often use numeric index syntax (e.g. "Show - 001 - ... [Creditless Opening]").
+    # Map these to TV specials to avoid collisions with normal episodes.
+    elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+([0-9]{1,3})[[:space:]]*-[[:space:]]+.*\[(Creditless[[:space:]]+Opening|Creditless[[:space:]]+Ending)\] ]]; then
+        local special_num creditless_kind
+        MEDIA_TYPE="tv"
+        SHOW_NAME=$(trim_whitespace "$(echo "${BASH_REMATCH[2]}" | tr '._' ' ' | sed 's/[[:space:]-]*$//')")
+        SEASON="0"
+        special_num="${BASH_REMATCH[3]}"
+        special_num=$((10#$special_num))
+        creditless_kind=$(printf '%s' "${BASH_REMATCH[4]}" | tr '[:upper:]' '[:lower:]')
+        if [[ "$creditless_kind" == *"opening"* ]]; then
+            EPISODE=$((100 + special_num))
+        else
+            EPISODE=$((200 + special_num))
         fi
     # Episodic keyword pattern: Show - Episode 16.5 - Title
     elif [[ "$base" =~ ^(\[.+\][[:space:]]*)?(.+)[[:space:]_.-]+[Ee]pisode[[:space:]_.-]+([0-9]{1,3})([._]([0-9]{1,2}))?([[:space:]][^-]*)?[[:space:]]*-[[:space:]]+(.+)$ ]]; then
@@ -1992,6 +2041,18 @@ parse_filename() {
     MOVIE_NAME=$(echo "$MOVIE_NAME" | sed 's/\b\(.\)/\u\1/g')
 
     # Fallbacks
+    # If a parent folder clearly indicates a higher season (e.g. "S2"/"Season 2"),
+    # prefer that hint for season-less episodic naming that defaulted to Season 01.
+    if [[ "$MEDIA_TYPE" == "tv" && "$SEASON" =~ ^[0-9]+$ ]]; then
+        local parent_season_hint
+        parent_season_hint=$(extract_parent_season_hint "$parent")
+        if [[ "$parent_season_hint" =~ ^[0-9]+$ ]]; then
+            if (( 10#$SEASON == 1 && parent_season_hint > 1 )); then
+                SEASON="$parent_season_hint"
+            fi
+        fi
+    fi
+
     [[ "$MEDIA_TYPE" == "tv" && -z "$SHOW_NAME" ]] && SHOW_NAME="Unknown"
     [[ "$MEDIA_TYPE" == "movie" && -z "$MOVIE_NAME" ]] && MOVIE_NAME="Unknown"
 
@@ -2201,7 +2262,7 @@ process_files() {
             continue
         fi
 
-        parse_filename "$(basename "$f")" "$(basename "$(dirname "$f")")"
+        parse_filename "$(basename "$f")" "$(dirname "$f")"
         local out
         out=$(get_output_path)
         local video_codec video_resolution video_bitrate_bps video_bitrate_label
