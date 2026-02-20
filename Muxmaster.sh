@@ -1301,7 +1301,7 @@ compute_smart_quality_settings() {
     # V1.6 tuning: lower smart-selected quality values by 1 step for both render paths.
     selected_cpu_crf=$(clamp_int "$((CPU_CRF + cpu_adj - 1))" 16 30)
     selected_vaapi_qp=$(clamp_int "$((VAAPI_QP + vaapi_adj - 1))" 14 36)
-    note="smart (${resolution_label}, ${bitrate_label}, cpu_adj=${cpu_adj}->CRF=${selected_cpu_crf}, vaapi_adj=${vaapi_adj}->QP=${selected_vaapi_qp}, mode=${ENCODER_MODE})"
+    note="smart (${resolution_label}, ${bitrate_label}, cpu_adj=${cpu_adj}, vaapi_adj=${vaapi_adj}, smart_bias=-1, cpu_crf=${selected_cpu_crf}, vaapi_qp=${selected_vaapi_qp}, mode=${ENCODER_MODE})"
 
     printf '%s\t%s\t%s\n' "$selected_vaapi_qp" "$selected_cpu_crf" "$note"
 }
@@ -1428,13 +1428,83 @@ describe_attachment_plan() {
     fi
 }
 
+# Compact status labels for one-line INFO summaries.
+describe_audio_plan_compact() {
+    local input="$1"
+    local stream_count codec i transcode_count=0 copy_count=0
+
+    stream_count=$(get_stream_count "a" "$input")
+    if [[ "$stream_count" -eq 0 ]]; then
+        printf 'none'
+        return 0
+    fi
+
+    for ((i=0; i<stream_count; i++)); do
+        codec=$(get_audio_codec "$input" "$i")
+        if [[ "$codec" == "aac" ]]; then
+            ((copy_count++))
+        else
+            ((transcode_count++))
+        fi
+    done
+
+    if [[ "$transcode_count" -eq 0 ]]; then
+        printf 'copy AAC'
+    elif [[ "$copy_count" -eq 0 ]]; then
+        printf 'AAC %s' "$AUDIO_BITRATE"
+    else
+        printf 'copy + AAC %s' "$AUDIO_BITRATE"
+    fi
+}
+
+describe_subs_attachments_compact() {
+    local input="$1" include_subtitles="$2" include_attachments="$3"
+    local subtitle_count attachment_count subtitle_action attachment_action
+
+    subtitle_count=$(get_stream_count "s" "$input")
+    attachment_count=$(get_stream_count "t" "$input")
+
+    if [[ "$KEEP_SUBTITLES" != true || "$include_subtitles" != true ]]; then
+        subtitle_action="subs off"
+    elif [[ "$subtitle_count" -eq 0 ]]; then
+        subtitle_action="subs none"
+    elif output_container_is_mp4; then
+        if has_bitmap_subtitles "$input"; then
+            subtitle_action="subs skip-bitmap"
+        else
+            subtitle_action="subs mov_text"
+        fi
+    else
+        subtitle_action="subs copy"
+    fi
+
+    if [[ "$KEEP_ATTACHMENTS" != true || "$include_attachments" != true ]]; then
+        attachment_action="att off"
+    elif [[ "$attachment_count" -eq 0 ]]; then
+        attachment_action="att none"
+    elif output_container_is_mp4; then
+        attachment_action="att off(MP4)"
+    else
+        attachment_action="att copy"
+    fi
+
+    if [[ "$subtitle_action" == "subs copy" && "$attachment_action" == "att copy" ]]; then
+        printf 'copy'
+    elif [[ "$subtitle_action" == "subs none" && "$attachment_action" == "att none" ]]; then
+        printf 'none'
+    else
+        printf '%s, %s' "$subtitle_action" "$attachment_action"
+    fi
+}
+
 log_encode_render_plan() {
     local input="$1" video_stream_idx="$2" include_subtitles="$3" include_attachments="$4" muxing_queue_size="$5" timestamp_fix="$6" selected_vaapi_qp="$7" selected_cpu_crf="$8" quality_mode_note="$9"
     local source_video_codec source_codec_label
-    local audio_plan subtitle_plan attachment_plan container_plan hdr_plan deinterlace_plan video_plan hdr_type
+    local container_plan
     local input_resolution input_bitrate_bps input_bitrate_label
     local est_low_kbps est_high_kbps est_low_pct est_high_pct
     local audio_conversion video_conversion bitrate_conversion
+    local video_compact audio_compact subs_att_compact est_bitrate_compact
 
     source_video_codec=$(get_primary_video_codec "$input")
     [[ -z "$source_video_codec" ]] && source_video_codec=$(get_codec "$input")
@@ -1444,77 +1514,49 @@ log_encode_render_plan() {
     input_bitrate_label=$(format_bitrate_label "$input_bitrate_bps")
     IFS=$'\t' read -r est_low_kbps est_high_kbps est_low_pct est_high_pct <<< "$(estimate_transcode_video_output_range "$input_resolution" "$input_bitrate_bps" "$source_codec_label" "$selected_vaapi_qp" "$selected_cpu_crf")"
 
-    if [[ "$ENCODER_MODE" == "vaapi" ]]; then
-        video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> hevc_vaapi, profile=${VAAPI_PROFILE}, QP=${selected_vaapi_qp}, keyint=${KEYFRAME_INT})"
-    else
-        video_plan="transcode=yes (stream ${video_stream_idx}: ${source_codec_label} -> libx265, CRF=${selected_cpu_crf}, preset=${CPU_PRESET}, profile=${CPU_HEVC_PROFILE}, pix_fmt=${CPU_PIX_FMT}, keyint=${KEYFRAME_INT})"
-    fi
-
-    audio_plan=$(describe_audio_plan "$input")
+    audio_compact=$(describe_audio_plan_compact "$input")
     audio_conversion=$(describe_audio_conversion_short "$input")
-    subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
-    attachment_plan=$(describe_attachment_plan "$input" "$include_attachments")
+    subs_att_compact=$(describe_subs_attachments_compact "$input" "$include_subtitles" "$include_attachments")
 
     if output_container_is_mp4; then
-        container_plan="MP4 (faststart + hvc1 tag)"
+        container_plan="MP4"
     else
         container_plan="${OUTPUT_CONTAINER^^}"
     fi
 
-    hdr_type=$(detect_hdr_type "$input")
-    if [[ "$hdr_type" == "hdr10" && "$HANDLE_HDR" == "tonemap" ]]; then
-        hdr_plan="tonemap HDR -> SDR"
-    elif [[ "$hdr_type" == "hdr10" && "$HANDLE_HDR" == "preserve" ]]; then
-        hdr_plan="preserve HDR metadata"
-    else
-        hdr_plan="no HDR transform"
-    fi
-
-    if [[ "$DEINTERLACE_AUTO" == true ]] && is_interlaced "$input"; then
-        deinterlace_plan="auto=yadif (interlaced source detected)"
-    elif [[ "$DEINTERLACE_AUTO" == true ]]; then
-        deinterlace_plan="auto=enabled (progressive source, no yadif)"
-    else
-        deinterlace_plan="disabled"
-    fi
-
     if [[ "$ENCODER_MODE" == "vaapi" ]]; then
         video_conversion="$(format_codec_label "$source_codec_label") -> HEVC (VAAPI QP=${selected_vaapi_qp})"
+        video_compact="${input_resolution} $(format_codec_label "$source_codec_label") -> HEVC QP${selected_vaapi_qp}"
     else
         video_conversion="$(format_codec_label "$source_codec_label") -> HEVC (x265 CRF=${selected_cpu_crf})"
+        video_compact="${input_resolution} $(format_codec_label "$source_codec_label") -> HEVC CRF${selected_cpu_crf}"
     fi
 
     if [[ "$est_low_kbps" != "unknown" ]]; then
         bitrate_conversion="${input_bitrate_label} -> ~${est_low_kbps}-${est_high_kbps} kb/s"
+        est_bitrate_compact="~${est_low_kbps}-${est_high_kbps} kb/s"
     else
         bitrate_conversion="${input_bitrate_label} -> unknown"
+        est_bitrate_compact="unknown"
     fi
 
-    log_info "Pre-flight render params:"
+    # Keep INFO output compact: one concise summary line per file.
     log_render "Conversion: audio ${audio_conversion} | video ${video_conversion} | bitrate ${bitrate_conversion}"
-    log_info "  Quality mode: ${quality_mode_note}"
-    log_info "  Input video: ${input_resolution} | ${input_bitrate_label} | ${source_codec_label}"
+    log_info "Video: ${video_compact} | Audio: ${audio_compact} | Container: ${container_plan} | Subtitles/Attachments: ${subs_att_compact} | Est. bitrate: ${est_bitrate_compact}"
+    log_debug "  Quality mode: ${quality_mode_note}"
+    log_debug "  Retry knobs: mux_queue=${muxing_queue_size}, timestamp_fix=${timestamp_fix}, stream=${video_stream_idx}"
     if [[ "$est_low_kbps" != "unknown" ]]; then
-        log_info "  Estimated output: video ~${est_low_kbps}-${est_high_kbps} kb/s (~${est_low_pct}-${est_high_pct}% of source bitrate, rough)"
-    else
-        log_info "  Estimated output: unavailable (could not determine source bitrate)"
+        log_debug "  Estimate detail: ~${est_low_kbps}-${est_high_kbps} kb/s (~${est_low_pct}-${est_high_pct}% of source bitrate, rough)"
     fi
-    log_info "  Video: ${video_plan}"
-    log_info "  Audio: ${audio_plan}"
-    log_info "  Container: ${container_plan}"
-    log_info "  Subtitles: ${subtitle_plan}"
-    log_info "  Attachments: ${attachment_plan}"
-    log_info "  HDR: ${hdr_plan}"
-    log_info "  Deinterlace: ${deinterlace_plan}"
-    log_info "  Retry knobs: mux_queue=${muxing_queue_size}, timestamp_fix=${timestamp_fix}"
 }
 
 log_remux_render_plan() {
     local input="$1" video_stream_idx="$2" include_subtitles="$3" include_attachments="$4" muxing_queue_size="$5" timestamp_fix="$6"
     local source_video_codec source_profile source_pix_fmt
-    local audio_plan subtitle_plan attachment_plan container_plan
+    local container_plan
     local input_resolution input_bitrate_bps input_bitrate_label
     local audio_conversion video_conversion bitrate_conversion
+    local video_compact audio_compact subs_att_compact
 
     source_video_codec=$(get_primary_video_codec "$input")
     [[ -z "$source_video_codec" ]] && source_video_codec=$(get_codec "$input")
@@ -1524,30 +1566,25 @@ log_remux_render_plan() {
     input_bitrate_bps=$(get_primary_video_bitrate_bps "$input")
     input_bitrate_label=$(format_bitrate_label "$input_bitrate_bps")
 
-    audio_plan=$(describe_audio_plan "$input")
+    audio_compact=$(describe_audio_plan_compact "$input")
     audio_conversion=$(describe_audio_conversion_short "$input")
-    subtitle_plan=$(describe_subtitle_plan "$input" "$include_subtitles")
-    attachment_plan=$(describe_attachment_plan "$input" "$include_attachments")
+    subs_att_compact=$(describe_subs_attachments_compact "$input" "$include_subtitles" "$include_attachments")
 
     if output_container_is_mp4; then
-        container_plan="MP4 (faststart + hvc1 tag)"
+        container_plan="MP4"
     else
         container_plan="${OUTPUT_CONTAINER^^}"
     fi
 
     video_conversion="$(format_codec_label "${source_video_codec:-unknown}") -> $(format_codec_label "${source_video_codec:-unknown}") (copy)"
     bitrate_conversion="${input_bitrate_label} -> ~same (video copy)"
+    video_compact="${input_resolution} $(format_codec_label "${source_video_codec:-unknown}") -> copy"
 
-    log_info "Pre-flight render params:"
+    # Keep INFO output compact: one concise summary line per file.
     log_render "Conversion: audio ${audio_conversion} | video ${video_conversion} | bitrate ${bitrate_conversion}"
-    log_info "  Input video: ${input_resolution} | ${input_bitrate_label} | ${source_video_codec:-unknown}"
-    log_info "  Estimated output: video copied (~same bitrate); total file size depends on audio/subtitles/container"
-    log_info "  Video: transcode=no (copy stream ${video_stream_idx}: ${source_video_codec:-unknown}, profile=${source_profile:-unknown}, pix_fmt=${source_pix_fmt:-unknown})"
-    log_info "  Audio: ${audio_plan}"
-    log_info "  Container: ${container_plan}"
-    log_info "  Subtitles: ${subtitle_plan}"
-    log_info "  Attachments: ${attachment_plan}"
-    log_info "  Retry knobs: mux_queue=${muxing_queue_size}, timestamp_fix=${timestamp_fix}"
+    log_info "Video: ${video_compact} | Audio: ${audio_compact} | Container: ${container_plan} | Subtitles/Attachments: ${subs_att_compact} | Est. bitrate: ~same (video copy)"
+    log_debug "  Video copy detail: stream=${video_stream_idx}, profile=${source_profile:-unknown}, pix_fmt=${source_pix_fmt:-unknown}"
+    log_debug "  Retry knobs: mux_queue=${muxing_queue_size}, timestamp_fix=${timestamp_fix}"
 }
 
 #------------------------------------------------------------------------------
