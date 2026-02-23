@@ -1,22 +1,47 @@
 # Build output
 /muxmaster
 /muxmaster.exe
+*.dll
+*.so
+*.dylib
 
 # Go
 *.test
 *.out
 vendor/
+go.work
+go.work.sum
+
+# Go coverage and profiling
+coverage.out
+coverage.html
+*.cover
+*.coverprofile
+*.prof
 
 # IDE and editors
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
 *~
+.project
+.settings/
+*.sublime-project
+*.sublime-workspace
 
 # OS
 .DS_Store
 Thumbs.db
+*.bak
 
-# Local logs (if ever written into tree)
+# Local / temporary
 *.log
+*.tmp
+*.temp
+/tmp/
+/temp/
+.env
+.env.local
+.env.*.local
