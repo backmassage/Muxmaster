@@ -2,7 +2,11 @@
 
 **Status:** Pre-implementation — all foundational decisions resolved  
 **Scope:** Architecture, repository structure, technical decisions, migration strategy  
-**Audience:** Developer (Go beginner), maintainer  
+**Audience:** Developer (Go beginner), maintainer, AI coding assistants  
+
+> **Format note:** This document uses structured text for all architecture diagrams
+> instead of Mermaid/UML. This ensures readability by both humans and AI tools
+> (Cursor, Claude, GPT, Copilot, etc.) that consume design docs as context.
 
 ---
 
@@ -82,507 +86,317 @@ The 2.0 design doc is ambitious and well-structured, but it introduces several n
 
 ---
 
-## 4. UML Diagrams
+## 4. Architecture Diagrams
 
-### 4.1 Package / Component Diagram
+### 4.1 Package Dependency Map
 
-```mermaid
-graph TB
-    subgraph "cmd"
-        main["cmd/muxmaster<br/>main.go"]
-    end
+The project is organized into `cmd/muxmaster` (entrypoint) and 9 internal packages. Dependencies flow top-down; leaf packages have zero internal dependencies.
 
-    subgraph "internal"
-        config["config<br/>Config struct, flags,<br/>defaults, validation"]
-        logging["logging<br/>Leveled logger,<br/>color, file sink"]
-        probe["probe<br/>ffprobe JSON wrapper,<br/>typed ProbeResult"]
-        naming["naming<br/>Filename parser,<br/>output paths,<br/>collision resolver"]
-        planner["planner<br/>Encode/remux/skip<br/>decisions, quality,<br/>stream plans"]
-        ffmpeg["ffmpeg<br/>Command builder,<br/>executor, error<br/>classifier, retry"]
-        pipeline["pipeline<br/>Batch orchestration,<br/>file discovery,<br/>stats, summary"]
-        check["check<br/>System diagnostics"]
-        display["display<br/>Banner, formatters,<br/>render plan logs"]
-    end
+**Entrypoint:**
 
-    main --> config
-    main --> logging
-    main --> pipeline
-    main --> check
-
-    pipeline --> config
-    pipeline --> logging
-    pipeline --> probe
-    pipeline --> naming
-    pipeline --> planner
-    pipeline --> ffmpeg
-    pipeline --> display
-
-    planner --> config
-    planner --> probe
-    planner --> logging
-
-    ffmpeg --> config
-    ffmpeg --> planner
-    ffmpeg --> logging
-
-    naming -.->|"no internal deps<br/>(pure logic)"| naming
-    probe -.->|"no internal deps<br/>(wraps ffprobe)"| probe
-
-    display --> probe
-
-    style naming fill:#d4edda,stroke:#28a745
-    style probe fill:#d4edda,stroke:#28a745
-    style planner fill:#fff3cd,stroke:#ffc107
-    style ffmpeg fill:#f8d7da,stroke:#dc3545
-    style pipeline fill:#cce5ff,stroke:#0d6efd
+```
+cmd/muxmaster/main.go
+  ├── config     (parse flags, build Config)
+  ├── logging    (initialize logger)
+  ├── pipeline   (run batch processing)
+  └── check      (--check diagnostics)
 ```
 
-### 4.2 Core Struct Relationships (Class Diagram)
+**Package dependency table** (each row lists what a package imports from `internal/`):
 
-```mermaid
-classDiagram
-    class Config {
-        +EncoderMode : EncoderMode
-        +VaapiQP : int
-        +CpuCRF : int
-        +OutputContainer : Container
-        +SkipHEVC : bool
-        +SmartQuality : bool
-        +SmartQualityBias : int
-        +SmartQualityRetryStep : int
-        +StrictMode : bool
-        +CleanTimestamps : bool
-        +ActiveQualityOverride : string
-        +HandleHDR : HDRMode
-        ... 40+ fields
-        +Validate() error
-    }
+| Package | Depends on | Role |
+|---|---|---|
+| `pipeline` | config, logging, probe, naming, planner, ffmpeg, display | Batch orchestration: discover → process → summarize |
+| `planner` | config, probe, logging | Per-file encode/remux/skip decisions + quality |
+| `ffmpeg` | config, planner, logging | Command building, execution, error classification, retry |
+| `display` | probe | Banner, formatters, render plan logs |
+| `check` | *(none)* | System diagnostics (ffmpeg, ffprobe, VAAPI, x265) |
+| `config` | *(none)* | Config struct, flag parsing, defaults, validation |
+| `logging` | *(none)* | Leveled logger, color, file sink |
+| `naming` | *(none — pure logic)* | Filename parser, output paths, collision resolution |
+| `probe` | *(none — wraps ffprobe)* | ffprobe JSON wrapper, typed ProbeResult |
 
-    class ProbeResult {
-        +Format : FormatInfo
-        +Streams : []StreamInfo
-        +PrimaryVideo : *VideoStream
-        +AudioStreams : []AudioStream
-        +SubtitleStreams : []SubtitleStream
-        +HasBitmapSubs : bool
-        +VideoBitRate() int64
-        +HDRType() string
-        +IsInterlaced() bool
-        +IsEdgeSafeHEVC() bool
-    }
+**Leaf packages** (no internal dependencies, safe to build and test first): `naming`, `probe`, `config`, `logging`, `check`.
 
-    class VideoStream {
-        +Index : int
-        +Codec : string
-        +Profile : string
-        +PixFmt : string
-        +Width : int
-        +Height : int
-        +BitRate : int64
-        +FieldOrder : string
-        +ColorTransfer : string
-        +ColorPrimaries : string
-        +ColorSpace : string
-        +IsAttachedPic : bool
-    }
+**Key constraint:** `naming` and `probe` must remain dependency-free. All file-level decisions flow through `planner`, which is the only package that combines probe data with config to produce a `FilePlan`.
 
-    class AudioStream {
-        +Index : int
-        +Codec : string
-        +Channels : int
-        +ChannelLayout : string
-        +SampleRate : int
-        +Language : string
-    }
+### 4.2 Core Struct Relationships
 
-    class SubtitleStream {
-        +Index : int
-        +Codec : string
-        +Language : string
-        +IsBitmap : bool
-    }
+This section shows how the major domain types relate to each other. Full Go definitions are in Section 6.
 
-    class FormatInfo {
-        +Filename : string
-        +Duration : float64
-        +Size : int64
-        +BitRate : int64
-        +FormatName : string
-        +Tags : map
-    }
+```
+Config (40+ fields)
+  │
+  │  planner consumes Config + ProbeResult
+  │  to produce ──────────────────────────────► FilePlan
+  │                                               │
+  │                                               ├── Action (encode | remux | skip)
+  │                                               ├── video codec + filters + color opts
+  │                                               ├── quality (VaapiQP / CpuCRF)
+  │                                               ├── AudioPlan
+  │                                               │     └── []AudioStreamPlan (per-stream)
+  │                                               ├── SubtitlePlan
+  │                                               ├── AttachmentPlan
+  │                                               ├── disposition + container + tag opts
+  │                                               ├── retry initial state
+  │                                               └── OutputPath + Container
+  │
+ProbeResult
+  ├── FormatInfo (filename, duration, size, bitrate, tags)
+  ├── *VideoStream (codec, profile, pix_fmt, dimensions, HDR color metadata)
+  ├── []AudioStream (codec, channels, layout, sample rate, language)
+  ├── []SubtitleStream (codec, language, bitmap flag)
+  └── derived: HasBitmapSubs, VideoBitRate(), HDRType(), IsInterlaced(), IsEdgeSafeHEVC()
 
-    class ParsedName {
-        +MediaType : MediaType
-        +ShowName : string
-        +Season : int
-        +Episode : int
-        +MovieName : string
-        +Year : string
-    }
+ParsedName
+  ├── MediaType (tv | movie)
+  ├── ShowName / MovieName
+  ├── Season, Episode
+  └── Year
 
-    class FilePlan {
-        +Action : Action
-        +SkipReason : string
-        +VideoCodec : string
-        +AudioPlan : AudioPlan
-        +SubPlan : SubtitlePlan
-        +AttachPlan : AttachmentPlan
-        +VaapiQP : int
-        +CpuCRF : int
-        +QualityNote : string
-        +VideoFilters : string
-        +ColorOpts : []string
-        +DispositionOpts : []string
-        +ContainerOpts : []string
-        +TagOpts : []string
-        +OutputPath : string
-        +Container : Container
-    }
+RetryState
+  ├── Attempt / MaxAttempts (4)
+  ├── IncludeAttach, IncludeSubs, MuxQueueSize, TimestampFix
+  ├── QualityPass / MaxQualityPasses (2)
+  ├── VaapiQP, CpuCRF, QualityStep
+  └── Advance(stderr) → RetryAction
 
-    class RetryState {
-        +Attempt : int
-        +MaxAttempts : int
-        +IncludeAttach : bool
-        +IncludeSubs : bool
-        +MuxQueueSize : int
-        +TimestampFix : bool
-        +QualityPass : int
-        +MaxQualityPasses : int
-        +VaapiQP : int
-        +CpuCRF : int
-        +Advance(stderr string) RetryAction
-    }
-
-    class AudioPlan {
-        +NoAudio : bool
-        +CopyAll : bool
-        +Streams : []AudioStreamPlan
-    }
-
-    class AudioStreamPlan {
-        +StreamIndex : int
-        +Copy : bool
-        +Channels : int
-        +Bitrate : string
-        +Layout : string
-        +NeedsFilter : bool
-        +FilterStr : string
-    }
-
-    class RunStats {
-        +Total : int
-        +Encoded : int
-        +Skipped : int
-        +Failed : int
-        +TotalInputBytes : int64
-        +TotalOutputBytes : int64
-        +SpaceSaved() int64
-    }
-
-    ProbeResult *-- FormatInfo
-    ProbeResult *-- VideoStream
-    ProbeResult *-- AudioStream
-    ProbeResult *-- SubtitleStream
-    FilePlan *-- AudioPlan
-    AudioPlan *-- AudioStreamPlan
-    FilePlan --> RetryState : initial values
-    Config ..> FilePlan : planner produces
-    ProbeResult ..> FilePlan : planner consumes
+RunStats
+  ├── Total, Current, Encoded, Skipped, Failed
+  ├── TotalInputBytes, TotalOutputBytes
+  └── SpaceSaved() → int64
 ```
 
-### 4.3 Per-File Processing Sequence Diagram
+**Composition rules:**
+- `ProbeResult` owns `FormatInfo`, `*VideoStream`, `[]AudioStream`, `[]SubtitleStream`
+- `FilePlan` owns `AudioPlan`, which owns `[]AudioStreamPlan`
+- `FilePlan` → `RetryState`: the plan's initial retry values (mux queue size, timestamp fix, subs, attachments) seed the retry state machine
+- `Config` + `ProbeResult` → `FilePlan`: the planner is the only place this join happens
 
-```mermaid
-sequenceDiagram
-    participant R as Pipeline Runner
-    participant V as Validator
-    participant P as Prober
-    participant N as Naming
-    participant PL as Planner
-    participant D as Display
-    participant F as FFmpeg Executor
-    participant RT as Retry Engine
+### 4.3 Per-File Processing Sequence
 
-    R->>V: validate_input_file(path)
-    alt invalid / unreadable / too small
-        V-->>R: error (mark failed, continue batch)
-    end
+This is the step-by-step flow for processing a single file within the batch loop. Participants: Pipeline Runner (R), Prober (P), Naming (N), Planner (PL), Display (D), FFmpeg Executor (F), Retry Engine (RT).
 
-    R->>P: Probe(path)
-    P->>P: ffprobe -print_format json
-    P-->>R: ProbeResult
+```
+ 1. R → validate input file (readable, not too small)
+      └── on failure: mark failed, continue to next file
 
-    alt no primary video stream
-        R-->>R: mark skipped, continue
-    end
+ 2. R → P: Probe(path)
+      P runs: ffprobe -print_format json -show_format -show_streams
+      P returns: ProbeResult
+      └── if no primary video stream: mark skipped, continue
 
-    R->>N: ParseFilename(basename, dirname)
-    N-->>R: ParsedName
+ 3. R → N: ParseFilename(basename, parent_dir)
+      N returns: ParsedName
+      └── if media_type == tv:
+            R → N: HarmonizeShowName(name, yearIndex)
+            N returns: harmonized name
 
-    alt media_type == tv
-        R->>N: HarmonizeShowName(name, yearIndex)
-        N-->>R: harmonized name
-    end
+ 4. R → N: GetOutputPath(ParsedName, config)
+      N returns: requested output path
+    R → N: ResolveCollision(input_path, requested_path)
+      N returns: final resolved output path
 
-    R->>N: GetOutputPath(ParsedName, config)
-    N-->>R: requested path
-    R->>N: ResolveCollision(input, requested)
-    N-->>R: resolved output path
+ 5. R → D: LogFileStats(ProbeResult)
+    R → D: LogBitrateOutlier(ProbeResult)
 
-    R->>D: LogFileStats(ProbeResult)
-    R->>D: LogBitrateOutlier(ProbeResult)
+ 6. R → PL: BuildPlan(Config, ProbeResult)
+      PL returns: FilePlan (action = encode | remux | skip)
+      └── if action == skip (existing file): mark skipped, continue
 
-    R->>PL: BuildPlan(Config, ProbeResult)
-    PL-->>R: FilePlan (encode / remux / skip)
+ 7. R → D: LogRenderPlan(FilePlan)
+      └── if dry run: mark encoded (counted but not executed), continue
 
-    alt skip existing
-        R-->>R: mark skipped, continue
-    end
+ 8. R → RT: NewRetryState(FilePlan)
 
-    R->>D: LogRenderPlan(FilePlan)
+ 9. RETRY LOOP (max 4 attempts):
+      R → F: Execute(FilePlan, RetryState)
+      F builds ffmpeg args, runs ffmpeg
+      ├── on success: break loop
+      └── on failure:
+            F → RT: pass stderr output
+            RT classifies error pattern
+            ├── if match found AND not strict mode:
+            │     RT adjusts state, loop continues
+            └── if no match OR strict mode:
+                  give up, mark failed
 
-    alt dry run
-        R-->>R: mark encoded, continue
-    end
+10. QUALITY CHECK (encode path only):
+      if output_size > 105% of source
+      AND smart quality enabled
+      AND no manual quality override
+      AND quality_pass < max_passes:
+        increment QP/CRF by SmartQualityRetryStep
+        reset retry state, go back to step 9
 
-    R->>RT: NewRetryState(FilePlan)
-    loop retry attempts (max 4)
-        R->>F: Execute(FilePlan, RetryState)
-        F->>F: build args, run ffmpeg
-        alt success
-            F-->>R: ok
-        else failure
-            F-->>RT: stderr output
-            RT->>RT: classify error pattern
-            alt match found and not strict
-                RT-->>R: adjusted RetryState
-            else no match or strict
-                RT-->>R: give up
-            end
-        end
-    end
-
-    alt encode path and output > 105% source
-        R->>RT: quality retry (QP+2, CRF+2)
-        R->>F: re-execute with tighter quality
-    end
-
-    R->>R: update RunStats (bytes, counters)
+11. R updates RunStats (byte counters, encoded/failed counts)
 ```
 
 ### 4.4 Retry State Machine
 
-```mermaid
-stateDiagram-v2
-    [*] --> Attempt1 : run ffmpeg
+The retry engine handles ffmpeg failures by classifying stderr against 4 known error patterns and applying one fix per attempt. The quality retry loop wraps the error-retry loop.
 
-    Attempt1 --> Success : exit 0
-    Attempt1 --> ClassifyError1 : exit != 0
+**Error patterns (checked in this order):**
 
-    ClassifyError1 --> StrictAbort : strict mode
-    ClassifyError1 --> DropAttachments : attachment tag error
-    ClassifyError1 --> DropSubtitles : subtitle mux error
-    ClassifyError1 --> IncreaseMuxQueue : mux queue overflow
-    ClassifyError1 --> EnableTimestamps : timestamp error AND CleanTimestamps=false
-    ClassifyError1 --> Failed : no pattern matched
+| Pattern | Regex matches | Fix applied |
+|---|---|---|
+| Attachment issue | `Attachment stream \d+ has no (filename\|mimetype) tag` | Drop attachments (`IncludeAttach = false`) |
+| Subtitle issue | Subtitle codec not supported, tag not found, encoder error, etc. | Drop subtitles (`IncludeSubs = false`) |
+| Mux queue overflow | `Too many packets buffered for output stream` | Increase mux queue (4096 → 16384) |
+| Timestamp issue | Non-monotonous DTS, pts has no value, timestamps unset, etc. | Enable timestamp fix (`+genpts+discardcorrupt`) |
 
-    DropAttachments --> Attempt2
-    DropSubtitles --> Attempt2
-    IncreaseMuxQueue --> Attempt2
-    EnableTimestamps --> Attempt2
+**State machine logic:**
 
-    Attempt2 --> Success : exit 0
-    Attempt2 --> ClassifyError2 : exit != 0
+```
+INITIAL STATE:
+  attempt = 0, max_attempts = 4
+  include_attach = true, include_subs = true
+  mux_queue = 4096, timestamp_fix = Config.CleanTimestamps
+  quality_pass = 0, max_quality_passes = 2
 
-    ClassifyError2 --> StrictAbort : strict mode
-    ClassifyError2 --> DropSubtitles2 : subtitle error if subs still on
-    ClassifyError2 --> IncreaseMuxQueue2 : queue overflow if queue < 16384
-    ClassifyError2 --> EnableTimestamps2 : timestamp error if not yet enabled
-    ClassifyError2 --> Failed : no pattern matched
+ON EACH FFMPEG FAILURE:
+  if strict_mode → abort immediately (mark failed)
+  attempt++
+  if attempt > max_attempts → abort (mark failed)
 
-    DropSubtitles2 --> Attempt3
-    IncreaseMuxQueue2 --> Attempt3
-    EnableTimestamps2 --> Attempt3
+  scan stderr against patterns IN ORDER:
+    1. attachment issue  → if include_attach: set include_attach=false, retry
+    2. subtitle issue    → if include_subs: set include_subs=false, retry
+    3. mux queue overflow → if mux_queue < 16384: set mux_queue=16384, retry
+    4. timestamp issue   → if NOT timestamp_fix: set timestamp_fix=true, retry
 
-    Attempt3 --> Success
-    Attempt3 --> ClassifyError3
+  if no pattern matched OR fix already applied → abort (mark failed)
 
-    ClassifyError3 --> Attempt4 : remaining fallback
-    ClassifyError3 --> Failed : exhausted
+  KEY RULE: only ONE fix per attempt. First matching unapplied fix wins.
 
-    Attempt4 --> Success
-    Attempt4 --> Failed
+ON FFMPEG SUCCESS (encode path only):
+  if output_size > 105% of input_size
+  AND smart_quality enabled
+  AND no manual quality override (ActiveQualityOverride == "")
+  AND quality_pass < max_quality_passes:
+    quality_pass++
+    vaapi_qp += SmartQualityRetryStep
+    cpu_crf += SmartQualityRetryStep
+    reset attempt counter and retry flags
+    re-run from attempt 1
 
-    Success --> QualityCheck : encode path only
-    QualityCheck --> QualityRetry : output > 105% AND smart quality AND no manual override AND pass < max
-    QualityCheck --> Done : acceptable ratio
-    QualityRetry --> Attempt1 : QP+step CRF+step reset retry state
+  otherwise → done (mark success)
 
-    StrictAbort --> Failed
-    Failed --> [*]
-    Done --> [*]
+GOTCHA: CleanTimestamps defaults to true, which means timestamp_fix is
+already enabled on the first attempt. This effectively disables the
+timestamp retry path unless the user explicitly sets CleanTimestamps=false.
 ```
 
-### 4.5 Batch Processing Activity Diagram
+### 4.5 Batch Processing Flow
 
-```mermaid
-flowchart TD
-    Start([main]) --> InitColors[init_colors]
-    InitColors --> ParseArgs[parse_args → Config]
-    ParseArgs --> ReInitColors[re-init colors with parsed mode]
-    ReInitColors --> Banner[print_banner]
+Top-level flow from `main()` through batch completion. This is the activity/control flow for the entire program.
 
-    Banner --> CheckMode{--check?}
-    CheckMode -- yes --> RunCheck[run_check: test ffmpeg ffprobe VAAPI x265 AAC]
-    RunCheck --> Exit0([exit 0])
-
-    CheckMode -- no --> ValidatePaths[validate input/output dirs ensure output not inside input]
-    ValidatePaths --> CheckDeps[check_deps: ffmpeg ffprobe VAAPI/x265 capability]
-
-    CheckDeps --> Discover[discover files: walk + extension filter + extras exclusion + sort]
-
-    Discover --> YearIndex[build_tv_year_variant_index: pre-parse all filenames to build year-variant map]
-
-    YearIndex --> InitMaps[init collision maps]
-
-    InitMaps --> LogConfig[log runtime config summary]
-
-    LogConfig --> FileLoop{next file?}
-
-    FileLoop -- no --> Summary[log summary: encoded/skipped/failed + aggregate size delta]
-    Summary --> Exit([exit 0])
-
-    FileLoop -- yes --> Validate{valid file?}
-    Validate -- no --> MarkFailed[mark failed]
-    MarkFailed --> FileLoop
-
-    Validate -- yes --> HasVideo{has primary video stream?}
-    HasVideo -- no --> MarkSkipped[mark skipped]
-    MarkSkipped --> FileLoop
-
-    HasVideo -- yes --> Parse[parse_filename + harmonize TV name]
-    Parse --> ResolvePath[get_output_path + resolve_collision]
-
-    ResolvePath --> LogStats[log file stats + bitrate outlier check]
-
-    LogStats --> HEVCCheck{SKIP_HEVC AND codec==hevc AND edge-safe?}
-
-    HEVCCheck -- yes --> RemuxPath[REMUX PATH: copy video process audio]
-    HEVCCheck -- no --> EncodePath[ENCODE PATH: re-encode video + process audio]
-
-    RemuxPath --> SkipExist1{skip existing?}
-    SkipExist1 -- yes --> MarkSkipped
-
-    EncodePath --> SkipExist2{skip existing?}
-    SkipExist2 -- yes --> MarkSkipped
-
-    SkipExist1 -- no --> DryRun1{dry run?}
-    DryRun1 -- yes --> MarkEncoded[mark encoded]
-    MarkEncoded --> FileLoop
-
-    SkipExist2 -- no --> RunEncode[encode_file with retry + quality passes]
-
-    DryRun1 -- no --> RunRemux[run remux with retry]
-
-    RunRemux --> RemuxOK{success?}
-    RemuxOK -- yes --> UpdateStats[update byte counters]
-    RemuxOK -- no --> MarkFailed
-    UpdateStats --> FileLoop
-
-    RunEncode --> EncodeOK{success?}
-    EncodeOK -- yes --> UpdateStats
-    EncodeOK -- no --> MarkFailed
+```
+main()
+  │
+  ├── 1. init_colors (default)
+  ├── 2. parse_args → Config
+  ├── 3. re-init colors (with parsed ColorMode)
+  ├── 4. print_banner
+  │
+  ├── 5. if --check:
+  │       run_check: test ffmpeg, ffprobe, VAAPI, x265, AAC
+  │       exit 0
+  │
+  ├── 6. validate_paths:
+  │       - input dir exists and is readable
+  │       - output dir exists or can be created
+  │       - output is not inside input (prevent recursive processing)
+  │
+  ├── 7. check_deps: ffmpeg, ffprobe present; VAAPI or x265 capability
+  │
+  ├── 8. discover_files:
+  │       walk input dir
+  │       → filter by extension (.mkv, .mp4, .avi, .ts, .m2ts, .wmv, .flv, .webm)
+  │       → exclude "extras" directories (case-insensitive)
+  │       → sort alphabetically
+  │
+  ├── 9. build_tv_year_variant_index:
+  │       pre-parse ALL filenames (first pass)
+  │       → build map of show names that appear with multiple years
+  │       (used later to harmonize e.g. "Show (2019)" vs "Show (2020)" into one show)
+  │
+  ├── 10. init collision maps (track output paths to detect duplicates)
+  │
+  ├── 11. log runtime config summary
+  │
+  ├── 12. FILE LOOP: for each discovered file:
+  │       │
+  │       ├── validate file (readable, not too small)
+  │       │   └── fail → mark failed, continue
+  │       │
+  │       ├── probe file → ProbeResult
+  │       │   └── no primary video stream → mark skipped, continue
+  │       │
+  │       ├── parse filename + harmonize TV name (using year index)
+  │       │
+  │       ├── compute output path + resolve collisions
+  │       │
+  │       ├── log file stats + bitrate outlier check
+  │       │
+  │       ├── DECISION BRANCH:
+  │       │   if SKIP_HEVC AND codec==hevc AND edge-safe profile/pixfmt:
+  │       │     → REMUX PATH (copy video, process audio)
+  │       │   else:
+  │       │     → ENCODE PATH (re-encode video + process audio)
+  │       │
+  │       ├── if output already exists AND skip_existing → mark skipped, continue
+  │       │
+  │       ├── log render plan
+  │       │
+  │       ├── if dry_run → mark encoded (counted), continue
+  │       │
+  │       ├── execute ffmpeg with retry (see §4.4)
+  │       │   ├── success → update byte counters
+  │       │   └── failure → mark failed
+  │       │
+  │       └── next file
+  │
+  └── 13. log summary: encoded/skipped/failed counts + aggregate size delta
+        exit 0
 ```
 
 ### 4.6 Filename Parser Rule Cascade
 
-```mermaid
-flowchart TD
-    Input[/"filename + parent dir"/] --> StripExt[strip extension → base]
-    StripExt --> SpecialsCtx{parent is specials-like?}
-    SpecialsCtx -- yes --> UseGrandparent[use grandparent as context]
-    SpecialsCtx -- no --> UseParent[use parent as context]
+The parser tries 15 ordered regex rules against each filename. First match wins. If no rule matches, the fallback treats the entire basename as a movie name.
 
-    UseGrandparent --> R1
-    UseParent --> R1
+**Pre-processing:**
+1. Strip file extension → `base`
+2. Check if parent directory is specials-like (`specials`, `ncop*`, `nced*`, etc.)
+   - If yes: use grandparent directory as show name context
+   - If no: use parent directory as show name context
 
-    R1{"1: SxxExx (+opt Vn)"}
-    R1 -- match --> TV1[TV: S E from match show from pre-match or parent]
-    R1 -- no --> R2
+**Rule table (evaluated in order, first match wins):**
 
-    R2{"2: 1x01 (+opt Vn)"}
-    R2 -- match --> TV2[TV: S E from match show from pre-match or parent]
-    R2 -- no --> R3
+| # | Rule name | Pattern description | Result type | Key extraction logic |
+|---|---|---|---|---|
+| 1 | SxxExx | `S01E02` with optional `V2` version | TV | Season + episode from match; show name from text before match or parent dir |
+| 2 | 1x01 | `1x01` format with optional version | TV | Same extraction as rule 1 |
+| 3 | S01-OP/ED | `S01.NCED1`, OP/ED with explicit season | TV | OP→episode 100+n, ED→200+n; season from match |
+| 4 | Creditless-OP/ED | `[Creditless Opening]` bracket tag | TV | Season 0; OP→100+n, ED→200+n |
+| 5 | Episode-keyword | `Episode 16.5` spelled out | TV | Fractional → Season 0; integer → Season 1 |
+| 6 | Named-special-index | `Show OP-01` special type + number | TV | Season 0; offset per type (OP=100, ED=200, PV=300, etc.) |
+| 7 | Named-special-bare | `Show - Recap` special without index | TV | Season 0; fixed offset per type |
+| 8 | Movie-part | `Title The Movie 2` numbered sequel | Movie | Composite name from match |
+| 9 | Anime-dash | `[Group] Name - 05` | TV | Season 1; **greedy recovery check**: detect if match consumed a prior episode token and recover |
+| 10 | Episodic-title | `[Group] Show 05 - Title` | TV | Season 1 |
+| 11 | Bare-number-dash | `05 - Title` | TV | Season 1; show name from parent dir |
+| 12 | Group-release | `[Group] Show 05 [Tags]` | TV | Season 1; **year resolution**: check parent dir for year if not in filename |
+| 13 | Underscore-anime | `[Group]Name_01_BD` | TV | Season 1 |
+| 14 | Movie-year | `Title.2019` with 4-digit year | Movie | Name + year extracted |
+| 15 | Fallback | *(no pattern)* | Movie | Entire base used as movie name |
 
-    R3{"3: S01.NCED1 OP/ED with season"}
-    R3 -- match --> TV3[TV: OP→100+n ED→200+n season from match]
-    R3 -- no --> R4
-
-    R4{"4: [Creditless Opening] bracket tag"}
-    R4 -- match --> TV4[TV: Season 0 OP→100+n ED→200+n]
-    R4 -- no --> R5
-
-    R5{"5: Episode 16.5 keyword"}
-    R5 -- match --> TV5[TV: fractional→S0 integer→S1]
-    R5 -- no --> R6
-
-    R6{"6: Show OP-01 named special+index"}
-    R6 -- match --> TV6[TV: Season 0 offset table]
-    R6 -- no --> R7
-
-    R7{"7: Show - Recap named special bare"}
-    R7 -- match --> TV7[TV: Season 0 fixed offsets]
-    R7 -- no --> R8
-
-    R8{"8: Title The Movie N numbered part"}
-    R8 -- match --> Movie1[Movie: composite name]
-    R8 -- no --> R9
-
-    R9{"9: [Group] Name - 05 anime dash"}
-    R9 -- match --> TV8[TV: Season 1 greedy recovery check]
-    R9 -- no --> R10
-
-    R10{"10: [Group] Show 05 - Title episodic"}
-    R10 -- match --> TV9[TV: Season 1]
-    R10 -- no --> R11
-
-    R11{"11: 05 - Title bare number-dash"}
-    R11 -- match --> TV10[TV: Season 1 show from parent]
-    R11 -- no --> R12
-
-    R12{"12: [Group] Show 05 [Tags] group release"}
-    R12 -- match --> TV11[TV: Season 1 year from parent check]
-    R12 -- no --> R13
-
-    R13{"13: [Group]Name_01_BD underscore"}
-    R13 -- match --> TV12[TV: Season 1]
-    R13 -- no --> R14
-
-    R14{"14: Title.2019 movie with year"}
-    R14 -- match --> Movie2[Movie: name + year]
-    R14 -- no --> R15
-
-    R15["15: Fallback"]
-    R15 --> Movie3[Movie: base as name]
-
-    TV1 --> Post
-    TV2 --> Post
-    TV3 --> Post
-    TV4 --> Post
-    TV5 --> Post
-    TV6 --> Post
-    TV7 --> Post
-    TV8 --> Post
-    TV9 --> Post
-    TV10 --> Post
-    TV11 --> Post
-    TV12 --> Post
-    Movie1 --> Post
-    Movie2 --> Post
-    Movie3 --> Post
-
-    Post[Post-process: strip tags remove brackets title-case season hint fallback names]
-```
+**Post-processing (applied to all matches):**
+- Strip release tags (40+ known tags like `[BluRay]`, `[1080p]`, `(HEVC)`, etc.)
+- Remove square/round brackets and their contents (group names, checksums)
+- Title-case the result (capitalize every word at word boundaries)
+- Season hint: if season is still 0 and parent dir contains `Season N`, use that
+- Fallback names: if show name is empty after stripping, use parent dir name
 
 ---
 
