@@ -1,3 +1,5 @@
+// Command muxmaster is the entrypoint for the Muxmaster media encoder CLI.
+// It parses flags, validates config and paths, and either runs system check (--check) or the encode/remux pipeline.
 package main
 
 import (
@@ -11,12 +13,14 @@ import (
 	"github.com/backmassage/muxmaster/internal/logging"
 )
 
+// version and commit are set at build time via -ldflags (e.g. Makefile).
 var (
 	version = "2.0.0-dev"
 	commit  = "unknown"
 )
 
 func main() {
+	// 1. Load config from defaults and CLI flags; exit on parse or validation error.
 	cfg := config.DefaultConfig()
 	if err := config.ParseFlags(&cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "muxmaster: %v\n", err)
@@ -37,12 +41,13 @@ func main() {
 
 	display.PrintBanner()
 
+	// 2. If user asked for system check, run it and exit successfully.
 	if cfg.CheckOnly {
 		check.RunCheck(&cfg, log)
 		os.Exit(0)
 	}
 
-	// Validate paths: input exists, output creatable, output not inside input
+	// 3. Resolve and validate paths: input must exist, output is created if needed, output must not be inside input.
 	inputAbs, err := absPath(cfg.InputDir)
 	if err != nil {
 		log.Error("Input not found: %s", cfg.InputDir)
@@ -71,15 +76,17 @@ func main() {
 	}
 	log.Info("")
 
+	// 4. Ensure ffmpeg/ffprobe and (for the chosen mode) encoder are available; fail fast otherwise.
 	if err := check.CheckDeps(&cfg); err != nil {
 		log.Error("%v", err)
 		os.Exit(1)
 	}
 
-	// Phase 1: no pipeline yet; log and exit 0
+	// 5. TODO: Run pipeline (discover -> probe -> plan -> execute). For now we only log readiness.
 	log.Info("Ready. (Pipeline not yet implemented.)")
 }
 
+// absPath returns the absolute path with symlinks resolved, for comparing input vs output hierarchy.
 func absPath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {

@@ -4,7 +4,8 @@ import (
 	"fmt"
 )
 
-// FormatBytes returns a human-readable size (B, KiB, MiB, GiB, TiB, PiB).
+// FormatBytes returns a short human-readable size string using 1024-based units (B, KiB, MiB, GiB, TiB, PiB, EiB).
+// Used for file sizes and summary stats.
 func FormatBytes(bytes int64) string {
 	const unit = 1024
 	if bytes < unit {
@@ -26,7 +27,7 @@ func FormatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), suffixes[exp])
 }
 
-// FormatBytesWithSign prefixes with + or - for delta display (e.g. "- 1.2 GiB").
+// FormatBytesWithSign formats a size delta with a leading "+ " or "- " for saved/used space in summaries.
 func FormatBytesWithSign(bytes int64) string {
 	sign := ""
 	if bytes > 0 {
@@ -38,7 +39,7 @@ func FormatBytesWithSign(bytes int64) string {
 	return sign + FormatBytes(bytes)
 }
 
-// FormatBitrateLabel returns a short label for bitrate in kbps (e.g. "1200 kbps").
+// FormatBitrateLabel returns a short bitrate string (e.g. "800 kbps" or "1.2 Mbps") for display in file stats.
 func FormatBitrateLabel(kbps int64) string {
 	if kbps < 1000 {
 		return fmt.Sprintf("%d kbps", kbps)

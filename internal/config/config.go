@@ -1,3 +1,5 @@
+// Package config holds runtime configuration: defaults, CLI flag parsing, and validation.
+// All defaults match the legacy shell script (v1.7.0) for parity.
 package config
 
 import (
@@ -6,7 +8,7 @@ import (
 	"strings"
 )
 
-// EncoderMode is vaapi or cpu.
+// EncoderMode selects the encoding backend: VAAPI (hardware) or CPU (libx265).
 type EncoderMode string
 
 const (
@@ -14,7 +16,7 @@ const (
 	EncoderCPU   EncoderMode = "cpu"
 )
 
-// Container is mkv or mp4.
+// Container is the output container format; MKV is primary, MP4 for compatibility.
 type Container string
 
 const (
@@ -22,7 +24,7 @@ const (
 	ContainerMP4 Container = "mp4"
 )
 
-// HDRMode is preserve or tonemap.
+// HDRMode controls HDR handling: preserve metadata or tonemap to SDR.
 type HDRMode string
 
 const (
@@ -30,7 +32,7 @@ const (
 	HDRTonemap  HDRMode = "tonemap"
 )
 
-// ColorMode controls colored output.
+// ColorMode controls ANSI colors: auto (tty only), always, or never.
 type ColorMode string
 
 const (
@@ -101,7 +103,8 @@ type Config struct {
 	FFmpegAnalyzeDuration string
 }
 
-// DefaultConfig returns Config with all defaults set (shell v1.7.0 parity).
+// DefaultConfig returns a Config with all defaults set.
+// Used as the base before ParseFlags; matches legacy Muxmaster.sh v1.7.0 behavior.
 func DefaultConfig() Config {
 	return Config{
 		EncoderMode:      EncoderVAAPI,
@@ -139,7 +142,8 @@ func DefaultConfig() Config {
 	}
 }
 
-// NormalizeDirArg strips trailing slashes from a path (except for "/").
+// NormalizeDirArg strips trailing slashes from a directory path.
+// The root path "/" is returned unchanged so we don't produce an empty string.
 func NormalizeDirArg(path string) string {
 	if path == "/" {
 		return "/"
@@ -147,7 +151,8 @@ func NormalizeDirArg(path string) string {
 	return strings.TrimRight(path, "/")
 }
 
-// Validate checks mode, container, HDR, quality overrides, and (if !CheckOnly) paths.
+// Validate checks that enum fields (mode, container, HDR) are valid and,
+// when not in CheckOnly mode, that both input and output directories were given.
 func (c *Config) Validate() error {
 	switch c.EncoderMode {
 	case EncoderVAAPI, EncoderCPU:
@@ -173,7 +178,8 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// ValidatePaths checks that input exists, output can be created, and output is not inside input.
+// ValidatePaths ensures the output directory is not inside the input directory
+// (to avoid recursive processing). Call with absolute paths after resolving symlinks.
 func (c *Config) ValidatePaths(inputAbs, outputAbs string) error {
 	if outputAbs == inputAbs || strings.HasPrefix(outputAbs+string(filepath.Separator), inputAbs+string(filepath.Separator)) {
 		return errors.New("output directory must not be inside input directory")

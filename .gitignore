@@ -1,0 +1,22 @@
+# Build output
+/muxmaster
+/muxmaster.exe
+
+# Go
+*.test
+*.out
+vendor/
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local logs (if ever written into tree)
+*.log

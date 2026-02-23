@@ -3,7 +3,7 @@ VERSION := 2.0.0-dev
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
-.PHONY: build test vet clean install
+.PHONY: build test vet ci clean install
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd/muxmaster
@@ -13,6 +13,8 @@ test:
 
 vet:
 	go vet ./...
+
+ci: vet build test
 
 clean:
 	rm -f $(BINARY)

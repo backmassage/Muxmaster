@@ -1,3 +1,4 @@
+// Package display provides user-facing output: banner, byte/bitrate formatting, and (later) render-plan and outlier logs.
 package display
 
 import (
@@ -7,7 +8,8 @@ import (
 	"github.com/backmassage/muxmaster/internal/logging"
 )
 
-// PrintBanner prints the ASCII art banner; uses Magenta if colors are enabled.
+// PrintBanner prints the Muxmaster ASCII art logo to stdout.
+// If the logging package has enabled colors (Magenta set), the banner is printed in magenta, then reset.
 func PrintBanner() {
 	if logging.Magenta != "" {
 		fmt.Fprint(os.Stdout, "\033[1;95m")

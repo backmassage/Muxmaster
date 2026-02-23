@@ -1,3 +1,5 @@
+// Package logging provides a leveled logger with optional ANSI colors and optional file sink.
+// Used by main, check, and (later) pipeline for consistent output and log files.
 package logging
 
 import (
@@ -12,7 +14,8 @@ import (
 	"github.com/backmassage/muxmaster/internal/config"
 )
 
-// ANSI colors (empty when disabled)
+// Package-level ANSI color codes; set by NewLogger from Config.ColorMode.
+// When ColorNever or not a TTY, these are empty so output is plain text.
 var (
 	Red     = ""
 	Green   = ""
@@ -24,7 +27,8 @@ var (
 	NC      = ""
 )
 
-// Logger provides leveled, optionally colored logging with optional file sink.
+// Logger writes leveled messages to stdout/stderr and optionally to a log file.
+// Safe for concurrent use; each log line is written under a mutex.
 type Logger struct {
 	mu       sync.Mutex
 	color    bool
@@ -32,7 +36,8 @@ type Logger struct {
 	filePath string
 }
 
-// NewLogger initializes colors from cfg and optionally opens logFile. Call Close() when done if LogFile was set.
+// NewLogger builds a logger from config: sets global ANSI colors from ColorMode,
+// and opens cfg.LogFile for appending if set. Caller must call Close() when done if LogFile was set.
 func NewLogger(cfg *config.Config) (*Logger, error) {
 	l := &Logger{}
 	enable := false
@@ -73,6 +78,7 @@ func NewLogger(cfg *config.Config) (*Logger, error) {
 	return l, nil
 }
 
+// isTerminal reports whether f is a character device (e.g. stdout attached to a TTY).
 func isTerminal(f *os.File) bool {
 	if f == nil {
 		return false
@@ -96,6 +102,7 @@ func (l *Logger) Close() error {
 	return nil
 }
 
+// line writes one log line: timestamp, level, and text. ERROR goes to stderr; others to stdout. If a log file is set, the plain line is appended there too.
 func (l *Logger) line(level, color, text string) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
 	l.mu.Lock()

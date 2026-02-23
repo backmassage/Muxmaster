@@ -1,3 +1,4 @@
+// Package check provides system diagnostics (--check) and dependency validation (CheckDeps) for ffmpeg, ffprobe, VAAPI, x265, and AAC.
 package check
 
 import (
@@ -10,6 +11,7 @@ import (
 	"github.com/backmassage/muxmaster/internal/config"
 )
 
+// Sentinel errors returned by CheckDeps when a required tool or capability is missing.
 var (
 	ErrFfmpegNotFound   = errors.New("ffmpeg not found")
 	ErrFfprobeNotFound  = errors.New("ffprobe not found")
@@ -18,7 +20,8 @@ var (
 	ErrCPUEncodeFailed  = errors.New("CPU mode selected but libx265 is unavailable")
 )
 
-// Logger interface used by RunCheck to avoid circular import from pipeline.
+// Logger is the minimal interface needed by RunCheck and (later) pipeline.
+// Accepts *logging.Logger; defined here to avoid check depending on logging for RunCheck's signature.
 type Logger interface {
 	Info(string, ...interface{})
 	Success(string, ...interface{})
@@ -27,7 +30,8 @@ type Logger interface {
 	Debug(bool, string, ...interface{})
 }
 
-// RunCheck runs system diagnostics: ffmpeg, ffprobe, HEVC encoders, VAAPI, x265, AAC.
+// RunCheck runs the --check flow: prints availability of ffmpeg, ffprobe, HEVC encoders, VAAPI device/test, CPU x265, and AAC encoder.
+// Used when the user passes -c/--check; does not validate encoder mode from cfg beyond using it for context.
 func RunCheck(cfg *config.Config, log Logger) {
 	log.Info("=== System Check ===")
 
@@ -86,6 +90,7 @@ func RunCheck(cfg *config.Config, log Logger) {
 	}
 }
 
+// getFirstRenderDevice returns the first available /dev/dri/renderD* device for VAAPI.
 func getFirstRenderDevice() string {
 	matches, _ := filepath.Glob("/dev/dri/renderD*")
 	for _, m := range matches {
@@ -96,6 +101,7 @@ func getFirstRenderDevice() string {
 	return ""
 }
 
+// testVAAPI runs a minimal ffmpeg VAAPI encode to verify the device supports the given format and HEVC profile.
 func testVAAPI(device, swFormat, profile string) bool {
 	return runSilent("ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
 		"-init_hw_device", "vaapi=va:"+device,
@@ -105,6 +111,7 @@ func testVAAPI(device, swFormat, profile string) bool {
 		"-c:v", "hevc_vaapi", "-profile:v", profile, "-f", "null", "-")
 }
 
+// runSilent runs a command and returns true only if it exits 0; stdout/stderr are discarded.
 func runSilent(name string, args ...string) bool {
 	cmd := exec.Command(name, args...)
 	cmd.Stdout = nil
@@ -112,7 +119,9 @@ func runSilent(name string, args ...string) bool {
 	return cmd.Run() == nil
 }
 
-// CheckDeps verifies ffmpeg/ffprobe exist and (in VAAPI mode) device and profile. Returns error on failure.
+// CheckDeps verifies that ffmpeg and ffprobe are on PATH and that the chosen encoder is usable:
+// in CPU mode, a quick libx265 encode is run; in VAAPI mode, a render device must exist and pass a short encode test.
+// Call this before starting the pipeline so we fail fast with a clear error.
 func CheckDeps(cfg *config.Config) error {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return ErrFfmpegNotFound

@@ -1,5 +1,9 @@
 package config
 
+// This file implements CLI flag parsing and help text.
+// Flags are grouped into encoding, container/HDR, behavior, display, and utility.
+// Negated flags (e.g. --no-skip-hevc) are applied after Parse so Config defaults hold unless set.
+
 import (
 	"flag"
 	"fmt"
@@ -8,119 +12,177 @@ import (
 	"strings"
 )
 
-// ParseFlags parses os.Args into cfg. Usage and version are handled by flags; on error returns non-nil.
+// version is shown in --version and help; override at build time with -ldflags "-X main.version=...".
+var version = "2.0.0-dev"
+
+// ParseFlags parses os.Args into cfg. On --help or --version it prints and exits.
+// On error it returns non-nil (e.g. unknown flag, missing positional args).
 func ParseFlags(cfg *Config) error {
 	fs := flag.NewFlagSet("muxmaster", flag.ContinueOnError)
-	fs.Usage = func() { usage(fs) }
+	fs.Usage = func() { printUsage(fs) }
 
-	// Encoding
-	fs.Var(&encoderModeValue{&cfg.EncoderMode}, "mode", "Encoder mode (vaapi|cpu)")
-	fs.Var(&encoderModeValue{&cfg.EncoderMode}, "m", "Encoder mode (short)")
-	fs.StringVar(&cfg.QualityOverride, "quality", "", "Fixed quality for active mode (QP/CRF)")
-	fs.StringVar(&cfg.QualityOverride, "q", "", "Fixed quality (short)")
-	fs.StringVar(&cfg.CpuCRFFixedOverride, "cpu-crf", "", "Fixed CPU CRF override")
-	fs.StringVar(&cfg.VaapiQPFixedOverride, "vaapi-qp", "", "Fixed VAAPI QP override")
-	fs.StringVar(&cfg.CpuPreset, "preset", cfg.CpuPreset, "CPU preset")
-	fs.StringVar(&cfg.CpuPreset, "p", cfg.CpuPreset, "CPU preset (short)")
+	// Negated/override flags: we capture bools then apply to cfg after Parse,
+	// so that defaults from DefaultConfig() hold unless the user passes the flag.
+	var negated negatedFlags
 
-	// Container / HDR
-	fs.Var(&containerValue{&cfg.OutputContainer}, "container", "Output container (mkv|mp4)")
-	fs.Var(&hdrModeValue{&cfg.HandleHDR}, "hdr", "HDR handling (preserve|tonemap)")
-	var noDeinterlace bool
-	fs.BoolVar(&noDeinterlace, "no-deinterlace", false, "Disable auto deinterlace")
-
-	// Behavior (defaults set in DefaultConfig; negated flags applied after Parse)
-	var noSkipHEVC, noFps, noStats, noSubs, noAttachments, noSmartQuality, noCleanTimestamps, noMatchLayout, force bool
-	fs.BoolVar(&cfg.DryRun, "dry-run", false, "Preview only")
-	fs.BoolVar(&cfg.DryRun, "d", false, "Dry run (short)")
-	fs.BoolVar(&noSkipHEVC, "no-skip-hevc", false, "Re-encode HEVC video")
-	fs.BoolVar(&noFps, "no-fps", false, "Disable live FPS")
-	fs.BoolVar(&noStats, "no-stats", false, "Hide per-file stats")
-	fs.BoolVar(&noSubs, "no-subs", false, "Do not process subtitles")
-	fs.BoolVar(&noAttachments, "no-attachments", false, "Do not include attachments")
-	fs.BoolVar(&cfg.StrictMode, "strict", false, "Disable ffmpeg retry fallbacks")
-	fs.BoolVar(&noSmartQuality, "no-smart-quality", false, "Use fixed quality only")
-	fs.BoolVar(&noCleanTimestamps, "no-clean-timestamps", false, "Disable timestamp regeneration")
-	fs.BoolVar(&noMatchLayout, "no-match-audio-layout", false, "Disable audio layout normalization")
-	fs.BoolVar(&force, "force", false, "Overwrite existing output files")
-	fs.BoolVar(&force, "f", false, "Force (short)")
-
-	// Display (--color / --no-color are bool flags)
-	var forceColor, noColor bool
-	fs.BoolVar(&forceColor, "color", false, "Force colored logs")
-	fs.BoolVar(&noColor, "no-color", false, "Disable colored logs")
-	fs.BoolVar(&cfg.Verbose, "verbose", false, "Verbose output")
-	fs.BoolVar(&cfg.Verbose, "v", false, "Verbose (short)")
-	fs.BoolVar(&cfg.CheckOnly, "check", false, "System diagnostics")
-	fs.BoolVar(&cfg.CheckOnly, "c", false, "Check (short)")
-	fs.StringVar(&cfg.LogFile, "log", "", "Write logs to file")
-	fs.StringVar(&cfg.LogFile, "l", "", "Log file (short)")
-
-	var showVersion bool
-	fs.BoolVar(&showVersion, "version", false, "Print version")
-	fs.BoolVar(&showVersion, "V", false, "Version (short)")
-	fs.BoolVar(&showHelp, "help", false, "Help")
-	fs.BoolVar(&showHelp, "h", false, "Help (short)")
+	defineEncodingFlags(fs, cfg)
+	defineContainerAndHDRFlags(fs, cfg, &negated)
+	defineBehaviorFlags(fs, cfg, &negated)
+	defineDisplayFlags(fs, cfg, &negated)
+	defineUtilityFlags(fs, cfg, &negated)
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		return err
 	}
-	// Apply negated / override flags
-	if noDeinterlace {
-		cfg.DeinterlaceAuto = false
-	}
-	if noSkipHEVC {
-		cfg.SkipHEVC = false
-	}
-	if noFps {
-		cfg.ShowFfmpegFPS = false
-	}
-	if noStats {
-		cfg.ShowFileStats = false
-	}
-	if noSubs {
-		cfg.KeepSubtitles = false
-	}
-	if noAttachments {
-		cfg.KeepAttachments = false
-	}
-	if noSmartQuality {
-		cfg.SmartQuality = false
-	}
-	if noCleanTimestamps {
-		cfg.CleanTimestamps = false
-	}
-	if noMatchLayout {
-		cfg.MatchAudioLayout = false
-	}
-	if force {
-		cfg.SkipExisting = false
-	}
-	if noColor {
-		cfg.ColorMode = ColorNever
-	} else if forceColor {
-		cfg.ColorMode = ColorAlways
-	}
-	if showHelp {
-		usage(fs)
+
+	applyNegatedFlags(cfg, &negated)
+
+	if negated.showHelp {
+		printUsage(fs)
 		os.Exit(0)
 	}
-	if showVersion {
+	if negated.showVersion {
 		fmt.Fprintln(os.Stdout, "muxmaster v"+version)
 		os.Exit(0)
 	}
 
-	// Positional: input_dir output_dir (required unless --check)
-	positional := fs.Args()
-	if !cfg.CheckOnly {
-		if len(positional) != 2 {
-			return fmt.Errorf("need exactly input_dir and output_dir")
-		}
-		cfg.InputDir = NormalizeDirArg(positional[0])
-		cfg.OutputDir = NormalizeDirArg(positional[1])
+	if err := parsePositionalArgs(fs, cfg); err != nil {
+		return err
 	}
+	return applyQualityPrecedence(cfg)
+}
 
-	// Quality precedence: mode-specific override > --quality > defaults
+// negatedFlags holds boolean flags that are applied after Parse.
+// These either invert a default (e.g. noSkipHEVC -> SkipHEVC=false) or trigger exit (showHelp, showVersion).
+type negatedFlags struct {
+	noDeinterlace   bool
+	noSkipHEVC      bool
+	noFps           bool
+	noStats         bool
+	noSubs          bool
+	noAttachments   bool
+	noSmartQuality  bool
+	noCleanTimestamps bool
+	noMatchLayout   bool
+	force           bool
+	forceColor      bool
+	noColor         bool
+	showVersion     bool
+	showHelp        bool
+}
+
+// defineEncodingFlags registers -m/--mode, -q/--quality, --cpu-crf, --vaapi-qp, -p/--preset.
+func defineEncodingFlags(fs *flag.FlagSet, cfg *Config) {
+	fs.Var(&encoderModeValue{&cfg.EncoderMode}, "mode", "Encoder mode: vaapi | cpu")
+	fs.Var(&encoderModeValue{&cfg.EncoderMode}, "m", "Same as --mode")
+	fs.StringVar(&cfg.QualityOverride, "quality", "", "Fixed quality for active mode (QP or CRF)")
+	fs.StringVar(&cfg.QualityOverride, "q", "", "Same as --quality")
+	fs.StringVar(&cfg.CpuCRFFixedOverride, "cpu-crf", "", "Fixed CPU CRF (overrides --quality in CPU mode)")
+	fs.StringVar(&cfg.VaapiQPFixedOverride, "vaapi-qp", "", "Fixed VAAPI QP (overrides --quality in VAAPI mode)")
+	fs.StringVar(&cfg.CpuPreset, "preset", cfg.CpuPreset, "x265 preset (e.g. slow, medium)")
+	fs.StringVar(&cfg.CpuPreset, "p", cfg.CpuPreset, "Same as --preset")
+}
+
+// defineContainerAndHDRFlags registers --container, --hdr, --no-deinterlace.
+func defineContainerAndHDRFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
+	fs.Var(&containerValue{&cfg.OutputContainer}, "container", "Output container: mkv | mp4")
+	fs.Var(&hdrModeValue{&cfg.HandleHDR}, "hdr", "HDR handling: preserve | tonemap")
+	fs.BoolVar(&n.noDeinterlace, "no-deinterlace", false, "Disable automatic deinterlace")
+}
+
+// defineBehaviorFlags registers dry-run, skip-hevc, subs, attachments, strict, quality, timestamps, force.
+func defineBehaviorFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
+	fs.BoolVar(&cfg.DryRun, "dry-run", false, "Preview only; do not encode or remux")
+	fs.BoolVar(&cfg.DryRun, "d", false, "Same as --dry-run")
+	fs.BoolVar(&n.noSkipHEVC, "no-skip-hevc", false, "Re-encode HEVC instead of remuxing")
+	fs.BoolVar(&n.noFps, "no-fps", false, "Do not show live ffmpeg FPS")
+	fs.BoolVar(&n.noStats, "no-stats", false, "Hide per-file source stats")
+	fs.BoolVar(&n.noSubs, "no-subs", false, "Do not process subtitle streams")
+	fs.BoolVar(&n.noAttachments, "no-attachments", false, "Do not include attachments")
+	fs.BoolVar(&cfg.StrictMode, "strict", false, "Disable automatic ffmpeg retry fallbacks")
+	fs.BoolVar(&n.noSmartQuality, "no-smart-quality", false, "Use fixed quality only (no per-file adaptation)")
+	fs.BoolVar(&n.noCleanTimestamps, "no-clean-timestamps", false, "Disable timestamp regeneration")
+	fs.BoolVar(&n.noMatchLayout, "no-match-audio-layout", false, "Disable audio layout normalization")
+	fs.BoolVar(&n.force, "force", false, "Overwrite existing output files")
+	fs.BoolVar(&n.force, "f", false, "Same as --force")
+}
+
+// defineDisplayFlags registers --color, --no-color, verbose, --check, --log.
+func defineDisplayFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
+	fs.BoolVar(&n.forceColor, "color", false, "Force colored logs")
+	fs.BoolVar(&n.noColor, "no-color", false, "Disable colored logs")
+	fs.BoolVar(&cfg.Verbose, "verbose", false, "Verbose output")
+	fs.BoolVar(&cfg.Verbose, "v", false, "Same as --verbose")
+	fs.BoolVar(&cfg.CheckOnly, "check", false, "Run system diagnostics and exit")
+	fs.BoolVar(&cfg.CheckOnly, "c", false, "Same as --check")
+	fs.StringVar(&cfg.LogFile, "log", "", "Append logs to file")
+	fs.StringVar(&cfg.LogFile, "l", "", "Same as --log")
+}
+
+// defineUtilityFlags registers --version and --help (exit after printing).
+func defineUtilityFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
+	fs.BoolVar(&n.showVersion, "version", false, "Print version and exit")
+	fs.BoolVar(&n.showVersion, "V", false, "Same as --version")
+	fs.BoolVar(&n.showHelp, "help", false, "Show this help and exit")
+	fs.BoolVar(&n.showHelp, "h", false, "Same as --help")
+}
+
+// applyNegatedFlags copies negated and override flag values into cfg (e.g. noFps -> ShowFfmpegFPS=false).
+func applyNegatedFlags(cfg *Config, n *negatedFlags) {
+	if n.noDeinterlace {
+		cfg.DeinterlaceAuto = false
+	}
+	if n.noSkipHEVC {
+		cfg.SkipHEVC = false
+	}
+	if n.noFps {
+		cfg.ShowFfmpegFPS = false
+	}
+	if n.noStats {
+		cfg.ShowFileStats = false
+	}
+	if n.noSubs {
+		cfg.KeepSubtitles = false
+	}
+	if n.noAttachments {
+		cfg.KeepAttachments = false
+	}
+	if n.noSmartQuality {
+		cfg.SmartQuality = false
+	}
+	if n.noCleanTimestamps {
+		cfg.CleanTimestamps = false
+	}
+	if n.noMatchLayout {
+		cfg.MatchAudioLayout = false
+	}
+	if n.force {
+		cfg.SkipExisting = false
+	}
+	if n.noColor {
+		cfg.ColorMode = ColorNever
+	} else if n.forceColor {
+		cfg.ColorMode = ColorAlways
+	}
+}
+
+// parsePositionalArgs sets InputDir and OutputDir from the two positional args when not in CheckOnly mode.
+func parsePositionalArgs(fs *flag.FlagSet, cfg *Config) error {
+	args := fs.Args()
+	if cfg.CheckOnly {
+		return nil
+	}
+	if len(args) != 2 {
+		return fmt.Errorf("need exactly input_dir and output_dir")
+	}
+	cfg.InputDir = NormalizeDirArg(args[0])
+	cfg.OutputDir = NormalizeDirArg(args[1])
+	return nil
+}
+
+// applyQualityPrecedence sets VaapiQP/CpuCRF and ActiveQualityOverride.
+// Precedence: mode-specific override (--vaapi-qp / --cpu-crf) > --quality > defaults.
+func applyQualityPrecedence(cfg *Config) error {
 	cfg.ActiveQualityOverride = ""
 	if cfg.EncoderMode == EncoderVAAPI {
 		if cfg.VaapiQPFixedOverride != "" {
@@ -138,84 +200,27 @@ func ParseFlags(cfg *Config) error {
 			cfg.VaapiQP = q
 			cfg.ActiveQualityOverride = cfg.QualityOverride
 		}
-	} else {
-		if cfg.CpuCRFFixedOverride != "" {
-			q, err := parseInt(cfg.CpuCRFFixedOverride, "CPU CRF")
-			if err != nil {
-				return err
-			}
-			cfg.CpuCRF = q
-			cfg.ActiveQualityOverride = cfg.CpuCRFFixedOverride
-		} else if cfg.QualityOverride != "" {
-			q, err := parseInt(cfg.QualityOverride, "quality")
-			if err != nil {
-				return err
-			}
-			cfg.CpuCRF = q
-			cfg.ActiveQualityOverride = cfg.QualityOverride
-		}
+		return nil
 	}
-
-	// Verbose -> ffmpeg loglevel info (handled at run time; no field for it in Config today)
+	if cfg.CpuCRFFixedOverride != "" {
+		q, err := parseInt(cfg.CpuCRFFixedOverride, "CPU CRF")
+		if err != nil {
+			return err
+		}
+		cfg.CpuCRF = q
+		cfg.ActiveQualityOverride = cfg.CpuCRFFixedOverride
+	} else if cfg.QualityOverride != "" {
+		q, err := parseInt(cfg.QualityOverride, "quality")
+		if err != nil {
+			return err
+		}
+		cfg.CpuCRF = q
+		cfg.ActiveQualityOverride = cfg.QualityOverride
+	}
 	return nil
 }
 
-var showHelp bool
-var version = "2.0.0-dev"
-
-func usage(fs *flag.FlagSet) {
-	// Optional: print to stderr for help, stdout for version
-	fmt.Fprintf(os.Stderr, `Muxmaster v%s - Jellyfin-Optimized Media Encoder
-
-Usage: muxmaster [OPTIONS] <input_dir> <output_dir>
-
-Encoding Options:
-  -m, --mode <vaapi|cpu>    Encoder mode (default: vaapi)
-  -q, --quality <value>     Fixed quality for active mode
-  --cpu-crf <value>         Fixed CPU CRF override
-  --vaapi-qp <value>        Fixed VAAPI QP override
-  -p, --preset <preset>     CPU preset (default: slow)
-
-HDR/Color Options:
-  --hdr <preserve|tonemap>  HDR handling (default: preserve)
-  --no-deinterlace          Disable automatic deinterlace
-
-Stream Options:
-  --skip-hevc               Copy HEVC video (default: on)
-  --no-skip-hevc            Re-encode HEVC video
-  --no-subs                 Do not process subtitle streams
-  --no-attachments          Do not include attachments
-
-Output Options:
-  --container <mkv|mp4>     Output container (default: mkv)
-  -f, --force               Overwrite existing output files
-
-Behavior Options:
-  -d, --dry-run             Preview only
-  --strict                  Disable automatic ffmpeg retry fallbacks
-  --smart-quality           Adapt quality per file (default: on)
-  --no-smart-quality        Use fixed quality only
-  --clean-timestamps        Enable timestamp regeneration (default: on)
-  --no-clean-timestamps     Disable timestamp regeneration
-  --match-audio-layout      Normalize encoded audio layout (default: on)
-  --no-match-audio-layout   Disable audio layout normalization
-
-Display Options:
-  --show-fps                Show live ffmpeg FPS (default: on)
-  --no-fps                  Disable live FPS
-  --no-stats                Hide per-file source stats
-  --color                   Force colored logs
-  --no-color                Disable colored logs
-  -v, --verbose             Verbose output
-
-Utility:
-  -l, --log <path>          Write logs to file
-  -c, --check               System diagnostics
-  -V, --version             Print version
-  -h, --help                Help
-`, version)
-}
-
+// parseInt parses a string as an integer for quality/CRF/QP flags; returns a clear error on failure.
 func parseInt(s, name string) (int, error) {
 	n, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil {
@@ -224,10 +229,84 @@ func parseInt(s, name string) (int, error) {
 	return n, nil
 }
 
-// flag.Value adapters for enum types
+// printUsage writes the help text to stderr. Column-aligned for readability.
+func printUsage(fs *flag.FlagSet) {
+	const col1 = 28 // width of "  -x, --long-name <arg>  "
+	lines := []struct {
+		flags string
+		desc  string
+	}{
+		{"", "Muxmaster v" + version + " — Jellyfin-optimized media encoder"},
+		{"", ""},
+		{"  muxmaster [OPTIONS] <input_dir> <output_dir>", ""},
+		{"", ""},
+		{"Encoding", ""},
+		{"  -m, --mode <vaapi|cpu>", "Encoder mode (default: vaapi)"},
+		{"  -q, --quality <value>", "Fixed QP (VAAPI) or CRF (CPU) for active mode"},
+		{"  --cpu-crf <value>", "Fixed CPU CRF (overrides --quality in CPU mode)"},
+		{"  --vaapi-qp <value>", "Fixed VAAPI QP (overrides --quality in VAAPI mode)"},
+		{"  -p, --preset <name>", "x265 preset (default: slow)"},
+		{"", ""},
+		{"Container & HDR", ""},
+		{"  --container <mkv|mp4>", "Output container (default: mkv)"},
+		{"  --hdr <preserve|tonemap>", "HDR handling (default: preserve)"},
+		{"  --no-deinterlace", "Disable automatic deinterlace"},
+		{"", ""},
+		{"Streams", ""},
+		{"  --no-skip-hevc", "Re-encode HEVC video (default: remux)"},
+		{"  --no-subs", "Do not process subtitle streams"},
+		{"  --no-attachments", "Do not include attachments"},
+		{"", ""},
+		{"Output & behavior", ""},
+		{"  -f, --force", "Overwrite existing output files"},
+		{"  -d, --dry-run", "Preview only; do not encode or remux"},
+		{"  --strict", "Disable automatic ffmpeg retry fallbacks"},
+		{"  --smart-quality", "Per-file quality adaptation (default: on)"},
+		{"  --no-smart-quality", "Use fixed quality only"},
+		{"  --clean-timestamps", "Regenerate timestamps (default: on)"},
+		{"  --no-clean-timestamps", "Disable timestamp regeneration"},
+		{"  --match-audio-layout", "Normalize audio layout (default: on)"},
+		{"  --no-match-audio-layout", "Disable audio layout normalization"},
+		{"", ""},
+		{"Display", ""},
+		{"  --show-fps", "Show live ffmpeg FPS (default: on)"},
+		{"  --no-fps", "Disable live FPS"},
+		{"  --no-stats", "Hide per-file source stats"},
+		{"  --color", "Force colored logs"},
+		{"  --no-color", "Disable colored logs"},
+		{"  -v, --verbose", "Verbose output"},
+		{"", ""},
+		{"Utility", ""},
+		{"  -l, --log <path>", "Append logs to file"},
+		{"  -c, --check", "System diagnostics (ffmpeg, VAAPI, x265, AAC)"},
+		{"  -V, --version", "Print version and exit"},
+		{"  -h, --help", "Show this help and exit"},
+	}
+
+	for _, l := range lines {
+		if l.flags == "" && l.desc == "" {
+			fmt.Fprintln(os.Stderr)
+			continue
+		}
+		if l.desc == "" {
+			fmt.Fprintln(os.Stderr, l.flags)
+			continue
+		}
+		if l.flags == "" {
+			fmt.Fprintln(os.Stderr, l.desc)
+			continue
+		}
+		padding := col1 - len(l.flags)
+		if padding < 1 {
+			padding = 1
+		}
+		fmt.Fprintf(os.Stderr, "%s%*s%s\n", l.flags, padding, "", l.desc)
+	}
+}
+
+// flag.Value adapters so we can use enum types (EncoderMode, Container, HDRMode) with flag.Var.
+
 type encoderModeValue struct{ p *EncoderMode }
-type containerValue struct{ p *Container }
-type hdrModeValue struct{ p *HDRMode }
 
 func (e *encoderModeValue) String() string { return string(*e.p) }
 func (e *encoderModeValue) Set(s string) error {
@@ -242,6 +321,8 @@ func (e *encoderModeValue) Set(s string) error {
 	return nil
 }
 
+type containerValue struct{ p *Container }
+
 func (c *containerValue) String() string { return string(*c.p) }
 func (c *containerValue) Set(s string) error {
 	switch strings.ToLower(s) {
@@ -255,6 +336,8 @@ func (c *containerValue) Set(s string) error {
 	return nil
 }
 
+type hdrModeValue struct{ p *HDRMode }
+
 func (h *hdrModeValue) String() string { return string(*h.p) }
 func (h *hdrModeValue) Set(s string) error {
 	switch strings.ToLower(s) {
@@ -267,4 +350,3 @@ func (h *hdrModeValue) Set(s string) error {
 	}
 	return nil
 }
-
