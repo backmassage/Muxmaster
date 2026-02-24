@@ -23,11 +23,11 @@ Root meta-files: `README.md`, `CHANGELOG.md`, `LICENSE`, `Makefile`, `go.mod`, `
 | **check**   | Implemented | `--check` diagnostics and `CheckDeps` | `check.go` |
 | **probe**   | Stub | ffprobe JSON → typed structs | `doc.go` |
 | **naming**  | Stub | Filename parsing, output paths, collision | `doc.go` |
-| **planner** | Stub | Encode vs remux vs skip, quality, audio/subtitle plans | `doc.go` |
-| **ffmpeg**  | Stub | Command building, execution, retry | `doc.go` |
+| **planner** | Partial | Encode vs remux vs skip, quality, audio/subtitle plans | `doc.go`, `types.go` |
+| **ffmpeg**  | Implemented | Command building, execution, retry | `builder.go`, `executor.go`, `errors.go`, `retry.go` |
 | **pipeline**| Stub | File discovery, per-file loop, stats | `doc.go` |
 
-Stub packages contain a single `doc.go` with the package declaration and a comprehensive implementation plan. When implementing, split into multiple files along the boundaries documented in each `doc.go`.
+Remaining stub packages contain a single `doc.go` with the package declaration and a comprehensive implementation plan. When implementing, split into multiple files along the boundaries documented in each `doc.go`.
 
 For the full dependency map and rules, see [architecture.md](../architecture.md).
 

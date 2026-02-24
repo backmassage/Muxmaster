@@ -1,13 +1,10 @@
 // Package planner decides per-file action (encode, remux, or skip) and
 // builds a FilePlan that the ffmpeg package consumes.
 //
-// Planned implementation:
+// Implemented (types.go):
+//   - FilePlan, Action, AudioPlan, AudioStreamPlan, SubtitlePlan, AttachmentPlan
 //
-// Types:
-//   - FilePlan (Action, VideoCodec, AudioPlan, SubtitlePlan, FilterChain, etc.)
-//   - AudioStreamPlan, SubtitlePlan, AttachmentPlan
-//
-// Functions:
+// Planned functions:
 //   - BuildPlan(Config, ProbeResult) → FilePlan
 //     Decision matrix with edge-safe HEVC check.
 //   - SmartQuality(Config, ProbeResult) → int
@@ -18,10 +15,10 @@
 //     when output > 105% source.
 //   - BuildVideoFilter(Config, ProbeResult) → string
 //     Deinterlace (yadif), HDR tonemap, hwupload for VAAPI.
-//   - AudioPlan(Config, ProbeResult) → []AudioStreamPlan
+//   - BuildAudioPlan(Config, ProbeResult) → AudioPlan
 //     Per-stream: copy AAC, transcode to AAC, filter chains,
 //     MATCH_AUDIO_LAYOUT support.
-//   - SubtitlePlan(Config, ProbeResult) → SubtitlePlan
+//   - BuildSubtitlePlan(Config, ProbeResult) → SubtitlePlan
 //     mov_text for MP4, skip bitmap subs in MP4.
 //   - DispositionFlags(FilePlan) → []string
 //     Default video + first audio; -disposition opts for ffmpeg.
