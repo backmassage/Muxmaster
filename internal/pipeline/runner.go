@@ -126,7 +126,11 @@ func processFile(
 	plan.VideoStreamIdx = pr.PrimaryVideo.Index
 
 	if plan.QualityNote != "" {
-		log.Warn("  %s", plan.QualityNote)
+		if strings.Contains(plan.QualityNote, "not browser-safe") {
+			log.Warn("  %s", plan.QualityNote)
+		} else {
+			log.Debug(cfg.Verbose, "  Quality: %s", plan.QualityNote)
+		}
 	}
 
 	// --- Skip-existing check ---

@@ -125,7 +125,9 @@ func checkAAC(log Logger) {
 // CheckDeps is the pre-pipeline validation: it verifies that ffmpeg and
 // ffprobe are on PATH and that the chosen encoder mode actually works.
 // In CPU mode a quick libx265 encode is run; in VAAPI mode a render device
-// must exist and pass a short encode test. Returns a sentinel error on failure.
+// must exist and pass a short encode test. On success in VAAPI mode, the
+// derived profile and software format are written back to cfg so the builder
+// and filter chain use the correct values.
 func CheckDeps(cfg *config.Config) error {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		return ErrFfmpegNotFound
@@ -142,11 +144,19 @@ func CheckDeps(cfg *config.Config) error {
 	}
 
 	// VAAPI mode: need a render device that passes an encode test.
+	// Prefer 10-bit (main10/p010); fall back to 8-bit (main/nv12).
 	dev := getFirstRenderDevice()
 	if dev == "" {
 		return ErrNoVAAPIDevice
 	}
-	if testVAAPI(dev, "p010", "main10") || testVAAPI(dev, "nv12", "main") {
+	if testVAAPI(dev, "p010", "main10") {
+		cfg.VaapiProfile = "main10"
+		cfg.VaapiSwFormat = "p010"
+		return nil
+	}
+	if testVAAPI(dev, "nv12", "main") {
+		cfg.VaapiProfile = "main"
+		cfg.VaapiSwFormat = "nv12"
 		return nil
 	}
 	return ErrVAAPITestFailed

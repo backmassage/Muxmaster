@@ -6,32 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [Unreleased]
+## [2.0.0] — 2026-02-24 — Go rewrite release
 
-### Changed
-
-- **Architecture:** Extracted `internal/term` package for ANSI colors and TTY detection. `display` now depends on `term` instead of `logging`, breaking the cross-cutting dependency.
-- **Stubs consolidated:** 22 stub files across 5 packages replaced with one `doc.go` per package containing a comprehensive implementation plan. Split into separate files when implementing.
-- **Display stubs:** `outlier.go` and `renderplan.go` TODOs folded into `banner.go` package doc comment.
-- **go.mod:** Bumped Go version to `1.26`.
-- **.gitignore:** Stopped ignoring `go.sum` (should be committed per Go modules spec). Added patterns for `dist/`, `*.prof`, `__debug_bin*`.
-- **Makefile:** Added `fmt` target; `ci` now runs `vet + fmt + docs-naming + build + test`; `hooks` target guarded for missing `.git`.
-- **Logger:** Removed unused `color` and `filePath` struct fields.
-- **Docs:** Merged `core-design.md` into `architecture.md`; added `_docs/index.md` entry point; updated structure, audit, and all cross-references.
-- **cmd layout:** Moved `cmd/muxmaster/main.go` → `cmd/main.go`; removed nesting.
+Complete rewrite from a 2,600-line Bash script to a single static Go binary with full CLI parity.
 
 ### Added
 
-- `.golangci.yml` with 19 curated linters and project-specific exclusions.
-- `.editorconfig` for cross-editor consistency (Go, Markdown, Makefile, YAML).
-- `_docs/index.md` documentation entry point.
+- **Probe** (`internal/probe`): `ffprobe` JSON parsing, HDR detection (`smpte2084`/`arib-std-b67`/`bt2020`), interlace detection, HEVC edge-safety validation (profile + pix_fmt), bitmap subtitle codec identification.
+- **Naming** (`internal/naming`): 14 ordered regex rules for TV/movie/specials filename parsing, Jellyfin-friendly output paths (`Show/Season XX/Show - SXXEXX.mkv`, `Movie (Year)/Movie (Year).mkv`), collision resolution with `- dupN` suffixes, TV show year harmonization index.
+- **Planner** (`internal/planner`): Smart per-file QP/CRF selection from resolution×bitrate curves with configurable bias, output bitrate estimation, video filter chain building (yadif, HDR tonemapping, VAAPI hwupload), audio planning (AAC passthrough, non-AAC→AAC 256k/48kHz/2ch), subtitle/attachment planning (MKV copy-all, MP4 mov_text), stream disposition management.
+- **FFmpeg** (`internal/ffmpeg`): Full command builder from `FilePlan` + `RetryState`, executor with stderr capture and optional tee, regex-based error classification (attachment, subtitle, mux queue, timestamp), two-tiered retry state machine (error fixes + quality adjustment).
+- **Pipeline** (`internal/pipeline`): Recursive file discovery with `extras` directory pruning, per-file orchestration (validate→probe→name→plan→execute→report), TV year index building, batch header/summary logging, bitrate outlier detection, `RunStats` aggregation with space-saved reporting.
+- **Main integration** (`cmd/main.go`): Signal handling via `context.WithCancel` + `SIGINT`/`SIGTERM`, graceful shutdown between files, exit code 1 on failures.
+- **Rainbow banner**: ASCII art logo rendered in 5 cycling ANSI colors (red/orange/yellow/green/blue) with plain-text fallback.
+- Comprehensive test suites for `naming` (14 parse rules + post-processing + path generation), `probe` (JSON parsing + HDR + interlace + HEVC safety + live integration), `planner` (quality curves + filters + audio/subtitle plans), and `pipeline` (discovery + dry-run integration).
+
+### Changed
+
+- **Architecture:** Extracted `internal/term` package for ANSI colors and TTY detection.
+- **Stubs consolidated:** 22 stub files replaced with full implementations across 5 packages.
+- **go.mod:** Bumped Go version to `1.26`.
+- **Makefile:** Version set to `2.0.0`; added `fmt` target; `ci` runs `vet + fmt + docs-naming + build + test`.
+- **cmd layout:** Moved `cmd/muxmaster/main.go` → `cmd/main.go`.
+- **Check:** `CheckDeps` now derives `VaapiProfile`/`VaapiSwFormat` from capability probing (main10/p010 preferred over main/nv12).
+- **Docs:** Merged `core-design.md` into `architecture.md`; added `_docs/index.md` entry point; fully updated README with usage examples and option reference.
 
 ### Removed
 
-- `testdata/README.md` placeholder — directory will be created when tests need fixtures.
-- 22 individual stub files (replaced by 5 `doc.go` files + 2 display TODOs folded in).
-- `CONTRIBUTING.md` — solo project; workflow info lives in `_docs/project/git-guidelines.md`.
-- `internal/config/config_test.go` and `internal/display/format_test.go` — tests deferred.
+- `testdata/README.md` placeholder.
+- 22 individual stub files.
+- `CONTRIBUTING.md` (solo project).
 
 ---
 
@@ -97,7 +101,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Pipeline (discover → probe → plan → execute) is not yet implemented; the binary runs config, check, and path validation only.
 - Unit tests are planned for a later phase; test files were removed in favor of a skeleton-first approach.
 
-[Unreleased]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev...HEAD
+[2.0.0]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev+lint...v2.0.0
 [2.0.0-dev+lint]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev+restructure...v2.0.0-dev+lint
 [2.0.0-dev+restructure]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev...v2.0.0-dev+restructure
 [2.0.0-dev]: https://github.com/backmassage/muxmaster/compare/v1.7.0...v2.0.0-dev
