@@ -93,6 +93,9 @@ func defineBehaviorFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "Preview only; do not encode or remux")
 	fs.BoolVar(&cfg.DryRun, "d", false, "Same as --dry-run")
 	fs.BoolVar(&n.noSkipHEVC, "no-skip-hevc", false, "Re-encode HEVC instead of remuxing")
+	fs.BoolVar(&cfg.SmartQuality, "smart-quality", cfg.SmartQuality, "Per-file quality adaptation")
+	fs.BoolVar(&cfg.CleanTimestamps, "clean-timestamps", cfg.CleanTimestamps, "Regenerate timestamps")
+	fs.BoolVar(&cfg.MatchAudioLayout, "match-audio-layout", cfg.MatchAudioLayout, "Normalize audio channel layout")
 	fs.BoolVar(&n.noFps, "no-fps", false, "Do not show live ffmpeg FPS")
 	fs.BoolVar(&n.noStats, "no-stats", false, "Hide per-file source stats")
 	fs.BoolVar(&n.noSubs, "no-subs", false, "Do not process subtitle streams")
@@ -112,6 +115,7 @@ func defineBehaviorFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 func defineDisplayFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 	fs.BoolVar(&n.forceColor, "color", false, "Force colored logs")
 	fs.BoolVar(&n.noColor, "no-color", false, "Disable colored logs")
+	fs.BoolVar(&cfg.ShowFfmpegFPS, "show-fps", cfg.ShowFfmpegFPS, "Show live ffmpeg FPS")
 	fs.BoolVar(&cfg.Verbose, "verbose", false, "Verbose output")
 	fs.BoolVar(&cfg.Verbose, "v", false, "Same as --verbose")
 	fs.BoolVar(&cfg.CheckOnly, "check", false, "Run system diagnostics and exit")
