@@ -69,7 +69,7 @@ type negatedFlags struct {
 	showHelp          bool
 }
 
-// defineEncodingFlags registers -m/--mode, -q/--quality, --cpu-crf, --vaapi-qp, -p/--preset.
+// defineEncodingFlags registers -m/--mode, -q/--quality, --cpu-crf, --vaapi-qp, -p/--preset, --audio-bitrate.
 func defineEncodingFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.Var(&encoderModeValue{&cfg.EncoderMode}, "mode", "Encoder mode: vaapi | cpu")
 	fs.Var(&encoderModeValue{&cfg.EncoderMode}, "m", "Same as --mode")
@@ -79,6 +79,7 @@ func defineEncodingFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.StringVar(&cfg.VaapiQPFixedOverride, "vaapi-qp", "", "Fixed VAAPI QP (overrides --quality in VAAPI mode)")
 	fs.StringVar(&cfg.CpuPreset, "preset", cfg.CpuPreset, "x265 preset (e.g. slow, medium)")
 	fs.StringVar(&cfg.CpuPreset, "p", cfg.CpuPreset, "Same as --preset")
+	fs.StringVar(&cfg.AudioBitrate, "audio-bitrate", cfg.AudioBitrate, "Audio bitrate in Kbps (e.g. 128k, 256k)")
 }
 
 // defineContainerAndHDRFlags registers --container, --hdr, --no-deinterlace.
@@ -262,6 +263,7 @@ func printUsage(_ *flag.FlagSet, version string) {
 		{"  --cpu-crf <value>", "Fixed CPU CRF (overrides --quality in CPU mode)"},
 		{"  --vaapi-qp <value>", "Fixed VAAPI QP (overrides --quality in VAAPI mode)"},
 		{"  -p, --preset <name>", "x265 preset (default: slow)"},
+		{"  --audio-bitrate <rate>", "Audio bitrate in Kbps (default: 256k)"},
 		{"", ""},
 		{"Container & HDR", ""},
 		{"  --container <mkv|mp4>", "Output container (default: mkv)"},
