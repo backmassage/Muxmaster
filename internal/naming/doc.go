@@ -1,7 +1,7 @@
 // Package naming provides filename parsing, output path building, TV show
 // year-variant harmonization, and collision resolution.
 //
-// Planned implementation (see docs/design/foundation-plan.md §4.6):
+// Planned implementation (see _docs/design/foundation-plan.md §4.6):
 //
 // Types:
 //   - ParsedName (MediaType, ShowName, Season, Episode, Year, etc.)

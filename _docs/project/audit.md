@@ -10,7 +10,7 @@ Last updated: 2026-02-23
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Top-level layout | **Pass** | `cmd/muxmaster/`, `internal/`, `docs/`, root meta-files. |
+| Top-level layout | **Pass** | `cmd/muxmaster/`, `internal/`, `_docs/`, root meta-files. |
 | `internal/` packages | **Pass** | 10 packages: config, term, logging, display, check, probe, naming, planner, ffmpeg, pipeline. |
 | Stub consolidation | **Pass** | Unimplemented packages use a single `doc.go` with comprehensive implementation plan. |
 | `.gitignore` | **Pass** | Ignores binary, coverage, IDE, OS files. `go.sum` is tracked (per Go modules spec). |
@@ -36,9 +36,9 @@ Last updated: 2026-02-23
 | README: overview, build, usage, structure, docs links, license | **Pass** |
 | CHANGELOG: Keep a Changelog format, dated entries | **Pass** |
 | CONTRIBUTING: setup, branching, commits, build, code style | **Pass** |
-| docs/INDEX.md: table of contents | **Pass** |
-| docs/architecture.md: dependency diagram includes `term` package | **Pass** |
-| docs/project/structure.md: matches actual code layout | **Pass** |
+| Documentation entrypoint | **Pass** |
+| _docs/architecture.md: dependency diagram includes `term` package | **Pass** |
+| _docs/project/structure.md: matches actual code layout | **Pass** |
 
 ---
 
@@ -60,7 +60,7 @@ Last updated: 2026-02-23
 
 | Check | Status | Notes |
 |-------|--------|-------|
-| Makefile targets | **Pass** | build, test, vet, fmt, lint, coverage, ci, clean, install, hooks. |
+| Makefile targets | **Pass** | build, test, vet, fmt, lint, docs-naming, coverage, ci, clean, install. |
 | `make ci` | **Pass** | Runs vet + fmt + build + test. |
 | Unit tests | **Pass** | `config_test.go` (8 test functions), `format_test.go` (3 test functions). |
 | golangci-lint config | **Pass** | `.golangci.yml` with 16 linters and project-specific exclusions. |
@@ -76,7 +76,7 @@ Last updated: 2026-02-23
 | Go packages | Lowercase single-word | **Pass** |
 | Go files | Lowercase (`config.go`, `doc.go`) | **Pass** |
 | Root meta-files | UPPERCASE (`README.md`, `LICENSE`) | **Pass** |
-| Docs under `docs/` | Lowercase-with-hyphens | **Pass** |
+| Docs under `_docs/` | Lowercase-with-hyphens | **Pass** |
 
 ---
 
@@ -85,7 +85,7 @@ Last updated: 2026-02-23
 | Category | Status | Open items |
 |----------|--------|------------|
 | Project structure | Pass | — |
-| Documentation | Pass | — |
+| Documentation | Pass | Centralized in `README.md` + focused docs under `_docs/` (no separate docs index file) |
 | Git practices | Pass | Create `dev` branch when ready |
 | Build & testing | Pass | Add tests for naming, check when implemented |
 | Naming | Pass | — |

@@ -2,7 +2,7 @@
 // structures. A single JSON call per file replaces the multiple subprocess
 // calls in the legacy shell script.
 //
-// Planned implementation (see docs/design/foundation-plan.md §6.3):
+// Planned implementation (see _docs/design/foundation-plan.md §6.3):
 //
 // Types:
 //   - FormatInfo, VideoStream, AudioStream, SubtitleStream, ProbeResult

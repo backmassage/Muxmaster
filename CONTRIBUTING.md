@@ -26,7 +26,7 @@ make test                 # run tests (go test ./...)
 
 ## Branching and commits
 
-Full details are in [docs/project/git-guidelines.md](docs/project/git-guidelines.md). The short version:
+Full details are in [_docs/project/git-guidelines.md](_docs/project/git-guidelines.md). The short version:
 
 **Branches:**
 
@@ -58,6 +58,7 @@ make build    # compile binary with version/commit ldflags
 make test     # run all tests
 make vet      # run go vet
 make fmt      # format all Go files (gofmt -l -w .)
+make docs-naming # validate Markdown filename convention
 make ci       # vet + fmt + build + test (run before pushing)
 make lint     # run golangci-lint (if installed)
 make coverage # generate coverage report → coverage.html
@@ -72,8 +73,9 @@ Always run `make ci` before pushing to verify nothing is broken.
 
 - **Formatting:** `gofmt` is the only formatting rule. All Go code must pass `gofmt`.
 - **Linting:** `go vet` is required; `golangci-lint` is recommended.
+- **Markdown filenames:** Use lowercase kebab-case for docs under subdirectories (example: `foundation-plan.md`). Root exceptions are `README.md`, `CHANGELOG.md`, and `CONTRIBUTING.md`. Validate with `make docs-naming`.
 - **Tests:** Place `*_test.go` files alongside the code they test. Use table-driven tests where appropriate.
-- **Packages:** All application logic lives under `internal/`. See [docs/project/structure.md](docs/project/structure.md) for the package map and dependency direction.
+- **Packages:** All application logic lives under `internal/`. See [_docs/project/structure.md](_docs/project/structure.md) for the package map and dependency direction.
 
 ---
 
@@ -81,10 +83,10 @@ Always run `make ci` before pushing to verify nothing is broken.
 
 Before implementing or modifying a package, read these docs for context:
 
-- [docs/INDEX.md](docs/INDEX.md) — documentation table of contents
-- [docs/project/structure.md](docs/project/structure.md) — package layout, dependency direction, "where to change what"
-- [docs/design/core-design.md](docs/design/core-design.md) — architecture goals and technical choices
-- [docs/design/foundation-plan.md](docs/design/foundation-plan.md) — full implementation reference with types, phases, and gotchas
+- [_docs/project/structure.md](_docs/project/structure.md) — package layout, dependency direction, "where to change what"
+- [_docs/architecture.md](_docs/architecture.md) — package dependency diagram and per-file flow
+- [_docs/design/core-design.md](_docs/design/core-design.md) — architecture goals and technical choices
+- [_docs/design/foundation-plan.md](_docs/design/foundation-plan.md) — full implementation reference with types, phases, and gotchas
 
 ---
 
@@ -92,7 +94,7 @@ Before implementing or modifying a package, read these docs for context:
 
 1. Create a directory under `internal/` with a lowercase single-word name.
 2. Add a package-level doc comment in the primary `.go` file explaining the package's responsibility.
-3. Update [docs/project/structure.md](docs/project/structure.md) with the new package, its role, and its dependency direction.
+3. Update [_docs/project/structure.md](_docs/project/structure.md) with the new package, its role, and its dependency direction.
 4. Ensure the package does not introduce circular dependencies — leaf packages (`config`, `term`, `naming`, `probe`) must remain dependency-free or near-leaf.
 
 ---

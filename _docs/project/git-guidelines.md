@@ -51,7 +51,7 @@ refactor: split flags into defineEncodingFlags and defineBehaviorFlags
 
 Keep the description in lowercase (except names), and omit a period at the end. Optionally add a body after a blank line for more detail.
 
-A `commit-msg` Git hook is available in `scripts/commit-msg` to validate this format locally. Install it with `make hooks`.
+If you want commit message validation, use a local Git hook in your own environment to enforce the same pattern.
 
 ---
 

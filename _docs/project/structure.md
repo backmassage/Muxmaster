@@ -7,8 +7,7 @@ This document explains the folder layout for **human navigation** and maintenanc
 ```
 cmd/muxmaster/   CLI entrypoint
 internal/        All application logic (10 packages)
-docs/            Design docs, project reference, legacy scripts
-scripts/         Development tooling (commit hook)
+_docs/           Design docs, project reference, legacy artifacts
 ```
 
 Root meta-files: `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `Makefile`, `go.mod`, `.gitignore`, `.golangci.yml`, `.editorconfig`.

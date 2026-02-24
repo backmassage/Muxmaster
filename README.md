@@ -113,23 +113,23 @@ muxmaster -h
 ```
 cmd/muxmaster/   CLI entrypoint
 internal/        All application logic (10 packages)
-docs/            Design docs, project reference, legacy scripts
-scripts/         Development tooling (commit hook)
+_docs/           Design docs, project reference, legacy artifacts
 ```
 
-For the full package map, dependency direction, and "where to change what", see [docs/project/structure.md](docs/project/structure.md).
+For the full package map, dependency direction, and "where to change what", see [_docs/project/structure.md](_docs/project/structure.md).
 
 ---
 
 ## Documentation
 
-- **Documentation index:** [docs/INDEX.md](docs/INDEX.md)
-- **Architecture and dependencies:** [docs/architecture.md](docs/architecture.md)
-- **Project structure:** [docs/project/structure.md](docs/project/structure.md)
-- **Project audit:** [docs/project/audit.md](docs/project/audit.md)
-- **Git guidelines:** [docs/project/git-guidelines.md](docs/project/git-guidelines.md)
-- **Changelog:** [CHANGELOG.md](CHANGELOG.md)
+- **Architecture and dependencies:** [_docs/architecture.md](_docs/architecture.md)
+- **Project structure and package map:** [_docs/project/structure.md](_docs/project/structure.md)
+- **Project audit:** [_docs/project/audit.md](_docs/project/audit.md)
+- **Git and workflow guidelines:** [_docs/project/git-guidelines.md](_docs/project/git-guidelines.md)
+- **Design references:** [_docs/design/core-design.md](_docs/design/core-design.md), [_docs/design/foundation-plan.md](_docs/design/foundation-plan.md), [_docs/design/product-spec.md](_docs/design/product-spec.md)
+- **Legacy parity references:** [_docs/legacy/legacy-behavior.md](_docs/legacy/legacy-behavior.md), `_docs/legacy/Muxmaster.sh`
 - **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 
 ---
 
