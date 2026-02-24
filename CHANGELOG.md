@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
-## [2.1.0] — Unreleased
+## [2.1.0] — 2026-02-24
 
 ### Changed
 
@@ -16,6 +16,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - **Batch analysis mode** (`--analyze` / `-a`): Probe-only mode that scans all media files in a directory and prints a tabular report of Video Codec, Video Kbps, Audio Codec, and Audio Kbps. Uses IQR-based statistical detection to highlight outliers (`[*]` orange) and extreme outliers (`[!]` red) in both video and audio bitrate columns. Summary prints IQR bounds and counts. Usage: `muxmaster --analyze /path/to/media`.
 - **Audio bitrate reporting:** Per-stream input and output audio bitrates are logged for every processed file. Input bitrate (kbps) is read from `ffprobe`; output shows `copy` for AAC passthrough or the target bitrate (e.g. `256k`) for transcoded streams. Example: `Audio[0]: aac | in: 192 kbps | out: copy`.
+- **Audio `BitRate` in probe:** `AudioStream.BitRate` field parsed from `ffprobe` `bit_rate` for per-stream bitrate reporting.
+
+### Fixed
+
+- **Analyze table alignment:** ANSI color escape sequences no longer break column padding. Plain text is padded first, then wrapped in color codes.
+- **Audio bitrate fallback:** `logAudioBitrates` now defaults to `"n/a"` when the audio plan has no matching stream entry, instead of printing an empty string.
+- **Insertion sort replaced:** Analysis outlier computation now uses `sort.Float64s` from the standard library instead of a hand-rolled O(n²) insertion sort.
 
 ---
 
@@ -114,6 +121,7 @@ Complete rewrite from a 2,600-line Bash script to a single static Go binary with
 - Pipeline (discover → probe → plan → execute) is not yet implemented; the binary runs config, check, and path validation only.
 - Unit tests are planned for a later phase; test files were removed in favor of a skeleton-first approach.
 
+[2.1.0]: https://github.com/backmassage/muxmaster/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev+lint...v2.0.0
 [2.0.0-dev+lint]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev+restructure...v2.0.0-dev+lint
 [2.0.0-dev+restructure]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev...v2.0.0-dev+restructure

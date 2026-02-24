@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/backmassage/muxmaster/internal/config"
@@ -89,12 +90,12 @@ func Analyze(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 
 // iqrBounds holds the IQR-based thresholds for outlier classification.
 type iqrBounds struct {
-	q1, q3          float64
-	outlierLo       float64 // Q1 - 1.5*IQR
-	outlierHi       float64 // Q3 + 1.5*IQR
-	extremeLo       float64 // Q1 - 3.0*IQR
-	extremeHi       float64 // Q3 + 3.0*IQR
-	valid           bool
+	q1, q3    float64
+	outlierLo float64 // Q1 - 1.5*IQR
+	outlierHi float64 // Q3 + 1.5*IQR
+	extremeLo float64 // Q1 - 3.0*IQR
+	extremeHi float64 // Q3 + 3.0*IQR
+	valid     bool
 }
 
 func computeStats(vals []float64) iqrBounds {
@@ -104,7 +105,7 @@ func computeStats(vals []float64) iqrBounds {
 
 	sorted := make([]float64, len(vals))
 	copy(sorted, vals)
-	sortFloats(sorted)
+	sort.Float64s(sorted)
 
 	q1 := percentile(sorted, 25)
 	q3 := percentile(sorted, 75)
@@ -166,14 +167,12 @@ func printAnalysisTable(rows []fileRow, vStats, aStats iqrBounds) {
 		nameW = 50
 	}
 
-	flagW := 3
-	header := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s  %-*s",
+	header := fmt.Sprintf("  %-*s  %-*s  %-*s  %-*s  %-*s",
 		nameW, "File",
 		vcW, "Video Codec",
 		vbW, "Video Kbps",
 		acW, "Audio Codec",
 		abW, "Audio Kbps",
-		flagW, "",
 	)
 	separator := "  " + strings.Repeat("─", len(header)-2)
 
@@ -186,8 +185,8 @@ func printAnalysisTable(rows []fileRow, vStats, aStats iqrBounds) {
 			name = name[:nameW-1] + "…"
 		}
 
-		vbStr := display.FormatBitrateLabel(r.VideoKbps)
-		abStr := fmtAudioKbps(r.AudioKbps)
+		vbPlain := display.FormatBitrateLabel(r.VideoKbps)
+		abPlain := fmtAudioKbps(r.AudioKbps)
 
 		vClass := vStats.classify(float64(r.VideoKbps))
 		aClass := aStats.classify(float64(r.AudioKbps))
@@ -195,15 +194,17 @@ func printAnalysisTable(rows []fileRow, vStats, aStats iqrBounds) {
 		flag := worstFlag(vClass, aClass)
 		flagStr := formatFlag(flag)
 
-		vbStr = colorizeField(vbStr, vClass)
-		abStr = colorizeField(abStr, aClass)
+		// Pad the plain text first, then wrap in ANSI color. This avoids
+		// the alignment bug where %-*s counts escape bytes as visible width.
+		vbCell := colorPad(vbPlain, vbW, vClass)
+		abCell := colorPad(abPlain, abW, aClass)
 
-		fmt.Printf("  %-*s  %-*s  %s%-*s%s  %-*s  %s%-*s%s  %s\n",
+		fmt.Printf("  %-*s  %-*s  %s  %-*s  %s  %s\n",
 			nameW, name,
 			vcW, r.VideoCodec,
-			"", vbW, vbStr, "",
+			vbCell,
 			acW, r.AudioCodec,
-			"", abW, abStr, "",
+			abCell,
 			flagStr,
 		)
 	}
@@ -275,28 +276,17 @@ func formatFlag(flag string) string {
 	}
 }
 
-func colorizeField(s, class string) string {
+// colorPad pads a plain string to width, then wraps in ANSI color. This
+// ensures %-*s-style alignment works correctly regardless of escape sequences.
+func colorPad(s string, width int, class string) string {
+	padded := fmt.Sprintf("%-*s", width, s)
 	switch class {
 	case "extreme":
-		return term.Red + s + term.NC
+		return term.Red + padded + term.NC
 	case "outlier":
-		return term.Orange + s + term.NC
+		return term.Orange + padded + term.NC
 	default:
-		return s
-	}
-}
-
-// --- Sorting and percentile helpers ---
-
-func sortFloats(a []float64) {
-	for i := 1; i < len(a); i++ {
-		key := a[i]
-		j := i - 1
-		for j >= 0 && a[j] > key {
-			a[j+1] = a[j]
-			j--
-		}
-		a[j+1] = key
+		return padded
 	}
 }
 

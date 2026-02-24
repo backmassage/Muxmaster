@@ -463,12 +463,12 @@ func logAudioBitrates(log *logging.Logger, pr *probe.ProbeResult, plan *planner.
 
 	for i, a := range pr.AudioStreams {
 		inKbps := a.BitRate / 1000
-		inStr := "unknown kbps"
+		inStr := "unknown"
 		if inKbps > 0 {
 			inStr = fmt.Sprintf("%d kbps", inKbps)
 		}
 
-		var outStr string
+		outStr := "n/a"
 		switch {
 		case ap.CopyAll:
 			outStr = "copy"
