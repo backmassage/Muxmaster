@@ -51,3 +51,10 @@ func TestValidateNormalizesAudioBitrate(t *testing.T) {
 		t.Fatalf("Validate() did not normalize bitrate, got %q", cfg.AudioBitrate)
 	}
 }
+
+func TestDefaultConfigAudioEncoder(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.AudioEncoder != "libfdk_aac" {
+		t.Fatalf("AudioEncoder = %q, want libfdk_aac", cfg.AudioEncoder)
+	}
+}

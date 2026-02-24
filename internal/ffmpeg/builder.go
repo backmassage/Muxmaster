@@ -64,7 +64,7 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 
 	// --- Stream maps ---
 	args = append(args, "-map", fmt.Sprintf("0:%d", plan.VideoStreamIdx))
-	args = appendAudioMaps(args, plan, rs)
+	args = appendAudioMaps(args, cfg, plan, rs)
 	args = appendSubtitleMaps(args, plan, rs)
 	args = appendAttachmentMaps(args, plan, rs)
 
@@ -135,7 +135,7 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 }
 
 // appendAudioMaps adds audio mapping and codec arguments.
-func appendAudioMaps(args []string, plan *planner.FilePlan, _ *RetryState) []string {
+func appendAudioMaps(args []string, cfg *config.Config, plan *planner.FilePlan, _ *RetryState) []string {
 	ap := &plan.Audio
 
 	if ap.NoAudio {
@@ -155,7 +155,7 @@ func appendAudioMaps(args []string, plan *planner.FilePlan, _ *RetryState) []str
 		}
 
 		args = append(args,
-			fmt.Sprintf("-c:a:%d", s.StreamIndex), "aac",
+			fmt.Sprintf("-c:a:%d", s.StreamIndex), cfg.AudioEncoder,
 			fmt.Sprintf("-ac:a:%d", s.StreamIndex), strconv.Itoa(s.Channels),
 			fmt.Sprintf("-ar:a:%d", s.StreamIndex), strconv.Itoa(s.SampleRate),
 			fmt.Sprintf("-b:a:%d", s.StreamIndex), s.Bitrate,

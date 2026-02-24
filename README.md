@@ -33,7 +33,7 @@ muxmaster /media/library /out/library
 # Encode with CPU (libx265)
 muxmaster --mode cpu /media/library /out/library
 
-# Run system diagnostics (ffmpeg, ffprobe, VAAPI, x265, AAC)
+# Run system diagnostics (ffmpeg, ffprobe, VAAPI, x265, libfdk_aac)
 muxmaster --check
 ```
 
@@ -110,6 +110,9 @@ muxmaster -v -l encode.log /media/library /out/library
 
 # Fixed VAAPI QP (disables smart quality for this value)
 muxmaster --vaapi-qp 21 /media/library /out/library
+
+# Override AAC bitrate for non-AAC transcodes
+muxmaster --audio-bitrate 192k /media/library /out/library
 ```
 
 ### Full option reference
@@ -123,6 +126,7 @@ muxmaster --vaapi-qp 21 /media/library /out/library
 | `--vaapi-qp <value>` | Fixed VAAPI QP (overrides `--quality`) | 19 |
 | `--cpu-crf <value>` | Fixed CPU CRF (overrides `--quality`) | 19 |
 | `-p, --preset <name>` | x265 CPU preset | `slow` |
+| `--audio-bitrate <rate>` | AAC bitrate for non-AAC audio transcodes (e.g. `128k`, `256k`) | `256k` |
 
 **Container & HDR**
 
@@ -196,7 +200,7 @@ Validate → Probe → Parse filename → Resolve output path → Plan → Execu
 ### Audio handling
 
 - AAC streams are always copied (no lossy-to-lossy re-encode)
-- Non-AAC streams are transcoded to AAC at 256k, 48 kHz, up to 2 channels
+- Non-AAC streams are transcoded to AAC via `libfdk_aac` at configured bitrate (`--audio-bitrate`, default `256k`), 48 kHz, up to 2 channels
 - Optional channel layout normalization (`--match-audio-layout`)
 
 ### Subtitle and attachment handling

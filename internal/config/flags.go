@@ -296,7 +296,7 @@ func printUsage(_ *flag.FlagSet, version string) {
 		{"", ""},
 		{"Utility", ""},
 		{"  -l, --log <path>", "Append logs to file"},
-		{"  -c, --check", "System diagnostics (ffmpeg, VAAPI, x265, AAC)"},
+		{"  -c, --check", "System diagnostics (ffmpeg, VAAPI, x265, libfdk_aac)"},
 		{"  -V, --version", "Print version and exit"},
 		{"  -h, --help", "Show this help and exit"},
 	}

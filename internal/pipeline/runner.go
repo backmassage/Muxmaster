@@ -146,7 +146,7 @@ func processFile(
 	// --- Log action ---
 	actionLabel := "Encoding"
 	if plan.Action == planner.ActionRemux {
-		actionLabel = "Remuxing (copy HEVC, encode AAC)"
+		actionLabel = fmt.Sprintf("Remuxing (copy HEVC, encode AAC via %s)", cfg.AudioEncoder)
 	}
 	log.Info("%s: %s", actionLabel, basename)
 	log.Info("  -> %s", filepath.Base(outputPath))
@@ -348,7 +348,7 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 	}
 
 	log.Info("Container: %s", strings.ToUpper(string(cfg.OutputContainer)))
-	log.Info("Audio: AAC passthrough (no AAC->AAC), otherwise encode to AAC %s", cfg.AudioBitrate)
+	log.Info("Audio: AAC passthrough (no AAC->AAC), otherwise encode to AAC via %s at %s", cfg.AudioEncoder, cfg.AudioBitrate)
 
 	if cfg.OutputContainer == config.ContainerMP4 {
 		log.Info("Compatibility: hvc1 tag for Apple/browser support")

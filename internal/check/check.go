@@ -1,9 +1,11 @@
 // Package check provides system diagnostics (--check mode) and pre-pipeline
-// dependency validation (CheckDeps) for ffmpeg, ffprobe, VAAPI, x265, and AAC.
+// dependency validation (CheckDeps) for ffmpeg, ffprobe, video encoders,
+// and the configured AAC encoder.
 package check
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,11 +16,12 @@ import (
 
 // Sentinel errors returned by CheckDeps when a required tool or encoder is missing.
 var (
-	ErrFfmpegNotFound  = errors.New("ffmpeg not found on PATH")
-	ErrFfprobeNotFound = errors.New("ffprobe not found on PATH")
-	ErrNoVAAPIDevice   = errors.New("no VAAPI render device found in /dev/dri/")
-	ErrVAAPITestFailed = errors.New("VAAPI test encode failed (device exists but hevc_vaapi unusable)")
-	ErrCPUEncodeFailed = errors.New("CPU mode selected but libx265 test encode failed")
+	ErrFfmpegNotFound    = errors.New("ffmpeg not found on PATH")
+	ErrFfprobeNotFound   = errors.New("ffprobe not found on PATH")
+	ErrNoVAAPIDevice     = errors.New("no VAAPI render device found in /dev/dri/")
+	ErrVAAPITestFailed   = errors.New("VAAPI test encode failed (device exists but hevc_vaapi unusable)")
+	ErrCPUEncodeFailed   = errors.New("CPU mode selected but libx265 test encode failed")
+	ErrAudioEncodeFailed = errors.New("configured AAC encoder test failed")
 )
 
 // Logger is the minimal logging interface needed by RunCheck.
@@ -50,7 +53,7 @@ func RunCheck(cfg *config.Config, log Logger) bool {
 	if !checkCPUx265(log) {
 		ok = false
 	}
-	if !checkAAC(log) {
+	if !checkAudioEncoder(log, cfg.AudioEncoder) {
 		ok = false
 	}
 	return ok
@@ -136,19 +139,19 @@ func checkCPUx265(log Logger) bool {
 	return false
 }
 
-// checkAAC runs a minimal AAC encode to verify the audio encoder works.
+// checkAudioEncoder runs a minimal AAC encode to verify the encoder works.
 // Returns true on success.
-func checkAAC(log Logger) bool {
-	log.Info("Testing AAC encoder...")
+func checkAudioEncoder(log Logger, encoder string) bool {
+	log.Info("Testing AAC encoder (%s)...", encoder)
 	if runSilent("ffmpeg",
 		"-hide_banner", "-nostdin",
 		"-f", "lavfi", "-i", "sine=frequency=1000:duration=0.1",
-		"-c:a", "aac", "-f", "null", "-",
+		"-c:a", encoder, "-f", "null", "-",
 	) {
-		log.Success("AAC encoder works")
+		log.Success("AAC encoder works (%s)", encoder)
 		return true
 	}
-	log.Error("AAC encoder test failed")
+	log.Error("AAC encoder test failed (%s)", encoder)
 	return false
 }
 
@@ -164,6 +167,9 @@ func CheckDeps(cfg *config.Config) error {
 	}
 	if _, err := exec.LookPath("ffprobe"); err != nil {
 		return ErrFfprobeNotFound
+	}
+	if !testAudioEncoder(cfg.AudioEncoder) {
+		return fmt.Errorf("%w: %s", ErrAudioEncodeFailed, cfg.AudioEncoder)
 	}
 
 	if cfg.EncoderMode == config.EncoderCPU {
@@ -190,6 +196,14 @@ func CheckDeps(cfg *config.Config) error {
 		return nil
 	}
 	return ErrVAAPITestFailed
+}
+
+func testAudioEncoder(encoder string) bool {
+	return runSilent("ffmpeg",
+		"-hide_banner", "-nostdin", "-loglevel", "error",
+		"-f", "lavfi", "-i", "sine=frequency=1000:duration=0.1",
+		"-c:a", encoder, "-f", "null", "-",
+	)
 }
 
 // --- internal helpers ---

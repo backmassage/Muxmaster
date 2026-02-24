@@ -73,6 +73,7 @@ type Config struct {
 	AudioChannels   int    // Default: 2 (stereo).
 	AudioBitrate    string // Default: "256k".
 	AudioSampleRate int    // Fixed: 48000 Hz.
+	AudioEncoder    string // Fixed default: "libfdk_aac".
 
 	// Behavior flags.
 	DryRun           bool
@@ -126,6 +127,7 @@ func DefaultConfig() Config {
 		AudioChannels:         2,
 		AudioBitrate:          "256k",
 		AudioSampleRate:       48000,
+		AudioEncoder:          "libfdk_aac",
 		DryRun:                false,
 		SkipExisting:          true,
 		SkipHEVC:              true,
