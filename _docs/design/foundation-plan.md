@@ -23,7 +23,7 @@ The rewrite targets a single static binary for Arch Linux, preserving all curren
 | Decision | Resolution | Rationale |
 |---|---|---|
 | Module path | `github.com/<user>/muxmaster` | Standard Go convention; works locally too |
-| Go version | 1.23+ minimum | Latest stable on Arch; gives `slog`, `slices`, range-over-int |
+| Go version | 1.26+ minimum | Latest stable on Arch; gives `slog`, `slices`, range-over-int |
 | CLI framework | Standard `flag` | No external deps; migrate to `cobra` when subcommands arrive |
 | External deps | Zero for MVP | Entire standard library covers needs |
 | ffprobe strategy | Single JSON call per file | Replaces ~10 subprocess calls; biggest reliability win |
@@ -90,12 +90,12 @@ The 2.0 design doc is ambitious and well-structured, but it introduces several n
 
 ### 4.1 Package Dependency Map
 
-The project is organized into `cmd/muxmaster` (entrypoint) and 9 internal packages. Dependencies flow top-down; leaf packages have zero internal dependencies.
+The project is organized into `cmd` (entrypoint) and 9 internal packages. Dependencies flow top-down; leaf packages have zero internal dependencies.
 
 **Entrypoint:**
 
 ```
-cmd/muxmaster/main.go
+cmd/main.go
   ├── config     (parse flags, build Config)
   ├── logging    (initialize logger)
   ├── pipeline   (run batch processing)
@@ -990,7 +990,7 @@ func titleCase(s string) string {
 | 5 | `internal/logging/logger.go` | Leveled logger with color and file sink |
 | 6 | `internal/display/banner.go` | ASCII banner |
 | 7 | `internal/display/format.go` | `FormatBytes()`, `FormatBitrateLabel()` |
-| 8 | `cmd/muxmaster/main.go` | Wire config → logger → banner → validation |
+| 8 | `cmd/main.go` | Wire config → logger → banner → validation |
 | 9 | `internal/check/check.go` | `--check` mode diagnostics |
 
 **Validation:** `./muxmaster --help`, `--version`, `--check`, bad flags, overlapping dirs.
@@ -1111,7 +1111,7 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 .PHONY: build test vet clean install
 
 build:
-	go build $(LDFLAGS) -o $(BINARY) ./cmd/muxmaster
+	go build $(LDFLAGS) -o $(BINARY) ./cmd
 
 test:
 	go test ./... -v -count=1
@@ -1129,7 +1129,7 @@ install: build
 ### Version Embedding
 
 ```go
-// cmd/muxmaster/main.go
+// cmd/main.go
 
 var (
     version = "dev"
@@ -1170,7 +1170,7 @@ These are specific behaviors that are easy to get wrong. Each should have a corr
 
 ```
 1.  go mod init github.com/<user>/muxmaster
-    mkdir -p cmd/muxmaster internal/{config,logging,probe,naming,planner,ffmpeg,pipeline,check,display}
+    mkdir -p cmd internal/{config,logging,probe,naming,planner,ffmpeg,pipeline,check,display}
 
 2.  Write internal/config/config.go — Config struct with all defaults.
     Write internal/config/flags.go  — flag parsing with quality override precedence.
@@ -1184,6 +1184,6 @@ These are specific behaviors that are easy to get wrong. Each should have a corr
 4.  Write internal/probe/types.go  — all probe structs with methods.
     Write internal/probe/prober.go — single JSON ffprobe call.
 
-5.  Wire cmd/muxmaster/main.go → config → logging → banner → --check.
-    Run:  go build ./cmd/muxmaster && ./muxmaster --help
+5.  Wire cmd/main.go → config → logging → banner → --check.
+    Run:  go build ./cmd && ./muxmaster --help
 ```

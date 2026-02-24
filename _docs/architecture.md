@@ -4,56 +4,49 @@ Package dependency map for the Muxmaster Go project. Dependencies flow top-down;
 
 ---
 
-## Package dependency diagram
+## Package dependency map (text)
 
-```mermaid
-graph TD
-    CMD["cmd/muxmaster<br/><i>CLI entrypoint</i>"]
-    CONFIG["config<br/><i>defaults, flags, validation</i>"]
-    TERM["term<br/><i>ANSI colors, TTY detection</i>"]
-    LOGGING["logging<br/><i>leveled logger, file sink</i>"]
-    CHECK["check<br/><i>system diagnostics</i>"]
-    DISPLAY["display<br/><i>banner, formatters</i>"]
-    PROBE["probe<br/><i>ffprobe JSON → typed structs</i>"]
-    NAMING["naming<br/><i>filename parser, output paths</i>"]
-    PLANNER["planner<br/><i>encode / remux / skip decisions</i>"]
-    FFMPEG["ffmpeg<br/><i>command builder, executor, retry</i>"]
-    PIPELINE["pipeline<br/><i>discovery, per-file loop, stats</i>"]
+```text
+cmd (CLI entrypoint)
+  -> config
+  -> logging
+  -> check
+  -> display
 
-    CMD --> CONFIG
-    CMD --> LOGGING
-    CMD --> CHECK
-    CMD --> DISPLAY
+term
+  -> config
 
-    LOGGING --> CONFIG
-    LOGGING --> TERM
-    DISPLAY --> TERM
-    TERM --> CONFIG
-    CHECK --> CONFIG
+logging
+  -> config
+  -> term
 
-    PIPELINE --> CONFIG
-    PIPELINE --> LOGGING
-    PIPELINE --> PROBE
-    PIPELINE --> NAMING
-    PIPELINE --> PLANNER
-    PIPELINE --> FFMPEG
-    PIPELINE --> DISPLAY
+display
+  -> term
 
-    PLANNER --> CONFIG
-    PLANNER --> PROBE
-    PLANNER --> LOGGING
+check
+  -> config
 
-    FFMPEG --> CONFIG
-    FFMPEG --> PLANNER
-    FFMPEG --> LOGGING
+planner
+  -> config
+  -> probe
+  -> logging
 
-    style CONFIG fill:#e8f5e9,stroke:#4caf50
-    style TERM fill:#e8f5e9,stroke:#4caf50
-    style NAMING fill:#e8f5e9,stroke:#4caf50
-    style PROBE fill:#e8f5e9,stroke:#4caf50
+ffmpeg
+  -> config
+  -> planner
+  -> logging
+
+pipeline (orchestrator)
+  -> config
+  -> logging
+  -> probe
+  -> naming
+  -> planner
+  -> ffmpeg
+  -> display
 ```
 
-Green-highlighted packages are **leaf packages** with no or minimal internal dependencies — the safest starting points for implementation and testing.
+Leaf or near-leaf packages with the lowest internal coupling are `config`, `term`, `probe`, and `naming`.
 
 ---
 

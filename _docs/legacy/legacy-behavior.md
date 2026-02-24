@@ -153,20 +153,20 @@ Edge-safe HEVC check: profile in `{main, main10}` and pixel format in `{yuv420p,
 - Dry-run logs intended operations and reports success without writing outputs.
 - Failed ffmpeg attempts remove partial output files.
 
-```mermaid
-flowchart TD
-    A[Discover file] --> B[Validate + ffprobe]
-    B --> C{Valid + has video?}
-    C -- no --> C1[failed or skipped]
-    C -- yes --> D[Parse filename + resolve output path]
-    D --> E{HEVC remux eligible?}
-    E -- yes --> F[Remux path]
-    E -- no --> G[Encode path]
-    F --> H{ffmpeg success?}
-    G --> H
-    H -- no --> I[Fallback retry steps unless strict]
-    I --> H
-    H -- yes --> J[Update counters and size totals]
+```text
+Discover file
+  -> Validate + ffprobe
+  -> If invalid or no video: mark failed/skipped and continue
+  -> Parse filename + resolve output path
+  -> If HEVC remux eligible:
+       -> Remux path
+     Else:
+       -> Encode path
+  -> Run ffmpeg
+  -> If ffmpeg fails and strict mode is off:
+       -> Apply fallback retry steps
+       -> Re-run ffmpeg
+  -> On success: update counters and size totals
 ```
 
 ---
@@ -309,7 +309,7 @@ Encode path has extra quality pass logic:
 ## 8) Go Rewrite Mapping (Behavior-Preserving)
 
 ### Suggested package structure
-- `cmd/muxmaster` (CLI entrypoint)
+- `cmd` (CLI entrypoint)
 - `internal/config` (defaults, parsing, validation, precedence)
 - `internal/logging` (levels, color policy, file sink)
 - `internal/probe` (`ffprobe` wrappers + typed results)

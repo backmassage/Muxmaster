@@ -82,7 +82,7 @@ All instructions and scripts should be **machine-readable** for automation (no a
 
 - **Keep build simple.** Example:
   ```bash
-  go build -o muxmaster ./cmd/muxmaster
+  go build -o muxmaster ./cmd
   ```
   Or via Makefile:
   ```bash

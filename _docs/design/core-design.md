@@ -12,7 +12,7 @@ This document summarizes the **core design concepts** for the Muxmaster Go rewri
 
 ## Architecture (MVP)
 
-- **Entrypoint:** `cmd/muxmaster` — parse flags, load config, run either `--check` or the encode/remux pipeline.
+- **Entrypoint:** `cmd` — parse flags, load config, run either `--check` or the encode/remux pipeline.
 - **Orchestration:** `internal/pipeline` discovers files, builds a TV year-variant index, then for each file: validate → probe → parse name → resolve output path → plan (encode/remux/skip) → execute (with retry) → update stats.
 - **Key packages:** `config`, `term`, `logging`, `display`, `check`, `probe`, `naming`, `planner`, `ffmpeg`, `pipeline`. Dependencies flow downward; `probe` and `naming` stay dependency-light.
 

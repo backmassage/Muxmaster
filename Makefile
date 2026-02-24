@@ -6,7 +6,7 @@ LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 .PHONY: build test vet fmt lint docs-naming coverage ci clean install
 
 build:
-	go build $(LDFLAGS) -o $(BINARY) ./cmd/muxmaster
+	go build $(LDFLAGS) -o $(BINARY) ./cmd
 
 test:
 	go test ./... -v -count=1

@@ -5,7 +5,7 @@ This document explains the folder layout for **human navigation** and maintenanc
 ## Top level
 
 ```
-cmd/muxmaster/   CLI entrypoint
+cmd/             CLI entrypoint
 internal/        All application logic (10 packages)
 _docs/           Design docs, project reference, legacy artifacts
 ```
@@ -16,10 +16,10 @@ Root meta-files: `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `Mak
 
 | Package     | Status | Purpose | Key files |
 |-------------|--------|---------|-----------|
-| **config**  | Implemented | Defaults, CLI flags, validation | `config.go`, `flags.go`, `config_test.go` |
+| **config**  | Implemented | Defaults, CLI flags, validation | `config.go`, `flags.go` |
 | **term**    | Implemented | ANSI color state, TTY detection | `term.go` |
 | **logging** | Implemented | Leveled logger, optional file sink | `logger.go` |
-| **display** | Partial | Banner, byte/bitrate formatting; render-plan and outlier TBD | `banner.go`, `format.go`, `format_test.go` |
+| **display** | Partial | Banner, byte/bitrate formatting; render-plan and outlier TBD | `banner.go`, `format.go` |
 | **check**   | Implemented | `--check` diagnostics and `CheckDeps` | `check.go` |
 | **probe**   | Stub | ffprobe JSON → typed structs | `doc.go` |
 | **naming**  | Stub | Filename parsing, output paths, collision | `doc.go` |
@@ -32,7 +32,7 @@ Stub packages contain a single `doc.go` with the package declaration and a compr
 ## Dependency direction
 
 ```
-cmd/muxmaster
+cmd
   └─ config, logging, check, display
 
 logging → config, term

@@ -8,7 +8,7 @@ Thanks for your interest in contributing. This guide covers setup, workflow, and
 
 **Requirements:**
 
-- Go 1.23+ (see `go.mod`)
+- Go 1.26+ (see `go.mod`)
 - `ffmpeg` and `ffprobe` on `PATH` (runtime dependency)
 - For VAAPI encoding: a supported GPU and `/dev/dri/renderD*`
 

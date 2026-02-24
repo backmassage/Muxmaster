@@ -10,13 +10,13 @@ Last updated: 2026-02-23
 
 | Area | Status | Notes |
 |------|--------|-------|
-| Top-level layout | **Pass** | `cmd/muxmaster/`, `internal/`, `_docs/`, root meta-files. |
+| Top-level layout | **Pass** | `cmd/`, `internal/`, `_docs/`, root meta-files. |
 | `internal/` packages | **Pass** | 10 packages: config, term, logging, display, check, probe, naming, planner, ffmpeg, pipeline. |
 | Stub consolidation | **Pass** | Unimplemented packages use a single `doc.go` with comprehensive implementation plan. |
 | `.gitignore` | **Pass** | Ignores binary, coverage, IDE, OS files. `go.sum` is tracked (per Go modules spec). |
 | `.editorconfig` | **Pass** | Cross-editor consistency for Go, Markdown, Makefile. |
 | `LICENSE` | **Pass** | MIT license at root. |
-| `go.mod` | **Pass** | Module path and Go version (`1.23`) are correct. |
+| `go.mod` | **Pass** | Module path and Go version (`1.26`) are correct. |
 
 ### Internal package layout
 

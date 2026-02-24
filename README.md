@@ -39,7 +39,7 @@ muxmaster -c
 
 **Requirements:**
 
-- **Go 1.23+**
+- **Go 1.26+**
 - **ffmpeg** and **ffprobe** on `PATH` (required at runtime)
 - For VAAPI encoding: a supported GPU and `/dev/dri/renderD*` device
 
@@ -64,7 +64,7 @@ make install   # installs to $(HOME)/bin
 **Version and commit** are injected at build time via `make build` (see `Makefile`). Without `make`, use:
 
 ```bash
-go build -o muxmaster ./cmd/muxmaster
+go build -o muxmaster ./cmd
 ```
 
 ---
@@ -111,7 +111,7 @@ muxmaster -h
 ## Project structure
 
 ```
-cmd/muxmaster/   CLI entrypoint
+cmd/             CLI entrypoint
 internal/        All application logic (10 packages)
 _docs/           Design docs, project reference, legacy artifacts
 ```
