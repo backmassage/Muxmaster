@@ -36,6 +36,7 @@ type AudioStream struct {
 	Channels      int
 	ChannelLayout string
 	SampleRate    int
+	BitRate       int64
 	Language      string
 	IsDefault     bool
 }

@@ -143,6 +143,7 @@ func convertAudio(s *ffprobeStream) AudioStream {
 		Channels:      s.Channels,
 		ChannelLayout: s.ChannelLayout,
 		SampleRate:    parseInt(s.SampleRate),
+		BitRate:       parseInt64(s.BitRate),
 		Language:      s.Tags["language"],
 		IsDefault:     s.Disposition["default"] == 1,
 	}

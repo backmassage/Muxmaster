@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.1.0] — Unreleased
+
+### Changed
+
+- **AAC passthrough enforced:** Existing AAC audio streams are never re-encoded regardless of action (encode or HEVC remux). Only non-AAC streams are transcoded. The HEVC remux action label now correctly reads "encode non-AAC audio via …" instead of the misleading "encode AAC via …".
+
+### Added
+
+- **Audio bitrate reporting:** Per-stream input and output audio bitrates are logged for every processed file. Input bitrate (kbps) is read from `ffprobe`; output shows `copy` for AAC passthrough or the target bitrate (e.g. `256k`) for transcoded streams. Example: `Audio[0]: aac | in: 192 kbps | out: copy`.
+
+---
+
 ## [2.0.0] — 2026-02-24 — Go rewrite release
 
 Complete rewrite from a 2,600-line Bash script to a single static Go binary with full CLI parity.
