@@ -1,0 +1,29 @@
+version: "2"
+
+linters:
+  enable:
+    - errcheck
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - unparam
+    - dogsled
+    - durationcheck
+    - exhaustive
+    - exportloopref
+    - godot
+    - noctx
+    - prealloc
+    - thelper
+
+issues:
+  exclude-rules:
+    - path: doc\.go
+      linters:
+        - godot

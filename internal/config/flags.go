@@ -53,20 +53,20 @@ func ParseFlags(cfg *Config, version string) error {
 // negatedFlags holds boolean flags that are applied after Parse.
 // These either invert a default (e.g. noSkipHEVC -> SkipHEVC=false) or trigger exit (showHelp, showVersion).
 type negatedFlags struct {
-	noDeinterlace   bool
-	noSkipHEVC      bool
-	noFps           bool
-	noStats         bool
-	noSubs          bool
-	noAttachments   bool
-	noSmartQuality  bool
+	noDeinterlace     bool
+	noSkipHEVC        bool
+	noFps             bool
+	noStats           bool
+	noSubs            bool
+	noAttachments     bool
+	noSmartQuality    bool
 	noCleanTimestamps bool
-	noMatchLayout   bool
-	force           bool
-	forceColor      bool
-	noColor         bool
-	showVersion     bool
-	showHelp        bool
+	noMatchLayout     bool
+	force             bool
+	forceColor        bool
+	noColor           bool
+	showVersion       bool
+	showHelp          bool
 }
 
 // defineEncodingFlags registers -m/--mode, -q/--quality, --cpu-crf, --vaapi-qp, -p/--preset.

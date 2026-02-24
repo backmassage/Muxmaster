@@ -24,7 +24,7 @@ docs-naming:
 	@bash -ceu '\
 		errors=0; \
 		is_allowed_root_doc() { \
-			case "$$1" in README.md|CHANGELOG.md|CONTRIBUTING.md) return 0 ;; *) return 1 ;; esac; \
+			case "$$1" in README.md|CHANGELOG.md) return 0 ;; *) return 1 ;; esac; \
 		}; \
 		while IFS= read -r file; do \
 			rel="$${file#./}"; \
@@ -35,7 +35,7 @@ docs-naming:
 					continue; \
 				fi; \
 				echo "invalid root markdown filename: $$rel"; \
-				echo "  expected one of: README.md, CHANGELOG.md, CONTRIBUTING.md"; \
+				echo "  expected one of: README.md, CHANGELOG.md"; \
 				errors=1; \
 				continue; \
 			fi; \

@@ -10,7 +10,7 @@ internal/        All application logic (10 packages)
 _docs/           Design docs, project reference, legacy artifacts
 ```
 
-Root meta-files: `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `Makefile`, `go.mod`, `.gitignore`, `.golangci.yml`, `.editorconfig`.
+Root meta-files: `README.md`, `CHANGELOG.md`, `LICENSE`, `Makefile`, `go.mod`, `.gitignore`, `.golangci.yml`, `.editorconfig`.
 
 ## Internal packages
 
@@ -29,26 +29,7 @@ Root meta-files: `README.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`, `Mak
 
 Stub packages contain a single `doc.go` with the package declaration and a comprehensive implementation plan. When implementing, split into multiple files along the boundaries documented in each `doc.go`.
 
-## Dependency direction
-
-```
-cmd
-  └─ config, logging, check, display
-
-logging → config, term
-display → term
-term → config
-check → config (+ Logger interface)
-
-pipeline → config, logging, probe, naming, planner, ffmpeg, display
-planner → config, probe, logging
-ffmpeg → config, planner, logging
-```
-
-- **config** and **term** have no internal dependencies (config is a true leaf; term depends only on config).
-- **probe** and **naming** stay dependency-free.
-- **display** depends on **term**, not on logging — this decouples presentation from the logger.
-- **pipeline** is the sole orchestrator.
+For the full dependency map and rules, see [architecture.md](../architecture.md).
 
 ## Quick finder
 

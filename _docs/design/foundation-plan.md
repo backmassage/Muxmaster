@@ -109,14 +109,14 @@ cmd/main.go
 | `pipeline` | config, logging, probe, naming, planner, ffmpeg, display | Batch orchestration: discover → process → summarize |
 | `planner` | config, probe, logging | Per-file encode/remux/skip decisions + quality |
 | `ffmpeg` | config, planner, logging | Command building, execution, error classification, retry |
-| `display` | probe | Banner, formatters, render plan logs |
-| `check` | *(none)* | System diagnostics (ffmpeg, ffprobe, VAAPI, x265) |
+| `display` | term | Banner, formatters, render plan logs |
+| `check` | config | System diagnostics (ffmpeg, ffprobe, VAAPI, x265) |
 | `config` | *(none)* | Config struct, flag parsing, defaults, validation |
-| `logging` | *(none)* | Leveled logger, color, file sink |
+| `logging` | config, term | Leveled logger, color, file sink |
 | `naming` | *(none — pure logic)* | Filename parser, output paths, collision resolution |
 | `probe` | *(none — wraps ffprobe)* | ffprobe JSON wrapper, typed ProbeResult |
 
-**Leaf packages** (no internal dependencies, safe to build and test first): `naming`, `probe`, `config`, `logging`, `check`.
+**Leaf packages** (no internal dependencies): `naming`, `probe`, `config`. Near-leaf (single dep): `term`, `check`, `logging`, `display`.
 
 **Key constraint:** `naming` and `probe` must remain dependency-free. All file-level decisions flow through `planner`, which is the only package that combines probe data with config to produce a `FilePlan`.
 

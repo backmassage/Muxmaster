@@ -17,7 +17,7 @@ import (
 
 // version and commit are injected at build time via -ldflags.
 // When built with plain "go build" (no make), these retain their defaults.
-// The Makefile is the authoritative source for VERSION; see CONTRIBUTING.md.
+// The Makefile is the authoritative source for VERSION; see the Makefile for ldflags details.
 var (
 	version = "2.0.0-dev"
 	commit  = "unknown"

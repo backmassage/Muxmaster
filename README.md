@@ -54,9 +54,9 @@ make build
 This produces the `muxmaster` binary in the project root.
 
 ```bash
-make test      # run tests
 make fmt       # format all Go files
-make ci        # vet + fmt + build + test (run before pushing)
+make vet       # run go vet
+make ci        # vet + fmt + docs-naming + build + test (run before pushing)
 make lint      # run golangci-lint (if installed)
 make install   # installs to $(HOME)/bin
 ```
@@ -122,20 +122,13 @@ For the full package map, dependency direction, and "where to change what", see 
 
 ## Documentation
 
-- **Architecture and dependencies:** [_docs/architecture.md](_docs/architecture.md)
-- **Project structure and package map:** [_docs/project/structure.md](_docs/project/structure.md)
-- **Project audit:** [_docs/project/audit.md](_docs/project/audit.md)
-- **Git and workflow guidelines:** [_docs/project/git-guidelines.md](_docs/project/git-guidelines.md)
-- **Design references:** [_docs/design/core-design.md](_docs/design/core-design.md), [_docs/design/foundation-plan.md](_docs/design/foundation-plan.md), [_docs/design/product-spec.md](_docs/design/product-spec.md)
-- **Legacy parity references:** [_docs/legacy/legacy-behavior.md](_docs/legacy/legacy-behavior.md), `_docs/legacy/Muxmaster.sh`
-- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+See [_docs/index.md](_docs/index.md) for the full doc index.
+
+Key references:
+
+- **Architecture and design:** [_docs/architecture.md](_docs/architecture.md)
+- **Implementation reference:** [_docs/design/foundation-plan.md](_docs/design/foundation-plan.md)
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
-
----
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, branching conventions, commit format, and code style.
 
 ---
 

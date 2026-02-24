@@ -20,10 +20,10 @@ Last updated: 2026-02-23
 
 ### Internal package layout
 
-- **config** — 3 files: `config.go` (types/defaults), `flags.go` (CLI), `config_test.go`.
+- **config** — 2 files: `config.go` (types/defaults), `flags.go` (CLI).
 - **term** — 1 file: `term.go` (ANSI colors, TTY detection).
 - **logging** — 1 file: `logger.go`. Depends on config + term.
-- **display** — 3 files: `banner.go`, `format.go`, `format_test.go`. Depends on term (not logging).
+- **display** — 2 files: `banner.go`, `format.go`. Depends on term (not logging).
 - **check** — 1 file: `check.go`.
 - **probe**, **naming**, **planner**, **ffmpeg**, **pipeline** — 1 file each (`doc.go`).
 
@@ -35,7 +35,6 @@ Last updated: 2026-02-23
 |-------|--------|
 | README: overview, build, usage, structure, docs links, license | **Pass** |
 | CHANGELOG: Keep a Changelog format, dated entries | **Pass** |
-| CONTRIBUTING: setup, branching, commits, build, code style | **Pass** |
 | Documentation entrypoint | **Pass** |
 | _docs/architecture.md: dependency diagram includes `term` package | **Pass** |
 | _docs/project/structure.md: matches actual code layout | **Pass** |
@@ -61,11 +60,9 @@ Last updated: 2026-02-23
 | Check | Status | Notes |
 |-------|--------|-------|
 | Makefile targets | **Pass** | build, test, vet, fmt, lint, docs-naming, coverage, ci, clean, install. |
-| `make ci` | **Pass** | Runs vet + fmt + build + test. |
-| Unit tests | **Pass** | `config_test.go` (8 test functions), `format_test.go` (3 test functions). |
-| golangci-lint config | **Pass** | `.golangci.yml` with 16 linters and project-specific exclusions. |
-
-**Priority targets for additional tests:** `naming` (parser rules, output paths) and `check` (mock Logger).
+| `make ci` | **Pass** | Runs vet + fmt + docs-naming + build + test. |
+| Unit tests | **None** | No test files. Add when implementing stub packages. |
+| golangci-lint config | **Pass** | `.golangci.yml` with 19 linters and project-specific exclusions. |
 
 ---
 
@@ -85,7 +82,7 @@ Last updated: 2026-02-23
 | Category | Status | Open items |
 |----------|--------|------------|
 | Project structure | Pass | — |
-| Documentation | Pass | Centralized in `README.md` + focused docs under `_docs/` (no separate docs index file) |
+| Documentation | Pass | — |
 | Git practices | Pass | Create `dev` branch when ready |
-| Build & testing | Pass | Add tests for naming, check when implemented |
+| Build & testing | Pass | Add tests when implementing stub packages |
 | Naming | Pass | — |

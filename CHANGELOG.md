@@ -13,16 +13,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - **Architecture:** Extracted `internal/term` package for ANSI colors and TTY detection. `display` now depends on `term` instead of `logging`, breaking the cross-cutting dependency.
 - **Stubs consolidated:** 22 stub files across 5 packages replaced with one `doc.go` per package containing a comprehensive implementation plan. Split into separate files when implementing.
 - **Display stubs:** `outlier.go` and `renderplan.go` TODOs folded into `banner.go` package doc comment.
-- **go.mod:** Fixed Go version from nonexistent `1.26` to `1.23`.
+- **go.mod:** Bumped Go version to `1.26`.
 - **.gitignore:** Stopped ignoring `go.sum` (should be committed per Go modules spec). Added patterns for `dist/`, `*.prof`, `__debug_bin*`.
-- **Makefile:** Added `fmt` target; `ci` now runs `vet + fmt + build + test`; `hooks` target guarded for missing `.git`.
+- **Makefile:** Added `fmt` target; `ci` now runs `vet + fmt + docs-naming + build + test`; `hooks` target guarded for missing `.git`.
 - **Logger:** Removed unused `color` and `filePath` struct fields.
-- **Docs:** Updated architecture diagram, structure guide, and audit to reflect `term` package and consolidated stubs.
+- **Docs:** Merged `core-design.md` into `architecture.md`; added `_docs/index.md` entry point; updated structure, audit, and all cross-references.
+- **cmd layout:** Moved `cmd/muxmaster/main.go` → `cmd/main.go`; removed nesting.
+
+### Added
+
+- `.golangci.yml` with 19 curated linters and project-specific exclusions.
+- `.editorconfig` for cross-editor consistency (Go, Markdown, Makefile, YAML).
+- `_docs/index.md` documentation entry point.
 
 ### Removed
 
 - `testdata/README.md` placeholder — directory will be created when tests need fixtures.
 - 22 individual stub files (replaced by 5 `doc.go` files + 2 display TODOs folded in).
+- `CONTRIBUTING.md` — solo project; workflow info lives in `_docs/project/git-guidelines.md`.
+- `internal/config/config_test.go` and `internal/display/format_test.go` — tests deferred.
 
 ---
 
