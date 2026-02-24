@@ -121,6 +121,8 @@ func defineDisplayFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 	fs.BoolVar(&cfg.Verbose, "v", false, "Same as --verbose")
 	fs.BoolVar(&cfg.CheckOnly, "check", false, "Run system diagnostics and exit")
 	fs.BoolVar(&cfg.CheckOnly, "c", false, "Same as --check")
+	fs.BoolVar(&cfg.AnalyzeOnly, "analyze", false, "Probe all files and print codec/bitrate table")
+	fs.BoolVar(&cfg.AnalyzeOnly, "a", false, "Same as --analyze")
 	fs.StringVar(&cfg.LogFile, "log", "", "Append logs to file")
 	fs.StringVar(&cfg.LogFile, "l", "", "Same as --log")
 }
@@ -177,6 +179,13 @@ func applyNegatedFlags(cfg *Config, n *negatedFlags) {
 func parsePositionalArgs(fs *flag.FlagSet, cfg *Config) error {
 	args := fs.Args()
 	if cfg.CheckOnly {
+		return nil
+	}
+	if cfg.AnalyzeOnly {
+		if len(args) < 1 {
+			return fmt.Errorf("--analyze requires an input directory")
+		}
+		cfg.InputDir = NormalizeDirArg(args[0])
 		return nil
 	}
 	if len(args) != 2 {
@@ -296,6 +305,7 @@ func printUsage(_ *flag.FlagSet, version string) {
 		{"", ""},
 		{"Utility", ""},
 		{"  -l, --log <path>", "Append logs to file"},
+		{"  -a, --analyze", "Probe all files and print codec/bitrate table"},
 		{"  -c, --check", "System diagnostics (ffmpeg, VAAPI, x265, libfdk_aac)"},
 		{"  -V, --version", "Print version and exit"},
 		{"  -h, --help", "Show this help and exit"},

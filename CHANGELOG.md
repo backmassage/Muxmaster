@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
+- **Batch analysis mode** (`--analyze` / `-a`): Probe-only mode that scans all media files in a directory and prints a tabular report of Video Codec, Video Kbps, Audio Codec, and Audio Kbps. Uses IQR-based statistical detection to highlight outliers (`[*]` orange) and extreme outliers (`[!]` red) in both video and audio bitrate columns. Summary prints IQR bounds and counts. Usage: `muxmaster --analyze /path/to/media`.
 - **Audio bitrate reporting:** Per-stream input and output audio bitrates are logged for every processed file. Input bitrate (kbps) is read from `ffprobe`; output shows `copy` for AAC passthrough or the target bitrate (e.g. `256k`) for transcoded streams. Example: `Audio[0]: aac | in: 192 kbps | out: copy`.
 
 ---
