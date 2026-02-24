@@ -21,7 +21,7 @@ Root meta-files: `README.md`, `CHANGELOG.md`, `LICENSE`, `Makefile`, `go.mod`, `
 | **logging** | Implemented | Leveled logger, optional file sink | `logger.go` |
 | **display** | Partial | Banner, byte/bitrate formatting; render-plan and outlier TBD | `banner.go`, `format.go` |
 | **check**   | Implemented | `--check` diagnostics and `CheckDeps` | `check.go` |
-| **probe**   | Stub | ffprobe JSON → typed structs | `doc.go` |
+| **probe**   | Implemented | ffprobe JSON → typed structs, HDR/interlace/HEVC-safe detection | `types.go`, `prober.go`, `hdr.go`, `interlace.go`, `probe_test.go` |
 | **naming**  | Implemented | Filename parsing, output paths, collision, harmonization | `parser.go`, `rules.go`, `postprocess.go`, `outputpath.go`, `collision.go`, `harmonize.go`, `parser_test.go` |
 | **planner** | Partial | Encode vs remux vs skip, quality, audio/subtitle plans | `doc.go`, `types.go` |
 | **ffmpeg**  | Implemented | Command building, execution, retry | `builder.go`, `executor.go`, `errors.go`, `retry.go` |
