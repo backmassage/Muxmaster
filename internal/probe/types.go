@@ -69,6 +69,14 @@ func (p *ProbeResult) VideoBitRate() int64 {
 	return p.Format.BitRate
 }
 
+// AudioBitRate returns the first audio stream's bitrate in bits/sec, or 0.
+func (p *ProbeResult) AudioBitRate() int64 {
+	if len(p.AudioStreams) > 0 && p.AudioStreams[0].BitRate > 0 {
+		return p.AudioStreams[0].BitRate
+	}
+	return 0
+}
+
 // Resolution returns "WxH" for the primary video stream, or "unknown".
 func (p *ProbeResult) Resolution() string {
 	if p.PrimaryVideo == nil || p.PrimaryVideo.Width <= 0 || p.PrimaryVideo.Height <= 0 {
