@@ -1,6 +1,6 @@
 # Core design concepts
 
-This document summarizes the **core design concepts** for the Muxmaster Go rewrite. It is a short entry point; the full technical plan is in [muxmaster-go-foundation-plan-final.md](muxmaster-go-foundation-plan-final.md).
+This document summarizes the **core design concepts** for the Muxmaster Go rewrite. It is a short entry point; the full technical plan is in [foundation-plan.md](foundation-plan.md).
 
 ---
 
@@ -14,7 +14,7 @@ This document summarizes the **core design concepts** for the Muxmaster Go rewri
 
 - **Entrypoint:** `cmd/muxmaster` — parse flags, load config, run either `--check` or the encode/remux pipeline.
 - **Orchestration:** `internal/pipeline` discovers files, builds a TV year-variant index, then for each file: validate → probe → parse name → resolve output path → plan (encode/remux/skip) → execute (with retry) → update stats.
-- **Key packages:** `config`, `logging`, `display`, `check`, `probe`, `naming`, `planner`, `ffmpeg`, `pipeline`. Dependencies flow downward; `probe` and `naming` stay dependency-light.
+- **Key packages:** `config`, `term`, `logging`, `display`, `check`, `probe`, `naming`, `planner`, `ffmpeg`, `pipeline`. Dependencies flow downward; `probe` and `naming` stay dependency-light.
 
 ## Technical choices
 
@@ -32,4 +32,4 @@ This document summarizes the **core design concepts** for the Muxmaster Go rewri
 
 ---
 
-For diagrams, type definitions, migration phases, and behavioral gotchas, see **[muxmaster-go-foundation-plan-final.md](muxmaster-go-foundation-plan-final.md)**.
+For diagrams, type definitions, migration phases, and behavioral gotchas, see **[foundation-plan.md](foundation-plan.md)**.

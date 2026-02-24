@@ -1,5 +1,6 @@
-// Package logging provides a leveled logger with optional ANSI colors and optional file sink.
-// Used by main, check, and (later) pipeline for consistent output and log files.
+// Package logging provides a leveled logger with optional file sink.
+// ANSI colors are managed by [term.Configure]; the logger reads them
+// from the [term] package at write time.
 package logging
 
 import (
@@ -7,90 +8,43 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/backmassage/muxmaster/internal/config"
+	"github.com/backmassage/muxmaster/internal/term"
 )
 
-// Package-level ANSI color codes; set by NewLogger from Config.ColorMode.
-// When ColorNever or not a TTY, these are empty so output is plain text.
-var (
-	Red     = ""
-	Green   = ""
-	Yellow  = ""
-	Orange  = ""
-	Blue    = ""
-	Cyan    = ""
-	Magenta = ""
-	NC      = ""
-)
-
-// Logger writes leveled messages to stdout/stderr and optionally to a log file.
-// Safe for concurrent use; each log line is written under a mutex.
+// Logger writes leveled messages to stdout/stderr and optionally to a log
+// file. All write operations are serialized under a mutex for safe
+// concurrent use.
 type Logger struct {
-	mu       sync.Mutex
-	color    bool
-	file     *os.File
-	filePath string
+	mu   sync.Mutex
+	file *os.File
 }
 
-// NewLogger builds a logger from config: sets global ANSI colors from ColorMode,
-// and opens cfg.LogFile for appending if set. Caller must call Close() when done if LogFile was set.
+// NewLogger initializes terminal colors via [term.Configure] and opens a
+// log file if cfg.LogFile is set. The caller must call [Logger.Close] when
+// finished.
 func NewLogger(cfg *config.Config) (*Logger, error) {
-	l := &Logger{}
-	enable := false
-	switch cfg.ColorMode {
-	case config.ColorAlways:
-		enable = true
-	case config.ColorNever:
-		enable = false
-	case config.ColorAuto:
-		enable = isTerminal(os.Stdout) && os.Getenv("NO_COLOR") == "" && strings.ToLower(os.Getenv("TERM")) != "dumb"
-	}
-	if enable {
-		Red = "\033[1;91m"
-		Green = "\033[1;92m"
-		Yellow = "\033[1;93m"
-		Orange = "\033[1;38;5;208m"
-		Blue = "\033[1;94m"
-		Cyan = "\033[1;96m"
-		Magenta = "\033[1;95m"
-		NC = "\033[0m"
-	} else {
-		Red, Green, Yellow, Orange, Blue, Cyan, Magenta, NC = "", "", "", "", "", "", "", ""
-	}
-	l.color = enable
+	term.Configure(cfg.ColorMode)
 
+	l := &Logger{}
 	if cfg.LogFile != "" {
 		dir := filepath.Dir(cfg.LogFile)
-		if err := os.MkdirAll(dir, 0755); err != nil {
-			return nil, err
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create log directory: %w", err)
 		}
-		f, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		f, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("open log file: %w", err)
 		}
 		l.file = f
-		l.filePath = cfg.LogFile
 	}
 	return l, nil
 }
 
-// isTerminal reports whether f is a character device (e.g. stdout attached to a TTY).
-func isTerminal(f *os.File) bool {
-	if f == nil {
-		return false
-	}
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	return (fi.Mode() & os.ModeCharDevice) != 0
-}
-
-// Close closes the log file if one was opened.
+// Close flushes and closes the log file, if one was opened.
 func (l *Logger) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -102,60 +56,66 @@ func (l *Logger) Close() error {
 	return nil
 }
 
-// line writes one log line: timestamp, level, and text. ERROR goes to stderr; others to stdout. If a log file is set, the plain line is appended there too.
-func (l *Logger) line(level, color, text string) {
+// line writes a single timestamped log entry. ERROR goes to stderr; all
+// others go to stdout. When a log file is open, the plain (uncolored) text
+// is appended there as well.
+func (l *Logger) line(level, ansiColor, text string) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
+	plain := ts + " [" + level + "] " + text + "\n"
+
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	plain := ts + " [" + level + "] " + text + "\n"
+
 	out := os.Stdout
 	if level == "ERROR" {
 		out = os.Stderr
 	}
-	if color != "" {
-		_, _ = io.WriteString(out, ts+" "+color+"["+level+"]"+NC+" "+text+"\n")
+
+	if ansiColor != "" {
+		_, _ = io.WriteString(out, ts+" "+ansiColor+"["+level+"]"+term.NC+" "+text+"\n")
 	} else {
 		_, _ = io.WriteString(out, plain)
 	}
+
 	if l.file != nil {
 		_, _ = io.WriteString(l.file, plain)
 	}
 }
 
-// Info logs at INFO level (blue).
+// Info logs an informational message (blue).
 func (l *Logger) Info(format string, args ...interface{}) {
-	l.line("INFO", Blue, fmt.Sprintf(format, args...))
+	l.line("INFO", term.Blue, fmt.Sprintf(format, args...))
 }
 
-// Success logs at SUCCESS level (green).
+// Success logs a success message (green).
 func (l *Logger) Success(format string, args ...interface{}) {
-	l.line("SUCCESS", Green, fmt.Sprintf(format, args...))
+	l.line("SUCCESS", term.Green, fmt.Sprintf(format, args...))
 }
 
-// Warn logs at WARN level (yellow).
+// Warn logs a warning (yellow).
 func (l *Logger) Warn(format string, args ...interface{}) {
-	l.line("WARN", Yellow, fmt.Sprintf(format, args...))
+	l.line("WARN", term.Yellow, fmt.Sprintf(format, args...))
 }
 
-// Error logs at ERROR level (red), also to stderr.
+// Error logs an error (red) to stderr.
 func (l *Logger) Error(format string, args ...interface{}) {
-	l.line("ERROR", Red, fmt.Sprintf(format, args...))
+	l.line("ERROR", term.Red, fmt.Sprintf(format, args...))
 }
 
-// Render logs at RENDER level (magenta).
+// Render logs a render-plan message (magenta).
 func (l *Logger) Render(format string, args ...interface{}) {
-	l.line("RENDER", Magenta, fmt.Sprintf(format, args...))
+	l.line("RENDER", term.Magenta, fmt.Sprintf(format, args...))
 }
 
-// Outlier logs at OUTLIER level (orange).
+// Outlier logs a bitrate-outlier message (orange).
 func (l *Logger) Outlier(format string, args ...interface{}) {
-	l.line("OUTLIER", Orange, fmt.Sprintf(format, args...))
+	l.line("OUTLIER", term.Orange, fmt.Sprintf(format, args...))
 }
 
-// Debug logs at DEBUG level (cyan) only when verbose; no-op otherwise. Caller should check Verbose before calling if needed.
+// Debug logs a debug message (cyan) only when verbose is true.
 func (l *Logger) Debug(verbose bool, format string, args ...interface{}) {
 	if !verbose {
 		return
 	}
-	l.line("DEBUG", Cyan, fmt.Sprintf(format, args...))
+	l.line("DEBUG", term.Cyan, fmt.Sprintf(format, args...))
 }

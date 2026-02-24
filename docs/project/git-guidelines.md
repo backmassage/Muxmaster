@@ -12,6 +12,7 @@ Recommendations for branching, commits, releases, testing, and building. Optimiz
 | **`dev`** | Ongoing development and feature integration. Default branch for daily work. |
 | **`feature/<short-description>`** | New features. Branch from `dev`; merge back to `dev` when done. Example: `feature/vaapi-encode`. |
 | **`bugfix/<short-description>`** | Bug fixes. Branch from `dev` (or `main` for hotfixes); merge back accordingly. Example: `bugfix/collision-resolver`. |
+| **`hotfix/<short-description>`** | Urgent fixes against `main`. Branch from `main`; merge to both `main` and `dev`. Example: `hotfix/crash-on-empty-dir`. |
 
 **Workflow:** Develop on `dev` or short-lived `feature/*` / `bugfix/*` branches; merge to `main` when cutting a release.
 
@@ -34,6 +35,9 @@ Use clear, concise messages in this form:
 | `docs` | Documentation only (README, CHANGELOG, design docs) |
 | `chore` | Build, tooling, dependencies, no code/docs change |
 | `refactor` | Code change that neither fixes a bug nor adds a feature |
+| `test` | Adding or updating tests |
+| `ci` | CI/CD configuration changes |
+| `perf` | Performance improvement |
 
 **Examples:**
 
@@ -41,11 +45,13 @@ Use clear, concise messages in this form:
 feat: add basic usage guide to README.md
 fix: normalize output path when input has trailing slash
 docs: add GIT_GUIDELINES.md
-chore: bump Go version in go.mod to 1.26
+chore: bump Go version in go.mod to 1.23
 refactor: split flags into defineEncodingFlags and defineBehaviorFlags
 ```
 
 Keep the description in lowercase (except names), and omit a period at the end. Optionally add a body after a blank line for more detail.
+
+A `commit-msg` Git hook is available in `scripts/commit-msg` to validate this format locally. Install it with `make hooks`.
 
 ---
 

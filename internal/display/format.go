@@ -1,5 +1,8 @@
 package display
 
+// format.go implements human-readable size and bitrate formatting for
+// file stats and batch summaries.
+
 import (
 	"fmt"
 )

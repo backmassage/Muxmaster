@@ -18,19 +18,32 @@ Muxmaster is a **single-run CLI** that:
 
 It is an **orchestration layer** over `ffmpeg` and `ffprobe`, not a codec implementation. The Go rewrite replaces a large Bash script with a single static binary and clear package boundaries.
 
-- **Design and layout:** See [docs/INDEX.md](docs/INDEX.md) for the documentation index and [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md) for where to change things in the codebase.
+---
+
+## Quick start
+
+```bash
+# Preview what would be done (no encoding or remuxing)
+muxmaster -d /media/library /out/library
+
+# Encode with VAAPI (default), output to MKV
+muxmaster /media/library /out/library
+
+# Run system diagnostics (ffmpeg, ffprobe, VAAPI, x265, AAC)
+muxmaster -c
+```
 
 ---
 
-## Installation / build
+## Installation and build
 
-**Requirements**
+**Requirements:**
 
-- **Go 1.26+**
+- **Go 1.23+**
 - **ffmpeg** and **ffprobe** on `PATH` (required at runtime)
 - For VAAPI encoding: a supported GPU and `/dev/dri/renderD*` device
 
-**Build**
+**Build:**
 
 ```bash
 git clone <repo-url>
@@ -41,7 +54,10 @@ make build
 This produces the `muxmaster` binary in the project root.
 
 ```bash
-make test      # run tests (go test ./...)
+make test      # run tests
+make fmt       # format all Go files
+make ci        # vet + fmt + build + test (run before pushing)
+make lint      # run golangci-lint (if installed)
 make install   # installs to $(HOME)/bin
 ```
 
@@ -53,31 +69,25 @@ go build -o muxmaster ./cmd/muxmaster
 
 ---
 
-## Basic usage
+## Usage
 
-**Synopsis**
+**Synopsis:**
 
 ```text
 muxmaster [OPTIONS] <input_dir> <output_dir>
 ```
 
-**Examples**
+**Examples:**
 
 ```bash
-# Preview what would be done (no encoding or remuxing)
-muxmaster -d /media/library /out/library
-
-# Encode with VAAPI (default), output to MKV
-muxmaster /media/library /out/library
-
 # CPU encoding, fixed CRF 22
 muxmaster -m cpu -q 22 /media/library /out/library
 
-# Run system diagnostics (ffmpeg, ffprobe, VAAPI, x265, AAC)
-muxmaster -c
+# Preview what would happen
+muxmaster -d /media/library /out/library
 ```
 
-**Option groups**
+**Option groups:**
 
 - **Encoding:** `-m vaapi|cpu`, `-q <quality>`, `--cpu-crf`, `--vaapi-qp`, `-p <preset>`, `--container mkv|mp4`
 - **Behavior:** `-d` dry-run, `-f` overwrite existing, `--strict` no retry fallbacks, `--no-skip-hevc` re-encode HEVC
@@ -91,18 +101,44 @@ Full list:
 muxmaster -h
 ```
 
-**Exit codes**
+**Exit codes:**
 
 - `0` — success (or partial success; batch continues on per-file failure)
 - `1` — fatal error (e.g. bad args, missing ffmpeg, invalid paths)
 
 ---
 
-## Design and docs
+## Project structure
+
+```
+cmd/muxmaster/   CLI entrypoint
+internal/        All application logic (10 packages)
+docs/            Design docs, project reference, legacy scripts
+scripts/         Development tooling (commit hook)
+```
+
+For the full package map, dependency direction, and "where to change what", see [docs/project/structure.md](docs/project/structure.md).
+
+---
+
+## Documentation
 
 - **Documentation index:** [docs/INDEX.md](docs/INDEX.md)
-- **Project structure and “where to change what”:** [docs/PROJECT_STRUCTURE.md](docs/PROJECT_STRUCTURE.md)
-- **Structure audit and recommendations:** [docs/AUDIT.md](docs/AUDIT.md)
-- **Guidelines compliance audit:** [docs/GUIDELINES_AUDIT.md](docs/GUIDELINES_AUDIT.md)
+- **Architecture and dependencies:** [docs/architecture.md](docs/architecture.md)
+- **Project structure:** [docs/project/structure.md](docs/project/structure.md)
+- **Project audit:** [docs/project/audit.md](docs/project/audit.md)
+- **Git guidelines:** [docs/project/git-guidelines.md](docs/project/git-guidelines.md)
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
-- **Git (branching, commits, releases):** [GIT_GUIDELINES.md](GIT_GUIDELINES.md)
+- **Contributing:** [CONTRIBUTING.md](CONTRIBUTING.md)
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, branching conventions, commit format, and code style.
+
+---
+
+## License
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.

@@ -12,14 +12,12 @@ import (
 	"strings"
 )
 
-// version is shown in --version and help; override at build time with -ldflags "-X main.version=...".
-var version = "2.0.0-dev"
-
 // ParseFlags parses os.Args into cfg. On --help or --version it prints and exits.
 // On error it returns non-nil (e.g. unknown flag, missing positional args).
-func ParseFlags(cfg *Config) error {
+// The version parameter is passed from main so the help text reflects the build-time version.
+func ParseFlags(cfg *Config, version string) error {
 	fs := flag.NewFlagSet("muxmaster", flag.ContinueOnError)
-	fs.Usage = func() { printUsage(fs) }
+	fs.Usage = func() { printUsage(fs, version) }
 
 	// Negated/override flags: we capture bools then apply to cfg after Parse,
 	// so that defaults from DefaultConfig() hold unless the user passes the flag.
@@ -38,7 +36,7 @@ func ParseFlags(cfg *Config) error {
 	applyNegatedFlags(cfg, &negated)
 
 	if negated.showHelp {
-		printUsage(fs)
+		printUsage(fs, version)
 		os.Exit(0)
 	}
 	if negated.showVersion {
@@ -107,7 +105,10 @@ func defineBehaviorFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 	fs.BoolVar(&n.force, "f", false, "Same as --force")
 }
 
-// defineDisplayFlags registers --color, --no-color, verbose, --check, --log.
+// defineDisplayFlags registers color, verbose, log, and --check flags.
+// Note: --check is a utility flag conceptually, but is registered here alongside
+// --verbose and --log because it controls what the program outputs rather than
+// how it encodes.
 func defineDisplayFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 	fs.BoolVar(&n.forceColor, "color", false, "Force colored logs")
 	fs.BoolVar(&n.noColor, "no-color", false, "Disable colored logs")
@@ -119,8 +120,9 @@ func defineDisplayFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 	fs.StringVar(&cfg.LogFile, "l", "", "Same as --log")
 }
 
-// defineUtilityFlags registers --version and --help (exit after printing).
-func defineUtilityFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
+// defineUtilityFlags registers --version and --help (both cause exit after printing).
+// The cfg parameter is unused but kept for signature consistency with other define* functions.
+func defineUtilityFlags(fs *flag.FlagSet, _ *Config, n *negatedFlags) {
 	fs.BoolVar(&n.showVersion, "version", false, "Print version and exit")
 	fs.BoolVar(&n.showVersion, "V", false, "Same as --version")
 	fs.BoolVar(&n.showHelp, "help", false, "Show this help and exit")
@@ -230,7 +232,7 @@ func parseInt(s, name string) (int, error) {
 }
 
 // printUsage writes the help text to stderr. Column-aligned for readability.
-func printUsage(fs *flag.FlagSet) {
+func printUsage(_ *flag.FlagSet, version string) {
 	const col1 = 28 // width of "  -x, --long-name <arg>  "
 	lines := []struct {
 		flags string

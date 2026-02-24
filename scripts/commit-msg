@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Git commit-msg hook: validates conventional commit format.
+# Install: cp scripts/commit-msg .git/hooks/commit-msg && chmod +x .git/hooks/commit-msg
+
+MSG=$(head -1 "$1")
+
+# Allow merge commits
+if echo "$MSG" | grep -qE '^Merge '; then
+    exit 0
+fi
+
+# Validate format: type: description
+if ! echo "$MSG" | grep -qE '^(feat|fix|docs|chore|refactor|test|ci|perf): .+$'; then
+    echo "ERROR: Commit message must match: type: description"
+    echo "  Valid types: feat, fix, docs, chore, refactor, test, ci, perf"
+    echo "  Example:     feat: add VAAPI encode path"
+    echo ""
+    echo "  Got: $MSG"
+    exit 1
+fi

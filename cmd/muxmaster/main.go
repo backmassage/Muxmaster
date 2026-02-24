@@ -1,5 +1,7 @@
-// Command muxmaster is the entrypoint for the Muxmaster media encoder CLI.
-// It parses flags, validates config and paths, and either runs system check (--check) or the encode/remux pipeline.
+// Command muxmaster is the CLI entrypoint for the Muxmaster media encoder.
+//
+// It parses flags, validates configuration and paths, and either runs
+// system diagnostics (--check) or the encode/remux pipeline.
 package main
 
 import (
@@ -13,16 +15,20 @@ import (
 	"github.com/backmassage/muxmaster/internal/logging"
 )
 
-// version and commit are set at build time via -ldflags (e.g. Makefile).
+// version and commit are injected at build time via -ldflags.
+// When built with plain "go build" (no make), these retain their defaults.
+// The Makefile is the authoritative source for VERSION; see CONTRIBUTING.md.
 var (
 	version = "2.0.0-dev"
 	commit  = "unknown"
 )
 
 func main() {
-	// 1. Load config from defaults and CLI flags; exit on parse or validation error.
+	// Phase 1: Bootstrap — the logger doesn't exist yet, so errors go
+	// directly to stderr via fmt. Once NewLogger succeeds, all output
+	// goes through the logger for consistent formatting and log-file capture.
 	cfg := config.DefaultConfig()
-	if err := config.ParseFlags(&cfg); err != nil {
+	if err := config.ParseFlags(&cfg, version); err != nil {
 		fmt.Fprintf(os.Stderr, "muxmaster: %v\n", err)
 		os.Exit(1)
 	}
@@ -39,21 +45,22 @@ func main() {
 	}
 	defer log.Close()
 
+	// Phase 2: Logger available — all output goes through log from here on.
 	display.PrintBanner()
 
-	// 2. If user asked for system check, run it and exit successfully.
 	if cfg.CheckOnly {
 		check.RunCheck(&cfg, log)
 		os.Exit(0)
 	}
 
-	// 3. Resolve and validate paths: input must exist, output is created if needed, output must not be inside input.
+	// Resolve and validate paths: input must exist, output is created if
+	// needed, and output must not be inside input (prevents recursive processing).
 	inputAbs, err := absPath(cfg.InputDir)
 	if err != nil {
 		log.Error("Input not found: %s", cfg.InputDir)
 		os.Exit(1)
 	}
-	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
+	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
 		log.Error("Cannot create output directory: %s", cfg.OutputDir)
 		os.Exit(1)
 	}
@@ -68,25 +75,26 @@ func main() {
 		os.Exit(1)
 	}
 
-	log.Info("=== Muxmaster v%s ===", version)
+	log.Info("=== Muxmaster v%s (%s) ===", version, commit)
 	log.Info("In:  %s", cfg.InputDir)
 	log.Info("Out: %s", cfg.OutputDir)
 	if cfg.DryRun {
-		log.Warn("DRY RUN")
+		log.Warn("DRY RUN — no files will be written")
 	}
 	log.Info("")
 
-	// 4. Ensure ffmpeg/ffprobe and (for the chosen mode) encoder are available; fail fast otherwise.
+	// Fail fast if ffmpeg/ffprobe or the chosen encoder are unavailable.
 	if err := check.CheckDeps(&cfg); err != nil {
 		log.Error("%v", err)
 		os.Exit(1)
 	}
 
-	// 5. TODO: Run pipeline (discover -> probe -> plan -> execute). For now we only log readiness.
+	// TODO: Run pipeline (discover → probe → plan → execute).
 	log.Info("Ready. (Pipeline not yet implemented.)")
 }
 
-// absPath returns the absolute path with symlinks resolved, for comparing input vs output hierarchy.
+// absPath returns the absolute, symlink-resolved path for safe comparison
+// of input vs output directory hierarchies.
 func absPath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
