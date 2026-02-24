@@ -22,7 +22,7 @@ Root meta-files: `README.md`, `CHANGELOG.md`, `LICENSE`, `Makefile`, `go.mod`, `
 | **display** | Partial | Banner, byte/bitrate formatting; render-plan and outlier TBD | `banner.go`, `format.go` |
 | **check**   | Implemented | `--check` diagnostics and `CheckDeps` | `check.go` |
 | **probe**   | Stub | ffprobe JSON → typed structs | `doc.go` |
-| **naming**  | Stub | Filename parsing, output paths, collision | `doc.go` |
+| **naming**  | Implemented | Filename parsing, output paths, collision, harmonization | `parser.go`, `rules.go`, `postprocess.go`, `outputpath.go`, `collision.go`, `harmonize.go`, `parser_test.go` |
 | **planner** | Partial | Encode vs remux vs skip, quality, audio/subtitle plans | `doc.go`, `types.go` |
 | **ffmpeg**  | Implemented | Command building, execution, retry | `builder.go`, `executor.go`, `errors.go`, `retry.go` |
 | **pipeline**| Stub | File discovery, per-file loop, stats | `doc.go` |
