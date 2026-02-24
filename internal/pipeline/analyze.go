@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -37,20 +38,32 @@ func Analyze(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		return
 	}
 
-	log.Info("Analyzing %d files in %s …", len(files), cfg.InputDir)
+	total := len(files)
+	log.Info("Analyzing %d files in %s …", total, cfg.InputDir)
 	fmt.Println()
 
+	isTTY := term.IsTerminal(os.Stdout)
 	var rows []fileRow
+	var skipped int
 	var videoKbpsVals, audioKbpsVals []float64
 
-	for _, path := range files {
+	for i, path := range files {
 		if ctx.Err() != nil {
+			if isTTY {
+				clearProgress()
+			}
 			log.Warn("Interrupted")
 			return
 		}
 
+		printProgress(isTTY, i+1, total, skipped, filepath.Base(path))
+
 		pr, err := probe.Probe(ctx, path)
 		if err != nil {
+			skipped++
+			if isTTY {
+				clearProgress()
+			}
 			log.Warn("Skip (probe failed): %s", filepath.Base(path))
 			continue
 		}
@@ -74,6 +87,10 @@ func Analyze(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		if row.AudioKbps > 0 {
 			audioKbpsVals = append(audioKbpsVals, float64(row.AudioKbps))
 		}
+	}
+
+	if isTTY {
+		clearProgress()
 	}
 
 	if len(rows) == 0 {
@@ -288,6 +305,37 @@ func colorPad(s string, width int, class string) string {
 	default:
 		return padded
 	}
+}
+
+// printProgress shows a live probe counter. On a TTY it writes an
+// inline \r-overwritten line; otherwise it is a no-op (the skip warnings
+// already provide enough breadcrumbs in piped/logged output).
+func printProgress(isTTY bool, current, total, skipped int, name string) {
+	if !isTTY {
+		return
+	}
+	pct := current * 100 / total
+	status := fmt.Sprintf("  Probing [%d/%d] %d%% ", current, total, pct)
+	if skipped > 0 {
+		status += fmt.Sprintf("(%d skipped) ", skipped)
+	}
+
+	maxName := 40
+	if len(name) > maxName {
+		name = name[:maxName-1] + "…"
+	}
+	status += name
+
+	// Pad to 80 chars to overwrite previous longer lines, then \r.
+	if len(status) < 80 {
+		status += strings.Repeat(" ", 80-len(status))
+	}
+	fmt.Fprintf(os.Stdout, "\r%s", status)
+}
+
+// clearProgress erases the inline progress line on a TTY.
+func clearProgress() {
+	fmt.Fprintf(os.Stdout, "\r%s\r", strings.Repeat(" ", 80))
 }
 
 // percentile computes the p-th percentile using linear interpolation.
