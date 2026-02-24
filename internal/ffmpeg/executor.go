@@ -3,31 +3,30 @@ package ffmpeg
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
 
 	"github.com/backmassage/muxmaster/internal/config"
+	"github.com/backmassage/muxmaster/internal/planner"
 )
 
 // ExecResult holds the outcome of a single ffmpeg invocation.
 type ExecResult struct {
-	Stderr string // captured stderr (always populated)
-	Err    error  // non-nil when ffmpeg exits non-zero or fails to start
+	Stderr string
+	Err    error
 }
 
-// Execute runs ffmpeg with the supplied arguments, captures stderr into a
-// buffer, and optionally tees it to os.Stderr when verbose mode or FPS
-// display is active. This matches the legacy run_ffmpeg_logged behavior
-// without requiring temporary error files.
-func Execute(ctx context.Context, args []string, cfg *config.Config) ExecResult {
-	if len(args) == 0 {
-		return ExecResult{Err: fmt.Errorf("ffmpeg: empty argument list")}
-	}
+// Execute builds and runs the ffmpeg command for a file. When verbose or
+// show-fps is enabled, stderr is tee'd to os.Stderr in real time; otherwise
+// it is captured silently for retry classification.
+//
+// This mirrors the legacy run_ffmpeg_logged helper and the stderr capture
+// strategy documented in foundation-plan.md §7.3.
+func Execute(ctx context.Context, cfg *config.Config, plan *planner.FilePlan, rs *RetryState) ExecResult {
+	args := Build(cfg, plan, rs)
 
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Stdin = nil
 
 	var stderrBuf bytes.Buffer
 	if cfg.Verbose || cfg.ShowFfmpegFPS {

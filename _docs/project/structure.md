@@ -23,9 +23,9 @@ Root meta-files: `README.md`, `CHANGELOG.md`, `LICENSE`, `Makefile`, `go.mod`, `
 | **check**   | Implemented | `--check` diagnostics and `CheckDeps` | `check.go` |
 | **probe**   | Implemented | ffprobe JSON → typed structs, HDR/interlace/HEVC-safe detection | `types.go`, `prober.go`, `hdr.go`, `interlace.go`, `probe_test.go` |
 | **naming**  | Implemented | Filename parsing, output paths, collision, harmonization | `parser.go`, `rules.go`, `postprocess.go`, `outputpath.go`, `collision.go`, `harmonize.go`, `parser_test.go` |
-| **planner** | Partial | Encode vs remux vs skip, quality, audio/subtitle plans | `doc.go`, `types.go` |
+| **planner** | Partial | Encode vs remux vs skip, quality, audio/subtitle plans | `types.go`, `planner.go` |
 | **ffmpeg**  | Implemented | Command building, execution, retry | `builder.go`, `executor.go`, `errors.go`, `retry.go` |
-| **pipeline**| Stub | File discovery, per-file loop, stats | `doc.go` |
+| **pipeline**| Implemented | File discovery, per-file processing, batch stats | `discover.go`, `runner.go`, `stats.go`, `pipeline_test.go` |
 
 Remaining stub packages contain a single `doc.go` with the package declaration and a comprehensive implementation plan. When implementing, split into multiple files along the boundaries documented in each `doc.go`.
 
