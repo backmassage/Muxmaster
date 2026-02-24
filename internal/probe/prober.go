@@ -47,7 +47,7 @@ type ffprobeOutput struct {
 
 type ffprobeFormat struct {
 	Filename       string            `json:"filename"`
-	NbStreams       int               `json:"nb_streams"`
+	NbStreams      int               `json:"nb_streams"`
 	FormatName     string            `json:"format_name"`
 	FormatLongName string            `json:"format_long_name"`
 	Duration       string            `json:"duration"`
@@ -108,7 +108,7 @@ func buildResult(raw *ffprobeOutput) *ProbeResult {
 func convertFormat(f *ffprobeFormat) FormatInfo {
 	return FormatInfo{
 		Filename:       f.Filename,
-		NbStreams:       f.NbStreams,
+		NbStreams:      f.NbStreams,
 		FormatName:     f.FormatName,
 		FormatLongName: f.FormatLongName,
 		Duration:       parseFloat(f.Duration),

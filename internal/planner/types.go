@@ -49,10 +49,10 @@ type FilePlan struct {
 	IncludeAttach bool
 
 	// Output.
-	InputPath       string
-	OutputPath      string
-	Container       config.Container
-	VideoStreamIdx  int
+	InputPath        string
+	OutputPath       string
+	Container        config.Container
+	VideoStreamIdx   int
 	AudioStreamCount int
 }
 

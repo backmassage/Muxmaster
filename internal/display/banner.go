@@ -21,11 +21,11 @@ var bannerLines = []string{
 
 // rainbow cycles through bold ANSI colors, one per banner line.
 var rainbow = []string{
-	"\033[1;91m", // red
+	"\033[1;91m",       // red
 	"\033[1;38;5;208m", // orange
-	"\033[1;93m", // yellow
-	"\033[1;92m", // green
-	"\033[1;94m", // blue
+	"\033[1;93m",       // yellow
+	"\033[1;92m",       // green
+	"\033[1;94m",       // blue
 }
 
 // PrintBanner writes the Muxmaster ASCII art logo to stdout.

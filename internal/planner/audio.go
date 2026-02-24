@@ -2,6 +2,7 @@ package planner
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/probe"
@@ -21,7 +22,7 @@ func BuildAudioPlan(cfg *config.Config, pr *probe.ProbeResult) AudioPlan {
 
 	allAAC := true
 	for _, a := range pr.AudioStreams {
-		if a.Codec != "aac" {
+		if !strings.EqualFold(a.Codec, "aac") {
 			allAAC = false
 			break
 		}
@@ -39,7 +40,7 @@ func BuildAudioPlan(cfg *config.Config, pr *probe.ProbeResult) AudioPlan {
 			SampleRate:  cfg.AudioSampleRate,
 		}
 
-		if a.Codec == "aac" {
+		if strings.EqualFold(a.Codec, "aac") {
 			asp.Copy = true
 			streams = append(streams, asp)
 			continue

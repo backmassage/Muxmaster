@@ -4,7 +4,9 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -180,6 +182,11 @@ func (c *Config) Validate() error {
 	default:
 		return errors.New("invalid HDR mode (use 'preserve' or 'tonemap')")
 	}
+	normalizedBitrate, err := normalizeAudioBitrate(c.AudioBitrate)
+	if err != nil {
+		return err
+	}
+	c.AudioBitrate = normalizedBitrate
 
 	if c.CheckOnly {
 		return nil
@@ -188,6 +195,25 @@ func (c *Config) Validate() error {
 		return errors.New("need exactly input_dir and output_dir")
 	}
 	return nil
+}
+
+// normalizeAudioBitrate validates and canonicalizes user bitrate input.
+// Accepted forms: "256", "256k", "256K", "256kbps". Output is "<n>k".
+func normalizeAudioBitrate(raw string) (string, error) {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	if s == "" {
+		return "", errors.New("audio bitrate must not be empty")
+	}
+	if strings.HasSuffix(s, "kbps") {
+		s = strings.TrimSpace(strings.TrimSuffix(s, "kbps"))
+	} else if strings.HasSuffix(s, "k") {
+		s = strings.TrimSpace(strings.TrimSuffix(s, "k"))
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return "", fmt.Errorf("invalid audio bitrate %q (use positive Kbps value, e.g. 128k)", raw)
+	}
+	return fmt.Sprintf("%dk", n), nil
 }
 
 // ValidatePaths ensures the resolved output directory is not inside (or equal

@@ -3,7 +3,7 @@ package probe
 // FormatInfo holds container-level metadata from ffprobe's format section.
 type FormatInfo struct {
 	Filename       string
-	NbStreams       int
+	NbStreams      int
 	FormatName     string
 	FormatLongName string
 	Duration       float64
@@ -51,11 +51,11 @@ type SubtitleStream struct {
 // ProbeResult is the fully parsed output of a single ffprobe JSON call.
 // PrimaryVideo is the first non-attached-pic video stream (nil if none).
 type ProbeResult struct {
-	Format         FormatInfo
-	PrimaryVideo   *VideoStream
+	Format          FormatInfo
+	PrimaryVideo    *VideoStream
 	AudioStreams    []AudioStream
 	SubtitleStreams []SubtitleStream
-	HasBitmapSubs  bool
+	HasBitmapSubs   bool
 }
 
 // VideoBitRate returns the primary video stream bitrate in bits/sec,

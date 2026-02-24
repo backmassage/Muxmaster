@@ -24,7 +24,7 @@ func h264SDR() *probe.ProbeResult {
 		},
 		AudioStreams:    []probe.AudioStream{{Codec: "ac3", Channels: 6, SampleRate: 48000}},
 		SubtitleStreams: []probe.SubtitleStream{{Codec: "ass", Language: "eng"}},
-		Format:         probe.FormatInfo{BitRate: 9000000},
+		Format:          probe.FormatInfo{BitRate: 9000000},
 	}
 }
 
@@ -35,7 +35,7 @@ func hevcEdgeSafe() *probe.ProbeResult {
 			Width: 1920, Height: 1080, BitRate: 5000000,
 		},
 		AudioStreams: []probe.AudioStream{{Codec: "aac", Channels: 2, SampleRate: 48000}},
-		Format:      probe.FormatInfo{BitRate: 6000000},
+		Format:       probe.FormatInfo{BitRate: 6000000},
 	}
 }
 
@@ -46,7 +46,7 @@ func hevcUnsafe() *probe.ProbeResult {
 			Width: 1920, Height: 1080, BitRate: 5000000,
 		},
 		AudioStreams: []probe.AudioStream{{Codec: "flac", Channels: 2, SampleRate: 48000}},
-		Format:      probe.FormatInfo{BitRate: 6000000},
+		Format:       probe.FormatInfo{BitRate: 6000000},
 	}
 }
 
@@ -59,7 +59,7 @@ func hdr10File() *probe.ProbeResult {
 			FieldOrder: "progressive",
 		},
 		AudioStreams: []probe.AudioStream{{Codec: "eac3", Channels: 6, SampleRate: 48000}},
-		Format:      probe.FormatInfo{BitRate: 35000000},
+		Format:       probe.FormatInfo{BitRate: 35000000},
 	}
 }
 
@@ -71,7 +71,7 @@ func interlacedFile() *probe.ProbeResult {
 			FieldOrder: "tt",
 		},
 		AudioStreams: []probe.AudioStream{{Codec: "mp2", Channels: 2, SampleRate: 48000}},
-		Format:      probe.FormatInfo{BitRate: 4000000},
+		Format:       probe.FormatInfo{BitRate: 4000000},
 	}
 }
 
@@ -409,7 +409,7 @@ func TestBuildAudioPlan_ChannelClamp(t *testing.T) {
 	cfg.AudioChannels = 2
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
-		AudioStreams:  []probe.AudioStream{{Codec: "dts", Channels: 8, SampleRate: 48000}},
+		AudioStreams: []probe.AudioStream{{Codec: "dts", Channels: 8, SampleRate: 48000}},
 	}
 	ap := BuildAudioPlan(cfg, pr)
 	if ap.Streams[0].Channels != 2 {
@@ -422,7 +422,7 @@ func TestBuildAudioPlan_LayoutFilter(t *testing.T) {
 	cfg.MatchAudioLayout = true
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
-		AudioStreams:  []probe.AudioStream{{Codec: "ac3", Channels: 2, SampleRate: 48000}},
+		AudioStreams: []probe.AudioStream{{Codec: "ac3", Channels: 2, SampleRate: 48000}},
 	}
 	ap := BuildAudioPlan(cfg, pr)
 	s := ap.Streams[0]
@@ -443,7 +443,7 @@ func TestBuildAudioPlan_LayoutFilterMono(t *testing.T) {
 	cfg.AudioChannels = 1
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
-		AudioStreams:  []probe.AudioStream{{Codec: "ac3", Channels: 1, SampleRate: 48000}},
+		AudioStreams: []probe.AudioStream{{Codec: "ac3", Channels: 1, SampleRate: 48000}},
 	}
 	ap := BuildAudioPlan(cfg, pr)
 	if !strings.Contains(ap.Streams[0].FilterStr, "channel_layouts=mono") {
@@ -456,7 +456,7 @@ func TestBuildAudioPlan_NoLayoutFilter(t *testing.T) {
 	cfg.MatchAudioLayout = false
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
-		AudioStreams:  []probe.AudioStream{{Codec: "ac3", Channels: 2, SampleRate: 48000}},
+		AudioStreams: []probe.AudioStream{{Codec: "ac3", Channels: 2, SampleRate: 48000}},
 	}
 	ap := BuildAudioPlan(cfg, pr)
 	if ap.Streams[0].NeedsFilter {
@@ -470,7 +470,7 @@ func TestBuildAudioPlan_HighChannelNoLayout(t *testing.T) {
 	cfg.AudioChannels = 6
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
-		AudioStreams:  []probe.AudioStream{{Codec: "dts", Channels: 6, SampleRate: 48000}},
+		AudioStreams: []probe.AudioStream{{Codec: "dts", Channels: 6, SampleRate: 48000}},
 	}
 	ap := BuildAudioPlan(cfg, pr)
 	s := ap.Streams[0]
@@ -498,7 +498,7 @@ func TestBuildSubtitlePlan_MP4TextSubs(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.OutputContainer = config.ContainerMP4
 	pr := &probe.ProbeResult{
-		PrimaryVideo:   &probe.VideoStream{Codec: "h264"},
+		PrimaryVideo:    &probe.VideoStream{Codec: "h264"},
 		SubtitleStreams: []probe.SubtitleStream{{Codec: "srt"}},
 	}
 	sp := BuildSubtitlePlan(cfg, pr)
@@ -511,9 +511,9 @@ func TestBuildSubtitlePlan_MP4BitmapSkip(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.OutputContainer = config.ContainerMP4
 	pr := &probe.ProbeResult{
-		PrimaryVideo:   &probe.VideoStream{Codec: "h264"},
+		PrimaryVideo:    &probe.VideoStream{Codec: "h264"},
 		SubtitleStreams: []probe.SubtitleStream{{Index: 3, Codec: "hdmv_pgs_subtitle", IsBitmap: true}},
-		HasBitmapSubs:  true,
+		HasBitmapSubs:   true,
 	}
 	sp := BuildSubtitlePlan(cfg, pr)
 	if sp.Include {
@@ -573,7 +573,7 @@ func TestBuildSubtitlePlan_NoSubs(t *testing.T) {
 func TestBuildDispositions_SingleAudio(t *testing.T) {
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
-		AudioStreams:  []probe.AudioStream{{Codec: "aac"}},
+		AudioStreams: []probe.AudioStream{{Codec: "aac"}},
 	}
 	opts := BuildDispositions(pr)
 	if len(opts) != 4 { // -disposition:v:0 default -disposition:a:0 default

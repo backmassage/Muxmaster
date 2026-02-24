@@ -9,7 +9,7 @@ func (p *ProbeResult) IsInterlaced() bool {
 	if p.PrimaryVideo == nil {
 		return false
 	}
-	switch p.PrimaryVideo.FieldOrder {
+	switch strings.ToLower(strings.TrimSpace(p.PrimaryVideo.FieldOrder)) {
 	case "tt", "bb", "tb", "bt":
 		return true
 	}
