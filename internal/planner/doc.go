@@ -1,14 +1,13 @@
 // Package planner decides per-file action (encode, remux, or skip) and
 // builds a FilePlan that the ffmpeg package consumes.
 //
-// Implemented:
-//   - FilePlan, Action, AudioPlan, AudioStreamPlan, SubtitlePlan, AttachmentPlan (types.go)
-//   - BuildPlan: decision matrix with HEVC edge-safe check, basic video/audio/subtitle/
-//     disposition plans (planner.go)
-//
-// Planned additions (split into dedicated files when implementing):
-//   - SmartQuality: per-file QP/CRF from resolution/bitrate with configurable bias (quality.go)
-//   - EstimateBitrate: ratio tables and codec/resolution biases (estimation.go)
-//   - BuildVideoFilter: HDR tonemap filter chains (filter.go)
-//   - Advanced audio layout normalization (audio.go)
+// Files:
+//   - types.go:       FilePlan, Action, AudioPlan, AudioStreamPlan, SubtitlePlan, AttachmentPlan
+//   - planner.go:     BuildPlan entry point — wires all sub-plans into a FilePlan
+//   - quality.go:     SmartQuality — per-file QP/CRF from resolution/bitrate curves
+//   - estimation.go:  EstimateBitrate — ratio tables with codec/resolution/bitrate biases
+//   - filter.go:      BuildVideoFilter, BuildColorOpts — deinterlace, HDR tonemap, VAAPI hwupload
+//   - audio.go:       BuildAudioPlan — per-stream strategy with MATCH_AUDIO_LAYOUT filters
+//   - subtitle.go:    BuildSubtitlePlan, BuildAttachmentPlan
+//   - disposition.go: BuildDispositions — default video + first audio stream flags
 package planner
