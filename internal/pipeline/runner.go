@@ -123,7 +123,6 @@ func processFile(
 	plan.InputPath = path
 	plan.OutputPath = outputPath
 	plan.Container = cfg.OutputContainer
-	plan.VideoStreamIdx = pr.PrimaryVideo.Index
 
 	if plan.QualityNote != "" {
 		if strings.Contains(plan.QualityNote, "not browser-safe") {
@@ -383,6 +382,9 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 
 func logFileStats(log *logging.Logger, pr *probe.ProbeResult) {
 	v := pr.PrimaryVideo
+	if v == nil {
+		return
+	}
 	resolution := pr.Resolution()
 	bitrateKbps := pr.VideoBitRate() / 1000
 	bitrateLabel := display.FormatBitrateLabel(bitrateKbps)

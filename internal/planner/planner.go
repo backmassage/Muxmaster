@@ -79,5 +79,8 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 	plan.DispositionOpts = BuildDispositions(pr)
 
 	plan.AudioStreamCount = len(pr.AudioStreams)
+	if v != nil {
+		plan.VideoStreamIdx = v.Index
+	}
 	return plan
 }

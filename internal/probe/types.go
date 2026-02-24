@@ -1,5 +1,7 @@
 package probe
 
+import "strconv"
+
 // FormatInfo holds container-level metadata from ffprobe's format section.
 type FormatInfo struct {
 	Filename       string
@@ -82,27 +84,5 @@ func (p *ProbeResult) Resolution() string {
 	if p.PrimaryVideo == nil || p.PrimaryVideo.Width <= 0 || p.PrimaryVideo.Height <= 0 {
 		return "unknown"
 	}
-	return itoa(p.PrimaryVideo.Width) + "x" + itoa(p.PrimaryVideo.Height)
-}
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		buf[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
+	return strconv.Itoa(p.PrimaryVideo.Width) + "x" + strconv.Itoa(p.PrimaryVideo.Height)
 }

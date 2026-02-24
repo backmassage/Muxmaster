@@ -217,11 +217,11 @@ func TestSmartQuality_ClampRanges(t *testing.T) {
 		Format:       probe.FormatInfo{BitRate: 250000},
 	}
 	q := SmartQuality(defaultCfg(), pr)
-	if q.CpuCRF > cpuCRFMax {
-		t.Errorf("CRF %d exceeds max %d", q.CpuCRF, cpuCRFMax)
+	if q.CpuCRF > CpuCRFMax {
+		t.Errorf("CRF %d exceeds max %d", q.CpuCRF, CpuCRFMax)
 	}
-	if q.VaapiQP > vaapiQPMax {
-		t.Errorf("QP %d exceeds max %d", q.VaapiQP, vaapiQPMax)
+	if q.VaapiQP > VaapiQPMax {
+		t.Errorf("QP %d exceeds max %d", q.VaapiQP, VaapiQPMax)
 	}
 }
 

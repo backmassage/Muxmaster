@@ -55,8 +55,8 @@ func SmartQuality(cfg *config.Config, pr *probe.ProbeResult) QualityResult {
 	cpuAdj := cpuResolutionCurve(pixels) + cpuBitrateCurve(bitrateKbps)
 	vaapiAdj := vaapiResolutionCurve(pixels) + vaapiBitrateCurve(bitrateKbps)
 
-	selectedCRF := clamp(cfg.CpuCRF+cpuAdj+cfg.SmartQualityBias, cpuCRFMin, cpuCRFMax)
-	selectedQP := clamp(cfg.VaapiQP+vaapiAdj+cfg.SmartQualityBias, vaapiQPMin, vaapiQPMax)
+	selectedCRF := Clamp(cfg.CpuCRF+cpuAdj+cfg.SmartQualityBias, CpuCRFMin, CpuCRFMax)
+	selectedQP := Clamp(cfg.VaapiQP+vaapiAdj+cfg.SmartQualityBias, VaapiQPMin, VaapiQPMax)
 
 	note := fmt.Sprintf("smart (%s, %s, cpu_adj=%d, vaapi_adj=%d, smart_bias=%d, cpu_crf=%d, vaapi_qp=%d, mode=%s)",
 		resLabel, bitrateLabel, cpuAdj, vaapiAdj, cfg.SmartQualityBias, selectedCRF, selectedQP, cfg.EncoderMode)
@@ -158,15 +158,17 @@ func modeLabel(cfg *config.Config) string {
 	return "CPU_CRF"
 }
 
-// Quality clamp ranges from the legacy script.
+// Quality clamp ranges from the legacy script. Exported for reuse by the
+// retry engine in package ffmpeg.
 const (
-	cpuCRFMin  = 16
-	cpuCRFMax  = 30
-	vaapiQPMin = 14
-	vaapiQPMax = 36
+	CpuCRFMin  = 16
+	CpuCRFMax  = 30
+	VaapiQPMin = 14
+	VaapiQPMax = 36
 )
 
-func clamp(v, lo, hi int) int {
+// Clamp restricts v to the range [lo, hi].
+func Clamp(v, lo, hi int) int {
 	if v < lo {
 		return lo
 	}

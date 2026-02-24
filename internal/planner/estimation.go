@@ -50,7 +50,7 @@ func EstimateBitrate(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF 
 	// Bitrate bias.
 	ratio += bitrateBias(inputKbps)
 
-	ratio = clamp(ratio, 220, 1050)
+	ratio = Clamp(ratio, 220, 1050)
 
 	lowRatio := ratio * 75 / 100
 	highRatio := ratio * 145 / 100

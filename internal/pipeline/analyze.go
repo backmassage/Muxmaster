@@ -23,7 +23,6 @@ type fileRow struct {
 	VideoCodec string
 	VideoKbps  int64
 	AudioDesc  string // e.g. "aac 2ch" or "ac3 6ch"
-	AudioKbps  int64
 }
 
 // Analyze discovers media files, probes each one, and prints a tabular
@@ -46,7 +45,7 @@ func Analyze(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	isTTY := term.IsTerminal(os.Stdout)
 	var rows []fileRow
 	var skipped int
-	var videoKbpsVals, audioKbpsVals []float64
+	var videoKbpsVals []float64
 
 	for i, path := range files {
 		if ctx.Err() != nil {
@@ -79,15 +78,11 @@ func Analyze(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 		if len(pr.AudioStreams) > 0 {
 			a := pr.AudioStreams[0]
 			row.AudioDesc = fmtAudioDesc(a.Codec, a.Channels)
-			row.AudioKbps = a.BitRate / 1000
 		}
 
 		rows = append(rows, row)
 		if row.VideoKbps > 0 {
 			videoKbpsVals = append(videoKbpsVals, float64(row.VideoKbps))
-		}
-		if row.AudioKbps > 0 {
-			audioKbpsVals = append(audioKbpsVals, float64(row.AudioKbps))
 		}
 	}
 
@@ -101,19 +96,18 @@ func Analyze(ctx context.Context, cfg *config.Config, log *logging.Logger) {
 	}
 
 	vStats := computeStats(videoKbpsVals)
-	aStats := computeStats(audioKbpsVals)
 
-	outliers, extremes := printAnalysisTable(rows, vStats, aStats)
-	printAnalysisSummary(log, len(rows), skipped, outliers, extremes, vStats, aStats)
+	outliers, extremes := printAnalysisTable(rows, vStats)
+	printAnalysisSummary(log, len(rows), skipped, outliers, extremes, vStats)
 }
 
 // iqrBounds holds the IQR-based thresholds for outlier classification.
 type iqrBounds struct {
 	q1, q3    float64
-	outlierLo float64 // Q1 - 1.5*IQR
-	outlierHi float64 // Q3 + 1.5*IQR
-	extremeLo float64 // Q1 - 3.0*IQR
-	extremeHi float64 // Q3 + 3.0*IQR
+	outlierLo float64 // Q1 - 1.5*IQR.
+	outlierHi float64 // Q3 + 1.5*IQR.
+	extremeLo float64 // Q1 - 3.0*IQR.
+	extremeHi float64 // Q3 + 3.0*IQR.
 	valid     bool
 }
 
@@ -155,15 +149,14 @@ func (b *iqrBounds) classify(v float64) string {
 	return ""
 }
 
-func printAnalysisTable(rows []fileRow, vStats, aStats iqrBounds) (outliers, extremes int) {
+func printAnalysisTable(rows []fileRow, vStats iqrBounds) (outliers, extremes int) {
 	// Column headers.
 	const (
-		hFile  = "File"
-		hRes   = "Resolution"
+		hFile   = "File"
+		hRes    = "Resolution"
 		hVCodec = "Video"
-		hVBR   = "Video Kbps"
-		hADesc = "Audio"
-		hABR   = "Audio Kbps"
+		hVBR    = "Video Kbps"
+		hADesc  = "Audio"
 	)
 
 	nameW := len(hFile)
@@ -171,7 +164,6 @@ func printAnalysisTable(rows []fileRow, vStats, aStats iqrBounds) (outliers, ext
 	vcW := len(hVCodec)
 	vbW := len(hVBR)
 	adW := len(hADesc)
-	abW := len(hABR)
 
 	for _, r := range rows {
 		if len(r.Name) > nameW {
@@ -190,29 +182,31 @@ func printAnalysisTable(rows []fileRow, vStats, aStats iqrBounds) (outliers, ext
 		if len(r.AudioDesc) > adW {
 			adW = len(r.AudioDesc)
 		}
-		abStr := fmtKbps(r.AudioKbps)
-		if len(abStr) > abW {
-			abW = len(abStr)
-		}
 	}
 
 	if nameW > 45 {
 		nameW = 45
 	}
 
-	// Build header + separator.
-	header := fmt.Sprintf("  %-*s  %-*s  %-*s  %*s  %-*s  %*s",
+	// Measure the plain header width for the separator.
+	plainHeader := fmt.Sprintf("  %-*s  %-*s  %-*s  %*s  %-*s",
 		nameW, hFile,
 		resW, hRes,
 		vcW, hVCodec,
 		vbW, hVBR,
 		adW, hADesc,
-		abW, hABR,
 	)
-	separator := "  " + strings.Repeat("─", len(header)-2)
+	separator := "  " + strings.Repeat("─", len(plainHeader)-2)
 
-	fmt.Println(header)
-	fmt.Println(separator)
+	// Print colored header and dim separator.
+	fmt.Printf("  %s%-*s%s  %s%-*s%s  %s%-*s%s  %s%*s%s  %s%-*s%s\n",
+		term.Bold, nameW, hFile, term.NC,
+		term.Bold, resW, hRes, term.NC,
+		term.Bold, vcW, hVCodec, term.NC,
+		term.Bold, vbW, hVBR, term.NC,
+		term.Bold, adW, hADesc, term.NC,
+	)
+	fmt.Printf("%s%s%s\n", term.Dim, separator, term.NC)
 
 	for _, r := range rows {
 		name := r.Name
@@ -221,16 +215,17 @@ func printAnalysisTable(rows []fileRow, vStats, aStats iqrBounds) (outliers, ext
 		}
 
 		vbPlain := display.FormatBitrateLabel(r.VideoKbps)
-		abPlain := fmtKbps(r.AudioKbps)
-
 		vClass := vStats.classify(float64(r.VideoKbps))
-		aClass := aStats.classify(float64(r.AudioKbps))
 
-		flag := worstFlag(vClass, aClass)
+		flag := vClass
 		flagStr := formatFlag(flag)
 
-		vbCell := colorPadRight(vbPlain, vbW, vClass)
-		abCell := colorPadRight(abPlain, abW, aClass)
+		// Per-column coloring.
+		nameCell := fmt.Sprintf("%-*s", nameW, name)
+		resCell := colorResolution(fmt.Sprintf("%-*s", resW, r.Resolution), r.Resolution)
+		vcCell := colorCodec(fmt.Sprintf("%-*s", vcW, r.VideoCodec), r.VideoCodec)
+		vbCell := colorRightAlign(vbPlain, vbW, vClass)
+		adCell := colorAudioDesc(fmt.Sprintf("%-*s", adW, r.AudioDesc), r.AudioDesc)
 
 		switch flag {
 		case "extreme":
@@ -239,36 +234,29 @@ func printAnalysisTable(rows []fileRow, vStats, aStats iqrBounds) (outliers, ext
 			outliers++
 		}
 
-		fmt.Printf("  %-*s  %-*s  %-*s  %s  %-*s  %s  %s\n",
-			nameW, name,
-			resW, r.Resolution,
-			vcW, r.VideoCodec,
+		fmt.Printf("  %s  %s  %s  %s  %s  %s\n",
+			nameCell,
+			resCell,
+			vcCell,
 			vbCell,
-			adW, r.AudioDesc,
-			abCell,
+			adCell,
 			flagStr,
 		)
 	}
 
-	fmt.Println(separator)
-	fmt.Printf("  %d file(s)\n", len(rows))
+	fmt.Printf("%s%s%s\n", term.Dim, separator, term.NC)
+	fmt.Printf("  %s%d file(s)%s\n", term.Dim, len(rows), term.NC)
 	fmt.Println()
 	return outliers, extremes
 }
 
-func printAnalysisSummary(log *logging.Logger, probed, skipped, outliers, extremes int, vStats, aStats iqrBounds) {
+func printAnalysisSummary(log *logging.Logger, probed, skipped, outliers, extremes int, vStats iqrBounds) {
 	log.Info("Results: %d probed, %d skipped", probed, skipped)
 
 	if vStats.valid {
 		log.Info("  Video kbps — Q1: %.0f  Q3: %.0f  (outlier < %.0f or > %.0f)",
 			vStats.q1, vStats.q3, vStats.outlierLo, vStats.outlierHi)
-	}
-	if aStats.valid {
-		log.Info("  Audio kbps — Q1: %.0f  Q3: %.0f  (outlier < %.0f or > %.0f)",
-			aStats.q1, aStats.q3, aStats.outlierLo, aStats.outlierHi)
-	}
-
-	if !vStats.valid && !aStats.valid {
+	} else {
 		log.Info("  Not enough data for outlier detection (need >= 4 files)")
 	}
 
@@ -278,7 +266,7 @@ func printAnalysisSummary(log *logging.Logger, probed, skipped, outliers, extrem
 	if extremes > 0 {
 		log.Error("  %d extreme outlier(s) flagged [!]", extremes)
 	}
-	if outliers == 0 && extremes == 0 && (vStats.valid || aStats.valid) {
+	if outliers == 0 && extremes == 0 && vStats.valid {
 		log.Success("  No outliers detected")
 	}
 
@@ -293,26 +281,6 @@ func fmtAudioDesc(codec string, channels int) string {
 	return fmt.Sprintf("%s %dch", codec, channels)
 }
 
-func fmtKbps(kbps int64) string {
-	if kbps <= 0 {
-		return "—"
-	}
-	return display.FormatBitrateLabel(kbps)
-}
-
-func worstFlag(classes ...string) string {
-	worst := ""
-	for _, c := range classes {
-		if c == "extreme" {
-			return "extreme"
-		}
-		if c == "outlier" {
-			worst = "outlier"
-		}
-	}
-	return worst
-}
-
 func formatFlag(flag string) string {
 	switch flag {
 	case "extreme":
@@ -324,10 +292,83 @@ func formatFlag(flag string) string {
 	}
 }
 
-// colorPadRight pads a plain string to width (right-aligned for numbers),
-// then wraps in ANSI color. Padding before color avoids the alignment bug
-// where %-*s counts escape bytes as visible width.
-func colorPadRight(s string, width int, class string) string {
+// --- Per-column color helpers ---
+
+// colorResolution colors a resolution string by pixel tier.
+//
+//	4K/2160p  → Cyan
+//	1440p     → Blue
+//	1080p     → Green
+//	720p      → Yellow
+//	SD/other  → Orange
+func colorResolution(padded, raw string) string {
+	switch {
+	case strings.HasPrefix(raw, "3840") || strings.HasPrefix(raw, "4096"):
+		return term.Cyan + padded + term.NC
+	case strings.HasPrefix(raw, "2560"):
+		return term.Blue + padded + term.NC
+	case strings.HasPrefix(raw, "1920"):
+		return term.Green + padded + term.NC
+	case strings.HasPrefix(raw, "1280"):
+		return term.Yellow + padded + term.NC
+	case raw == "" || raw == "unknown":
+		return term.Dim + padded + term.NC
+	default:
+		return term.Orange + padded + term.NC
+	}
+}
+
+// colorCodec colors a video codec name by generation. Modern codecs that
+// need no re-encode get cooler tones; legacy codecs that will be transcoded
+// get warmer tones to draw attention.
+//
+//	HEVC/AV1  → Green  (modern, efficient)
+//	VP9       → Cyan   (modern, web-native)
+//	H.264     → Blue   (common, decent)
+//	Legacy    → Orange (will be re-encoded)
+func colorCodec(padded, codec string) string {
+	switch strings.ToLower(codec) {
+	case "hevc", "h265", "av1":
+		return term.Green + padded + term.NC
+	case "vp9":
+		return term.Cyan + padded + term.NC
+	case "h264", "avc", "avc1":
+		return term.Blue + padded + term.NC
+	case "mpeg2video", "mpeg4", "wmv3", "vc1", "msmpeg4v3":
+		return term.Orange + padded + term.NC
+	case "":
+		return term.Dim + padded + term.NC
+	default:
+		return term.Yellow + padded + term.NC
+	}
+}
+
+// colorAudioDesc colors the audio description by codec family.
+//
+//	AAC          → Green   (passthrough, no re-encode needed)
+//	FLAC/PCM     → Cyan    (lossless source)
+//	AC3/DTS/EAC3 → Yellow  (common surround, will be transcoded)
+//	Other        → Magenta
+func colorAudioDesc(padded, desc string) string {
+	lower := strings.ToLower(desc)
+	switch {
+	case strings.HasPrefix(lower, "aac"):
+		return term.Green + padded + term.NC
+	case strings.HasPrefix(lower, "flac") || strings.HasPrefix(lower, "pcm"):
+		return term.Cyan + padded + term.NC
+	case strings.HasPrefix(lower, "ac3") || strings.HasPrefix(lower, "eac3") ||
+		strings.HasPrefix(lower, "dts") || strings.HasPrefix(lower, "truehd"):
+		return term.Yellow + padded + term.NC
+	case desc == "":
+		return term.Dim + padded + term.NC
+	default:
+		return term.Magenta + padded + term.NC
+	}
+}
+
+// colorRightAlign right-aligns a plain string to width (for numeric columns),
+// then wraps in ANSI color for outlier classification.
+func colorRightAlign(s string, width int, class string) string {
 	padded := fmt.Sprintf("%*s", width, s)
 	switch class {
 	case "extreme":
