@@ -512,12 +512,42 @@ func TestBuildSubtitlePlan_MP4BitmapSkip(t *testing.T) {
 	cfg.OutputContainer = config.ContainerMP4
 	pr := &probe.ProbeResult{
 		PrimaryVideo:   &probe.VideoStream{Codec: "h264"},
-		SubtitleStreams: []probe.SubtitleStream{{Codec: "hdmv_pgs_subtitle", IsBitmap: true}},
+		SubtitleStreams: []probe.SubtitleStream{{Index: 3, Codec: "hdmv_pgs_subtitle", IsBitmap: true}},
 		HasBitmapSubs:  true,
 	}
 	sp := BuildSubtitlePlan(cfg, pr)
 	if sp.Include {
-		t.Error("MP4 with bitmap subs should not include subs")
+		t.Error("MP4 with only bitmap subs should not include subs")
+	}
+}
+
+func TestBuildSubtitlePlan_MP4MixedSubs(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.OutputContainer = config.ContainerMP4
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
+		SubtitleStreams: []probe.SubtitleStream{
+			{Index: 3, Codec: "hdmv_pgs_subtitle", Language: "eng", IsBitmap: true},
+			{Index: 4, Codec: "srt", Language: "eng", IsBitmap: false},
+			{Index: 5, Codec: "ass", Language: "jpn", IsBitmap: false},
+		},
+		HasBitmapSubs: true,
+	}
+	sp := BuildSubtitlePlan(cfg, pr)
+	if !sp.Include {
+		t.Fatal("MP4 with mixed subs should include text subs")
+	}
+	if sp.Codec != "mov_text" {
+		t.Errorf("codec: got %q, want mov_text", sp.Codec)
+	}
+	if !sp.SkipBitmap {
+		t.Error("SkipBitmap should be true when bitmap subs are present")
+	}
+	if len(sp.TextIdxs) != 2 {
+		t.Fatalf("TextIdxs: got %v, want 2 entries", sp.TextIdxs)
+	}
+	if sp.TextIdxs[0] != 4 || sp.TextIdxs[1] != 5 {
+		t.Errorf("TextIdxs: got %v, want [4 5]", sp.TextIdxs)
 	}
 }
 

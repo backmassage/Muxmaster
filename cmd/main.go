@@ -57,7 +57,9 @@ func run() int {
 	display.PrintBanner()
 
 	if cfg.CheckOnly {
-		check.RunCheck(&cfg, log)
+		if !check.RunCheck(&cfg, log) {
+			return 1
+		}
 		return 0
 	}
 

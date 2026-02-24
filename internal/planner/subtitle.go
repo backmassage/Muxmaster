@@ -6,7 +6,7 @@ import (
 )
 
 // BuildSubtitlePlan decides subtitle handling. MKV gets a straight copy,
-// MP4 gets mov_text for text subs and skips bitmap subs entirely.
+// MP4 gets mov_text for text subs and skips bitmap subs.
 // Mirrors the legacy build_subtitle_opts and describe_subtitle_plan functions.
 func BuildSubtitlePlan(cfg *config.Config, pr *probe.ProbeResult) SubtitlePlan {
 	if !cfg.KeepSubtitles || len(pr.SubtitleStreams) == 0 {
@@ -14,10 +14,23 @@ func BuildSubtitlePlan(cfg *config.Config, pr *probe.ProbeResult) SubtitlePlan {
 	}
 
 	if cfg.OutputContainer == config.ContainerMP4 {
-		if pr.HasBitmapSubs {
+		// Collect text (non-bitmap) subtitle stream indices.
+		var textIdxs []int
+		for _, s := range pr.SubtitleStreams {
+			if !s.IsBitmap {
+				textIdxs = append(textIdxs, s.Index)
+			}
+		}
+		if len(textIdxs) == 0 {
+			// All subs are bitmap — MP4 can't carry any of them.
 			return SubtitlePlan{Include: false}
 		}
-		return SubtitlePlan{Include: true, Codec: "mov_text"}
+		return SubtitlePlan{
+			Include:    true,
+			Codec:      "mov_text",
+			SkipBitmap: pr.HasBitmapSubs,
+			TextIdxs:   textIdxs,
+		}
 	}
 
 	return SubtitlePlan{Include: true, Codec: "copy"}

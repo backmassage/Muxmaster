@@ -224,6 +224,10 @@ func executeWithRetry(
 	rs *ffmpeg.RetryState,
 ) bool {
 	for {
+		if ctx.Err() != nil {
+			return false
+		}
+
 		if !attemptWithErrorRetry(ctx, cfg, log, plan, rs) {
 			return false
 		}
@@ -274,6 +278,12 @@ func attemptWithErrorRetry(
 		result := ffmpeg.Execute(ctx, cfg, plan, rs)
 		if result.Err == nil {
 			return true
+		}
+
+		// Stop retrying if the context has been cancelled (e.g. SIGINT).
+		if ctx.Err() != nil {
+			log.Warn("Interrupted, aborting retries")
+			return false
 		}
 
 		if cfg.StrictMode {

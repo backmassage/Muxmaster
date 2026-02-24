@@ -34,34 +34,55 @@ type Logger interface {
 
 // RunCheck runs the interactive --check flow: prints availability of ffmpeg,
 // ffprobe, HEVC encoders, VAAPI device/test, CPU x265, and AAC encoder.
-// This is informational only — it does not stop on failure.
-func RunCheck(cfg *config.Config, log Logger) {
+// Returns true if all critical checks passed (ffmpeg, ffprobe, and at least
+// one working encoder), false if any critical check failed.
+func RunCheck(cfg *config.Config, log Logger) bool {
 	log.Info("=== System Check ===")
 
-	checkFfmpeg(log)
+	ok := true
+	if !checkFfmpeg(log) {
+		ok = false
+	}
 	checkHEVCEncoders(log)
-	checkVAAPI(log)
-	checkCPUx265(log)
-	checkAAC(log)
+	if !checkVAAPI(log) {
+		ok = false
+	}
+	if !checkCPUx265(log) {
+		ok = false
+	}
+	if !checkAAC(log) {
+		ok = false
+	}
+	return ok
 }
 
-// checkFfmpeg verifies ffmpeg is on PATH and logs its version string.
-func checkFfmpeg(log Logger) {
+// checkFfmpeg verifies ffmpeg and ffprobe are on PATH and logs the ffmpeg version string.
+// Returns true if both are found.
+func checkFfmpeg(log Logger) bool {
+	ok := true
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		log.Error("ffmpeg not found")
-		return
+		ok = false
+	} else {
+		cmd := exec.Command("ffmpeg", "-version")
+		out, err := cmd.Output()
+		if err != nil {
+			log.Warn("ffmpeg found but -version failed: %v", err)
+		} else {
+			firstLine := strings.TrimSpace(string(out))
+			if idx := strings.Index(firstLine, "\n"); idx > 0 {
+				firstLine = firstLine[:idx]
+			}
+			log.Success("ffmpeg: %s", firstLine)
+		}
 	}
-	cmd := exec.Command("ffmpeg", "-version")
-	out, err := cmd.Output()
-	if err != nil {
-		log.Warn("ffmpeg found but -version failed: %v", err)
-		return
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		log.Error("ffprobe not found")
+		ok = false
+	} else {
+		log.Success("ffprobe: found")
 	}
-	firstLine := strings.TrimSpace(string(out))
-	if idx := strings.Index(firstLine, "\n"); idx > 0 {
-		firstLine = firstLine[:idx]
-	}
-	log.Success("ffmpeg: %s", firstLine)
+	return ok
 }
 
 // checkHEVCEncoders lists all HEVC-related encoders reported by ffmpeg.
@@ -82,34 +103,42 @@ func checkHEVCEncoders(log Logger) {
 }
 
 // checkVAAPI finds the first render device and runs a minimal VAAPI encode test.
-func checkVAAPI(log Logger) {
+// Returns true if VAAPI works, false otherwise. A missing VAAPI device is not
+// fatal (CPU mode may be used instead), so this is logged as a warning.
+func checkVAAPI(log Logger) bool {
 	dev := getFirstRenderDevice()
 	if dev == "" {
 		log.Warn("No VAAPI device found")
-		return
+		return false
 	}
 	log.Info("Testing VAAPI on %s...", dev)
 	if testVAAPI(dev, "p010", "main10") {
 		log.Success("VAAPI works (main10)")
-	} else if testVAAPI(dev, "nv12", "main") {
-		log.Success("VAAPI works (main/8-bit only)")
-	} else {
-		log.Error("VAAPI test encode failed on %s", dev)
+		return true
 	}
+	if testVAAPI(dev, "nv12", "main") {
+		log.Success("VAAPI works (main/8-bit only)")
+		return true
+	}
+	log.Error("VAAPI test encode failed on %s", dev)
+	return false
 }
 
 // checkCPUx265 runs a minimal libx265 encode to verify CPU encoding works.
-func checkCPUx265(log Logger) {
+// Returns true on success.
+func checkCPUx265(log Logger) bool {
 	log.Info("Testing CPU x265...")
 	if runSilent("ffmpeg", cpuTestArgs()...) {
 		log.Success("CPU x265 works")
-	} else {
-		log.Error("CPU x265 test encode failed")
+		return true
 	}
+	log.Error("CPU x265 test encode failed")
+	return false
 }
 
 // checkAAC runs a minimal AAC encode to verify the audio encoder works.
-func checkAAC(log Logger) {
+// Returns true on success.
+func checkAAC(log Logger) bool {
 	log.Info("Testing AAC encoder...")
 	if runSilent("ffmpeg",
 		"-hide_banner", "-nostdin",
@@ -117,9 +146,10 @@ func checkAAC(log Logger) {
 		"-c:a", "aac", "-f", "null", "-",
 	) {
 		log.Success("AAC encoder works")
-	} else {
-		log.Error("AAC encoder test failed")
+		return true
 	}
+	log.Error("AAC encoder test failed")
+	return false
 }
 
 // CheckDeps is the pre-pipeline validation: it verifies that ffmpeg and

@@ -226,11 +226,21 @@ func applyQualityPrecedence(cfg *Config) error {
 	return nil
 }
 
+// Quality value ranges. These match the clamp ranges used by smart quality
+// and the retry engine — values outside this range indicate user error.
+const (
+	qualityMin = 0
+	qualityMax = 51
+)
+
 // parseInt parses a string as an integer for quality/CRF/QP flags; returns a clear error on failure.
 func parseInt(s, name string) (int, error) {
 	n, err := strconv.Atoi(strings.TrimSpace(s))
 	if err != nil {
 		return 0, fmt.Errorf("%s must be a whole number (got %q)", name, s)
+	}
+	if n < qualityMin || n > qualityMax {
+		return 0, fmt.Errorf("%s must be between %d and %d (got %d)", name, qualityMin, qualityMax, n)
 	}
 	return n, nil
 }

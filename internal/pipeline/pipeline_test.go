@@ -56,17 +56,30 @@ func TestDiscover_AllMediaExtensions(t *testing.T) {
 func TestDiscover_PrunesExtras(t *testing.T) {
 	dir := t.TempDir()
 	touch(t, dir, "main.mkv")
-	os.MkdirAll(filepath.Join(dir, "Extras"), 0o755)
-	touch(t, filepath.Join(dir, "Extras"), "bonus.mkv")
-	os.MkdirAll(filepath.Join(dir, "extras"), 0o755)
-	touch(t, filepath.Join(dir, "extras"), "deleted_scenes.mp4")
+
+	// All extras-category folders should be pruned.
+	for _, name := range []string{"Extras", "extras", "Extra", "Bonus", "Featurettes"} {
+		sub := filepath.Join(dir, name)
+		os.MkdirAll(sub, 0o755)
+		touch(t, sub, "bonus.mkv")
+	}
+
+	// Specials-category folders should NOT be pruned (they contain real media).
+	for _, name := range []string{"Specials", "NCOP", "NCED"} {
+		sub := filepath.Join(dir, name)
+		os.MkdirAll(sub, 0o755)
+		touch(t, sub, "ep.mkv")
+	}
 
 	files, err := Discover(dir)
 	if err != nil {
 		t.Fatalf("Discover: %v", err)
 	}
-	if len(files) != 1 {
-		t.Errorf("got %d files, want 1 (extras should be pruned)", len(files))
+
+	// Should find main.mkv + 3 files from specials-category folders = 4
+	if len(files) != 4 {
+		names := basenames(files)
+		t.Errorf("got %d files %v, want 4 (extras pruned, specials kept)", len(files), names)
 	}
 }
 

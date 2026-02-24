@@ -77,8 +77,10 @@ type AudioStreamPlan struct {
 
 // SubtitlePlan describes how subtitles are handled.
 type SubtitlePlan struct {
-	Include bool
-	Codec   string // "copy", "mov_text", or ""
+	Include    bool
+	Codec      string // "copy", "mov_text", or ""
+	SkipBitmap bool   // When true, only text subtitle streams are mapped (MP4 with mixed subs).
+	TextIdxs   []int  // Absolute stream indices of text subtitle streams (used when SkipBitmap is true).
 }
 
 // AttachmentPlan describes whether to carry attachments (fonts, etc.).

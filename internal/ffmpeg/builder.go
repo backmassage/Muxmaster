@@ -171,12 +171,22 @@ func appendAudioMaps(args []string, plan *planner.FilePlan, _ *RetryState) []str
 }
 
 // appendSubtitleMaps adds subtitle mapping arguments, respecting the retry
-// state's IncludeSubs flag.
+// state's IncludeSubs flag. When SkipBitmap is set (MP4 with mixed text+bitmap
+// subs), individual text streams are mapped instead of all subtitle streams.
 func appendSubtitleMaps(args []string, plan *planner.FilePlan, rs *RetryState) []string {
 	if !plan.Subtitles.Include || !rs.IncludeSubs {
 		return args
 	}
-	args = append(args, "-map", "0:s?")
+
+	if plan.Subtitles.SkipBitmap && len(plan.Subtitles.TextIdxs) > 0 {
+		// Map only text subtitle streams by absolute index.
+		for _, idx := range plan.Subtitles.TextIdxs {
+			args = append(args, "-map", fmt.Sprintf("0:%d", idx))
+		}
+	} else {
+		args = append(args, "-map", "0:s?")
+	}
+
 	if plan.Subtitles.Codec != "" {
 		args = append(args, "-c:s", plan.Subtitles.Codec)
 	}
