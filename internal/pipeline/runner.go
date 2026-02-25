@@ -347,7 +347,7 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 	}
 
 	log.Info("Container: %s", strings.ToUpper(string(cfg.OutputContainer)))
-	log.Info("Audio: AAC passthrough (no AAC->AAC), otherwise encode to AAC via %s at %s", cfg.AudioEncoder, cfg.AudioBitrate)
+	log.Info("Audio: AAC passthrough if <320 kbps, otherwise encode to AAC via %s at %s", cfg.AudioEncoder, cfg.AudioBitrate)
 
 	if cfg.OutputContainer == config.ContainerMP4 {
 		log.Info("Compatibility: hvc1 tag for Apple/browser support")
