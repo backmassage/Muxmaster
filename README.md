@@ -2,7 +2,7 @@
 
 Jellyfin-optimized media encoder: batch HEVC/AAC encoding and remuxing with smart per-file quality, automatic retry, and deterministic Jellyfin-friendly output naming.
 
-**Version:** 2.0.0 (Go rewrite — full CLI parity with the legacy v1.7.0 shell script)
+**Version:** 2.1.0
 
 ---
 
@@ -32,6 +32,9 @@ muxmaster /media/library /out/library
 
 # Encode with CPU (libx265)
 muxmaster --mode cpu /media/library /out/library
+
+# Analyze codec and bitrate stats for a library (no encoding)
+muxmaster --analyze /media/library
 
 # Run system diagnostics (ffmpeg, ffprobe, VAAPI, x265, libfdk_aac)
 muxmaster --check
@@ -113,6 +116,9 @@ muxmaster --vaapi-qp 21 /media/library /out/library
 
 # Override AAC bitrate for non-AAC transcodes
 muxmaster --audio-bitrate 192k /media/library /out/library
+
+# Batch analysis: codec and bitrate table with outlier highlighting
+muxmaster --analyze /media/library
 ```
 
 ### Full option reference
@@ -169,6 +175,7 @@ muxmaster --audio-bitrate 192k /media/library /out/library
 
 | Flag | Description |
 |------|-------------|
+| `-a, --analyze` | Probe all files and print codec/bitrate table with outlier detection |
 | `-c, --check` | Run system diagnostics and exit |
 | `-V, --version` | Print version and exit |
 | `-h, --help` | Show help and exit |
@@ -250,7 +257,7 @@ Key references:
 
 - **Architecture:** [_docs/architecture.md](_docs/architecture.md)
 - **Design plan:** [_docs/design/foundation-plan.md](_docs/design/foundation-plan.md)
-- **Project structure:** [_docs/project/structure.md](_docs/project/structure.md)
+- **Project structure:** [_docs/design/structure.md](_docs/design/structure.md)
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 
 ---

@@ -43,7 +43,11 @@ func FormatBytesWithSign(bytes int64) string {
 }
 
 // FormatBitrateLabel returns a short bitrate string (e.g. "800 kbps" or "1.2 Mbps") for display in file stats.
+// Returns "—" when the bitrate is unknown (zero or negative).
 func FormatBitrateLabel(kbps int64) string {
+	if kbps <= 0 {
+		return "—"
+	}
 	if kbps < 1000 {
 		return fmt.Sprintf("%d kbps", kbps)
 	}

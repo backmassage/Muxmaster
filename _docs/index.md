@@ -16,13 +16,4 @@ All documentation for the Muxmaster project. Start with [architecture.md](archit
 
 | Document | Purpose |
 |----------|---------|
-| [project/structure.md](project/structure.md) | Folder layout, package table, "where to change what" quick finder |
-| [project/audit.md](project/audit.md) | Periodic review of structure, docs, build, and naming conventions |
-| [project/git-guidelines.md](project/git-guidelines.md) | Branching model, commit format, release process |
-
-## Legacy
-
-| Document | Purpose |
-|----------|---------|
-| [legacy/legacy-behavior.md](legacy/legacy-behavior.md) | Behavior contract inherited from the v1.7.0 Bash script |
-| [legacy/Muxmaster.sh](legacy/Muxmaster.sh) | Original Bash script (reference only) |
+| [design/structure.md](design/structure.md) | Folder layout, package table, "where to change what" quick finder |

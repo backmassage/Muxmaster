@@ -531,6 +531,88 @@ func TestAttachedPicSkipped(t *testing.T) {
 	}
 }
 
+func TestStreamBitRate_TagBPSFallback(t *testing.T) {
+	// MKV-style: audio stream has no bit_rate field, but tags.BPS is present.
+	j := `{
+		"streams": [
+			{
+				"index": 0,
+				"codec_name": "hevc",
+				"codec_type": "video",
+				"width": 1920, "height": 1080,
+				"disposition": { "default": 1, "attached_pic": 0 },
+				"tags": { "BPS": "5000000" }
+			},
+			{
+				"index": 1,
+				"codec_name": "flac",
+				"codec_type": "audio",
+				"channels": 2,
+				"sample_rate": "48000",
+				"disposition": { "default": 1 },
+				"tags": { "language": "jpn", "BPS": "930000" }
+			},
+			{
+				"index": 2,
+				"codec_name": "aac",
+				"codec_type": "audio",
+				"channels": 2,
+				"sample_rate": "48000",
+				"bit_rate": "256000",
+				"disposition": { "default": 0 },
+				"tags": { "language": "eng", "BPS-eng": "192000" }
+			}
+		],
+		"format": {
+			"filename": "test.mkv",
+			"nb_streams": 3,
+			"format_name": "matroska,webm",
+			"duration": "1400.000",
+			"size": "1000000000",
+			"bit_rate": "5714285",
+			"tags": {}
+		}
+	}`
+
+	pr, err := ParseJSON([]byte(j))
+	if err != nil {
+		t.Fatalf("ParseJSON: %v", err)
+	}
+
+	// Video: no bit_rate field, should fall back to tags.BPS.
+	if pr.PrimaryVideo.BitRate != 5000000 {
+		t.Errorf("video BitRate: got %d, want 5000000 (from tags.BPS)", pr.PrimaryVideo.BitRate)
+	}
+
+	if len(pr.AudioStreams) != 2 {
+		t.Fatalf("audio streams: got %d, want 2", len(pr.AudioStreams))
+	}
+
+	// Audio[0]: flac with no bit_rate, should fall back to tags.BPS.
+	if pr.AudioStreams[0].BitRate != 930000 {
+		t.Errorf("audio[0] BitRate: got %d, want 930000 (from tags.BPS)", pr.AudioStreams[0].BitRate)
+	}
+
+	// Audio[1]: aac with bit_rate=256000; top-level value takes precedence over BPS-eng tag.
+	if pr.AudioStreams[1].BitRate != 256000 {
+		t.Errorf("audio[1] BitRate: got %d, want 256000 (from bit_rate field)", pr.AudioStreams[1].BitRate)
+	}
+}
+
+func TestAudioBitRate(t *testing.T) {
+	pr := &ProbeResult{
+		AudioStreams: []AudioStream{{BitRate: 192000}},
+	}
+	if got := pr.AudioBitRate(); got != 192000 {
+		t.Errorf("got %d, want 192000", got)
+	}
+
+	empty := &ProbeResult{}
+	if got := empty.AudioBitRate(); got != 0 {
+		t.Errorf("empty: got %d, want 0", got)
+	}
+}
+
 // Verbose output for manual inspection of a realistic probe.
 func TestDebugSampleProbe(t *testing.T) {
 	pr, _ := ParseJSON([]byte(sampleHDR))

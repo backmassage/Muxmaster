@@ -217,11 +217,11 @@ func TestSmartQuality_ClampRanges(t *testing.T) {
 		Format:       probe.FormatInfo{BitRate: 250000},
 	}
 	q := SmartQuality(defaultCfg(), pr)
-	if q.CpuCRF > cpuCRFMax {
-		t.Errorf("CRF %d exceeds max %d", q.CpuCRF, cpuCRFMax)
+	if q.CpuCRF > CpuCRFMax {
+		t.Errorf("CRF %d exceeds max %d", q.CpuCRF, CpuCRFMax)
 	}
-	if q.VaapiQP > vaapiQPMax {
-		t.Errorf("QP %d exceeds max %d", q.VaapiQP, vaapiQPMax)
+	if q.VaapiQP > VaapiQPMax {
+		t.Errorf("QP %d exceeds max %d", q.VaapiQP, VaapiQPMax)
 	}
 }
 
@@ -398,6 +398,98 @@ func TestBuildAudioPlan_MixedStreams(t *testing.T) {
 	}
 	if !ap.Streams[0].Copy {
 		t.Error("stream 0 (aac) should be Copy")
+	}
+	if ap.Streams[1].Copy {
+		t.Error("stream 1 (ac3) should NOT be Copy")
+	}
+}
+
+func TestBuildAudioPlan_AllAACLowBitrate(t *testing.T) {
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
+		AudioStreams: []probe.AudioStream{
+			{Codec: "aac", Channels: 2, BitRate: 256_000},
+			{Codec: "aac", Channels: 6, BitRate: 192_000},
+		},
+	}
+	ap := BuildAudioPlan(defaultCfg(), pr)
+	if !ap.CopyAll {
+		t.Error("all AAC below 320 kbps should produce CopyAll")
+	}
+}
+
+func TestBuildAudioPlan_AllAACHighBitrate(t *testing.T) {
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
+		AudioStreams: []probe.AudioStream{
+			{Codec: "aac", Channels: 2, BitRate: 128_000},
+			{Codec: "aac", Channels: 6, BitRate: 512_000},
+		},
+	}
+	ap := BuildAudioPlan(defaultCfg(), pr)
+	if ap.CopyAll {
+		t.Error("AAC at 512 kbps should NOT produce CopyAll")
+	}
+	if len(ap.Streams) != 2 {
+		t.Fatalf("expected 2 streams, got %d", len(ap.Streams))
+	}
+	if !ap.Streams[0].Copy {
+		t.Error("stream 0 (aac 128k) should be Copy")
+	}
+	if ap.Streams[1].Copy {
+		t.Error("stream 1 (aac 512k) should NOT be Copy (re-encode)")
+	}
+}
+
+func TestBuildAudioPlan_AACExactThreshold(t *testing.T) {
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
+		AudioStreams: []probe.AudioStream{
+			{Codec: "aac", Channels: 2, BitRate: 320_000},
+		},
+	}
+	ap := BuildAudioPlan(defaultCfg(), pr)
+	if ap.CopyAll {
+		t.Error("AAC at exactly 320 kbps should NOT produce CopyAll")
+	}
+	if len(ap.Streams) != 1 {
+		t.Fatalf("expected 1 stream, got %d", len(ap.Streams))
+	}
+	if ap.Streams[0].Copy {
+		t.Error("AAC at exactly 320 kbps should NOT be Copy")
+	}
+}
+
+func TestBuildAudioPlan_AACUnknownBitrate(t *testing.T) {
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
+		AudioStreams: []probe.AudioStream{
+			{Codec: "aac", Channels: 2, BitRate: 0},
+		},
+	}
+	ap := BuildAudioPlan(defaultCfg(), pr)
+	if !ap.CopyAll {
+		t.Error("AAC with unknown bitrate (0) should produce CopyAll")
+	}
+}
+
+func TestBuildAudioPlan_MixedAACHighBitrateAndNonAAC(t *testing.T) {
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
+		AudioStreams: []probe.AudioStream{
+			{Codec: "aac", Channels: 2, SampleRate: 48000, BitRate: 400_000},
+			{Codec: "ac3", Channels: 6, SampleRate: 48000},
+		},
+	}
+	ap := BuildAudioPlan(defaultCfg(), pr)
+	if ap.CopyAll {
+		t.Error("should not be CopyAll")
+	}
+	if len(ap.Streams) != 2 {
+		t.Fatalf("expected 2 streams, got %d", len(ap.Streams))
+	}
+	if ap.Streams[0].Copy {
+		t.Error("stream 0 (aac 400k) should NOT be Copy")
 	}
 	if ap.Streams[1].Copy {
 		t.Error("stream 1 (ac3) should NOT be Copy")

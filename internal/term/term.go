@@ -22,6 +22,8 @@ var (
 	Blue    = ""
 	Cyan    = ""
 	Magenta = ""
+	Bold    = "" // Bold white for emphasis (headers).
+	Dim     = "" // Dim/faint for structural elements (separators, counts).
 	NC      = "" // Reset sequence.
 )
 
@@ -36,9 +38,11 @@ func Configure(mode config.ColorMode) {
 		Blue = "\033[1;94m"
 		Cyan = "\033[1;96m"
 		Magenta = "\033[1;95m"
+		Bold = "\033[1;97m"
+		Dim = "\033[2;37m"
 		NC = "\033[0m"
 	} else {
-		Red, Green, Yellow, Orange, Blue, Cyan, Magenta, NC = "", "", "", "", "", "", "", ""
+		Red, Green, Yellow, Orange, Blue, Cyan, Magenta, Bold, Dim, NC = "", "", "", "", "", "", "", "", "", ""
 	}
 }
 

@@ -122,8 +122,6 @@ func processFile(
 	plan := planner.BuildPlan(cfg, pr)
 	plan.InputPath = path
 	plan.OutputPath = outputPath
-	plan.Container = cfg.OutputContainer
-	plan.VideoStreamIdx = pr.PrimaryVideo.Index
 
 	if plan.QualityNote != "" {
 		if strings.Contains(plan.QualityNote, "not browser-safe") {
@@ -146,10 +144,11 @@ func processFile(
 	// --- Log action ---
 	actionLabel := "Encoding"
 	if plan.Action == planner.ActionRemux {
-		actionLabel = fmt.Sprintf("Remuxing (copy HEVC, encode AAC via %s)", cfg.AudioEncoder)
+		actionLabel = fmt.Sprintf("Remuxing (copy HEVC, encode non-AAC audio via %s)", cfg.AudioEncoder)
 	}
 	log.Info("%s: %s", actionLabel, basename)
 	log.Info("  -> %s", filepath.Base(outputPath))
+	logAudioBitrates(log, pr, plan)
 
 	// --- Create output directory ---
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
@@ -348,7 +347,7 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 	}
 
 	log.Info("Container: %s", strings.ToUpper(string(cfg.OutputContainer)))
-	log.Info("Audio: AAC passthrough (no AAC->AAC), otherwise encode to AAC via %s at %s", cfg.AudioEncoder, cfg.AudioBitrate)
+	log.Info("Audio: AAC passthrough if <320 kbps, otherwise encode to AAC via %s at %s", cfg.AudioEncoder, cfg.AudioBitrate)
 
 	if cfg.OutputContainer == config.ContainerMP4 {
 		log.Info("Compatibility: hvc1 tag for Apple/browser support")
@@ -382,6 +381,9 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 
 func logFileStats(log *logging.Logger, pr *probe.ProbeResult) {
 	v := pr.PrimaryVideo
+	if v == nil {
+		return
+	}
 	resolution := pr.Resolution()
 	bitrateKbps := pr.VideoBitRate() / 1000
 	bitrateLabel := display.FormatBitrateLabel(bitrateKbps)
@@ -448,6 +450,38 @@ func logBitrateOutlier(log *logging.Logger, pr *probe.ProbeResult) {
 	} else if bitrateKbps > high {
 		log.Outlier("  Bitrate outlier (high): %d kb/s for %s; expected %d-%d kb/s (%s)",
 			bitrateKbps, pr.Resolution(), low, high, label)
+	}
+}
+
+// logAudioBitrates logs per-stream input and planned output bitrates. It is
+// always shown (not gated by ShowFileStats) so audio handling is visible
+// for every processed file.
+func logAudioBitrates(log *logging.Logger, pr *probe.ProbeResult, plan *planner.FilePlan) {
+	ap := plan.Audio
+	if ap.NoAudio || len(pr.AudioStreams) == 0 {
+		return
+	}
+
+	for i, a := range pr.AudioStreams {
+		inKbps := a.BitRate / 1000
+		inStr := "unknown"
+		if inKbps > 0 {
+			inStr = fmt.Sprintf("%d kbps", inKbps)
+		}
+
+		outStr := "n/a"
+		switch {
+		case ap.CopyAll:
+			outStr = "copy"
+		case i < len(ap.Streams):
+			if ap.Streams[i].Copy {
+				outStr = "copy"
+			} else {
+				outStr = ap.Streams[i].Bitrate
+			}
+		}
+
+		log.Info("  Audio[%d]: %s | in: %s | out: %s", a.Index, a.Codec, inStr, outStr)
 	}
 }
 

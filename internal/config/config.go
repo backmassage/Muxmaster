@@ -99,6 +99,7 @@ type Config struct {
 	ColorMode     ColorMode // Default: "auto".
 	LogFile       string    // Optional log file path.
 	CheckOnly     bool      // Run --check diagnostics and exit.
+	AnalyzeOnly   bool      // Probe all files and print a codec/bitrate table.
 
 	// Quality overrides (populated during flag parsing).
 	QualityOverride       string // --quality value (applies to active mode).
@@ -191,6 +192,12 @@ func (c *Config) Validate() error {
 	c.AudioBitrate = normalizedBitrate
 
 	if c.CheckOnly {
+		return nil
+	}
+	if c.AnalyzeOnly {
+		if c.InputDir == "" {
+			return errors.New("--analyze requires an input directory")
+		}
 		return nil
 	}
 	if c.InputDir == "" || c.OutputDir == "" {

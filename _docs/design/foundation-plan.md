@@ -1,20 +1,17 @@
-# Muxmaster Go Rewrite — Foundation Plan (Final)
+# Muxmaster — Architecture and Reference
 
-**Status:** Pre-implementation — all foundational decisions resolved  
-**Scope:** Architecture, repository structure, technical decisions, migration strategy  
-**Audience:** Developer (Go beginner), maintainer, AI coding assistants  
+**Scope:** Architecture, technical decisions, type reference, behavioral specification  
+**Audience:** Developer, maintainer, AI coding assistants  
 
-> **Format note:** This document uses structured text for all architecture diagrams
-> instead of Mermaid/UML. This ensures readability by both humans and AI tools
-> (Cursor, Claude, GPT, Copilot, etc.) that consume design docs as context.
+> Architecture diagrams use structured text (not Mermaid/UML) for readability by both humans and AI tools.
 
 ---
 
-## 1. Executive Summary
+## 1. About
 
-This plan defines the foundational steps for rewriting Muxmaster from a 2,666-line Bash script (v1.7.0) into a production-grade Go CLI application (v2.0). It bridges the gap between the existing behavior contract (current-behavior design doc) and the aspirational 2.0 design doc, establishing concrete decisions about what to build first, how to structure it, and what to defer.
+Muxmaster (v2.1.0) is a Go CLI application that replaces a 2,666-line Bash script with typed domain objects, structured logging, and a reliable ffmpeg retry engine. It targets a single static binary for Arch Linux.
 
-The rewrite targets a single static binary for Arch Linux, preserving all current behavior while introducing the structural improvements described in the 2.0 design: typed domain objects, interface-driven dependencies, structured logging, and a persistent state store.
+This document is the canonical reference for architecture, types, behavioral contracts, and technical decisions. For package layout and file navigation, see [structure.md](structure.md). For the aspirational v2.0 roadmap (subcommands, StateStore, etc.), see [product-spec.md](product-spec.md).
 
 ---
 
@@ -36,13 +33,6 @@ The rewrite targets a single static binary for Arch Linux, preserving all curren
 | Formatting | `gofmt` + `go vet` | Standard Go toolchain; no custom lint rules |
 | Exit code 2 (partial failure) | Deferred to post-MVP | Shell exits `0` on partial failure; change behavior alongside subcommand CLI |
 | Config file (YAML) | Deferred to post-MVP | Evaluate TOML (`BurntSushi/toml`) vs YAML at that time |
-
-### Open Items (Resolve Before Phase 4)
-
-| Item | Impact | Default if unresolved |
-|---|---|---|
-| **Test corpus** | Integration tests in Phase 4 need real or synthetic media files. Synthetic (1-second black video, various codecs/streams) works for CI but won't catch real-world naming edge cases. | Generate synthetic files; use real library for manual parity testing |
-| **GitHub username** | Needed for `go mod init` | Use placeholder; `go mod edit -module` can rename later |
 
 ---
 
@@ -122,7 +112,7 @@ cmd/main.go
 
 ### 4.2 Core Struct Relationships
 
-This section shows how the major domain types relate to each other. Full Go definitions are in Section 6.
+This section shows how the major domain types relate to each other. Full Go definitions are in Section 5.
 
 ```
 Config (40+ fields)
@@ -400,82 +390,7 @@ The parser tries 15 ordered regex rules against each filename. First match wins.
 
 ---
 
-## 5. Repository Structure
-
-```
-muxmaster/
-├── cmd/
-│   └── muxmaster/
-│       └── main.go                  # Entrypoint: parse args, wire deps, run
-│
-├── internal/
-│   ├── config/
-│   │   ├── config.go                # Config struct, defaults, validation
-│   │   ├── flags.go                 # CLI flag parsing (maps to Config)
-│   │   └── config_test.go
-│   │
-│   ├── logging/
-│   │   ├── logger.go                # Leveled logger, color policy, file sink
-│   │   └── logger_test.go
-│   │
-│   ├── probe/
-│   │   ├── prober.go                # Prober interface + ffprobe implementation
-│   │   ├── types.go                 # ProbeResult, VideoStream, AudioStream, etc.
-│   │   ├── hdr.go                   # HDR detection from color metadata
-│   │   ├── interlace.go             # Interlace detection from field_order
-│   │   └── probe_test.go
-│   │
-│   ├── naming/
-│   │   ├── parser.go                # Rule evaluation loop + specials-folder context
-│   │   ├── rules.go                 # All 15 ordered regex rules as ParseRule table
-│   │   ├── postprocess.go           # Tag stripping, title-casing, season hints
-│   │   ├── outputpath.go            # ParsedName → output path builder
-│   │   ├── collision.go             # In-run duplicate path resolver
-│   │   ├── harmonize.go             # TV show year-variant harmonization
-│   │   └── parser_test.go           # 60+ table-driven test cases
-│   │
-│   ├── planner/
-│   │   ├── planner.go               # Per-file decision: encode / remux / skip
-│   │   ├── quality.go               # Smart quality computation (configurable bias)
-│   │   ├── estimation.go            # Output bitrate estimation (ratio tables, biases)
-│   │   ├── audio.go                 # Per-stream audio plan (copy AAC / transcode / filters)
-│   │   ├── subtitle.go              # Subtitle + attachment stream plans
-│   │   ├── filter.go                # Video filter chain (deinterlace, HDR, hwupload)
-│   │   ├── disposition.go           # Stream disposition flag builder
-│   │   └── planner_test.go
-│   │
-│   ├── ffmpeg/
-│   │   ├── builder.go               # Shared skeleton + encode/remux codec-specific args
-│   │   ├── executor.go              # Runs ffmpeg, captures stderr, verbose tee
-│   │   ├── errors.go                # 4 compiled regexes for stderr classification
-│   │   ├── retry.go                 # Unified retry state machine
-│   │   └── executor_test.go
-│   │
-│   ├── pipeline/
-│   │   ├── runner.go                # Batch orchestration: discover → process → summarize
-│   │   ├── discover.go              # File discovery (extensions, extras exclusion, sort)
-│   │   ├── stats.go                 # RunStats: encoded/skipped/failed/bytes counters
-│   │   └── runner_test.go
-│   │
-│   ├── check/
-│   │   └── check.go                 # System diagnostics (--check mode)
-│   │
-│   └── display/
-│       ├── banner.go                # ASCII art banner
-│       ├── format.go                # Byte formatting, bitrate labels
-│       ├── renderplan.go            # Encode + remux render plan log formatting
-│       ├── outlier.go               # Bitrate outlier detection by resolution tier
-│       └── format_test.go
-│
-├── go.mod
-├── go.sum
-├── Makefile
-└── README.md
-```
-
----
-
-## 6. Core Types
+## 5. Core Types
 
 ### 6.1 Enums (Custom String Types)
 
@@ -823,7 +738,7 @@ func (s *RunStats) SpaceSaved() int64 {
 
 ---
 
-## 7. Key Technical Decisions
+## 6. Key Technical Decisions
 
 ### 7.1 Single JSON ffprobe Call
 
@@ -953,116 +868,7 @@ func titleCase(s string) string {
 
 ---
 
-## 8. Gap Analysis: Items Added Since Revision 1
-
-| # | Item | Severity | Location in Go |
-|---|---|---|---|
-| 8.1 | Stream disposition flags (`-disposition:v:0 default`, etc.) | Critical | `planner/disposition.go` |
-| 8.2 | Episode numbering offset scheme (OP→100+, ED→200+, PV→300+, etc.) | Critical | `naming/rules.go` |
-| 8.3 | `CLEAN_TIMESTAMPS` disables timestamp retry by default | Subtle | `ffmpeg/retry.go` |
-| 8.4 | `-probesize 100M -analyzeduration 100M -ignore_unknown` on ffmpeg (not just ffprobe) | Required | `ffmpeg/builder.go` |
-| 8.5 | Shared ffmpeg command skeleton (documented above) | Architecture | `ffmpeg/builder.go` |
-| 8.6 | `-x265-params "log-level=error:open-gop=0"` for CPU mode only | Required | `ffmpeg/builder.go` |
-| 8.7 | Per-stream audio filter chain for `MATCH_AUDIO_LAYOUT` | Required | `planner/audio.go` |
-| 8.8 | Format-level bitrate fallback when stream bitrate unavailable | Required | `probe/types.go` |
-| 8.9 | Full bitrate estimation model (ratio tables, codec/resolution/bitrate biases) | Required | `planner/estimation.go` |
-| 8.10 | Two-pass file discovery for year-variant harmonization | Required | `pipeline/runner.go` |
-| 8.11 | `normalize_dir_arg` trailing slash stripping | Minor | `config/config.go` |
-| 8.12 | Specials-like folder list with glob patterns (`ncop*`, `nced*`) | Required | `naming/parser.go` |
-| 8.13 | Full release tag pattern (40+ tags) | Required | `naming/postprocess.go` |
-| 8.14 | Greedy match recovery in anime dash pattern | Subtle | `naming/rules.go` |
-| 8.15 | Group release year resolution from parent directory | Subtle | `naming/rules.go` |
-
----
-
-## 9. Migration Phases
-
-### Phase 1: Skeleton + Config + Logging — Week 1
-
-**Goal:** Binary compiles, parses all flags, prints banner, validates inputs, exits.
-
-| Order | File | What to build |
-|---|---|---|
-| 1 | `go.mod` | `go mod init github.com/<user>/muxmaster` |
-| 2 | `internal/config/config.go` | Config struct with all defaults |
-| 3 | `internal/config/flags.go` | Flag parsing including quality override precedence |
-| 4 | `internal/config/config_test.go` | Flag precedence tests |
-| 5 | `internal/logging/logger.go` | Leveled logger with color and file sink |
-| 6 | `internal/display/banner.go` | ASCII banner |
-| 7 | `internal/display/format.go` | `FormatBytes()`, `FormatBitrateLabel()` |
-| 8 | `cmd/main.go` | Wire config → logger → banner → validation |
-| 9 | `internal/check/check.go` | `--check` mode diagnostics |
-
-**Validation:** `./muxmaster --help`, `--version`, `--check`, bad flags, overlapping dirs.
-
-### Phase 2: Probe + Naming — Week 2
-
-**Goal:** Discover files, probe them, parse filenames, compute output paths.
-
-| Order | File | What to build |
-|---|---|---|
-| 1 | `internal/probe/types.go` | All probe structs |
-| 2 | `internal/probe/prober.go` | Single JSON ffprobe call → `ProbeResult` |
-| 3 | `internal/probe/hdr.go` | `HDRType()` |
-| 4 | `internal/probe/interlace.go` | `IsInterlaced()` |
-| 5 | `internal/naming/rules.go` | All 15 compiled regex rules + extract functions |
-| 6 | `internal/naming/parser.go` | Rule loop + specials-folder context switch |
-| 7 | `internal/naming/postprocess.go` | Tag stripping, title-casing, season hints |
-| 8 | `internal/naming/parser_test.go` | 60+ table-driven cases |
-| 9 | `internal/naming/outputpath.go` | TV/movie path builder |
-| 10 | `internal/naming/collision.go` | Duplicate path resolver |
-| 11 | `internal/naming/harmonize.go` | Year-variant index |
-| 12 | `internal/pipeline/discover.go` | Walk + filter + sort |
-
-**Validation:** `--dry-run` output matches shell script for same input directory.
-
-### Phase 3: Planner + Display — Week 3
-
-**Goal:** Produce complete `FilePlan` per file and log render plans.
-
-| Order | File | What to build |
-|---|---|---|
-| 1 | `internal/planner/planner.go` | Decision matrix + edge-safe HEVC check |
-| 2 | `internal/planner/quality.go` | Smart quality with configurable bias |
-| 3 | `internal/planner/estimation.go` | Ratio tables + bias adjustments |
-| 4 | `internal/planner/audio.go` | Per-stream plan with filter chains |
-| 5 | `internal/planner/subtitle.go` | Subtitle + attachment plans |
-| 6 | `internal/planner/filter.go` | Video filter chain |
-| 7 | `internal/planner/disposition.go` | Disposition flags |
-| 8 | `internal/display/renderplan.go` | Encode + remux log formatting |
-| 9 | `internal/display/outlier.go` | Bitrate outlier detection |
-
-**Validation:** `--dry-run` render plans and quality decisions match shell script.
-
-### Phase 4: FFmpeg Execution + Retry — Week 4
-
-**Goal:** Run ffmpeg. Full encode and remux paths with retry.
-
-| Order | File | What to build |
-|---|---|---|
-| 1 | `internal/ffmpeg/builder.go` | Shared skeleton + codec-specific args |
-| 2 | `internal/ffmpeg/executor.go` | Run, capture stderr, verbose tee |
-| 3 | `internal/ffmpeg/errors.go` | 4 compiled regexes |
-| 4 | `internal/ffmpeg/retry.go` | Unified state machine |
-| 5 | `internal/pipeline/runner.go` | Full batch orchestration |
-| 6 | `internal/pipeline/stats.go` | Byte counters + summary |
-
-**Validation:** Process test library, compare output files with shell script.
-
-### Phase 5: Polish + Parity — Week 5
-
-| Task | Detail |
-|---|---|
-| Signal handling | Context cancellation, partial output cleanup |
-| Summary reporting | Size delta, byte formatting |
-| Edge cases | No audio, bitmap subs + MP4, corrupt files, HDR, interlaced |
-| Parity test | Diff `--dry-run` output shell vs Go on real library |
-| Defaults audit | Cross-reference every value against shell script Section 2 table |
-| Documentation | README, `--help` parity, Makefile |
-
----
-
-## 10. Testing Strategy
+## 7. Testing Strategy
 
 ### 10.1 Unit Tests (No Subprocesses)
 
@@ -1098,17 +904,17 @@ Script that runs both implementations with `--dry-run` on the same directory and
 
 ---
 
-## 11. Build Tooling
+## 8. Build Tooling
 
 ### Makefile
 
 ```makefile
 BINARY  := muxmaster
-VERSION := 2.0.0-dev
+VERSION := 2.1.0
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
-.PHONY: build test vet clean install
+.PHONY: build test vet fmt lint docs-naming coverage ci clean install
 
 build:
 	go build $(LDFLAGS) -o $(BINARY) ./cmd
@@ -1119,8 +925,23 @@ test:
 vet:
 	go vet ./...
 
+fmt:
+	gofmt -l -w .
+
+lint:
+	golangci-lint run ./...
+
+docs-naming:
+	# validates all .md filenames follow lowercase-kebab-case; see Makefile for full body
+
+coverage:
+	go test -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+
+ci: vet fmt docs-naming build test
+
 clean:
-	rm -f $(BINARY)
+	rm -f $(BINARY) coverage.out coverage.html
 
 install: build
 	install -Dm755 $(BINARY) $(HOME)/bin/$(BINARY)
@@ -1139,7 +960,7 @@ var (
 
 ---
 
-## 12. Behavioral Gotchas Checklist
+## 9. Behavioral Gotchas Checklist
 
 These are specific behaviors that are easy to get wrong. Each should have a corresponding test.
 
@@ -1164,26 +985,3 @@ These are specific behaviors that are easy to get wrong. Each should have a corr
 | 17 | Fractional episodes | `Episode 16.5` → Season 0, Episode 165 (concatenated). |
 | 18 | `SHOW_FFMPEG_FPS` default | `true` in shell script. Verify Go default matches. |
 
----
-
-## 13. First 5 Things to Do
-
-```
-1.  go mod init github.com/<user>/muxmaster
-    mkdir -p cmd internal/{config,logging,probe,naming,planner,ffmpeg,pipeline,check,display}
-
-2.  Write internal/config/config.go — Config struct with all defaults.
-    Write internal/config/flags.go  — flag parsing with quality override precedence.
-    Write internal/config/config_test.go — flag precedence tests.
-
-3.  Write internal/naming/rules.go       — 15 compiled regexes + extract functions.
-    Write internal/naming/parser.go      — rule loop + specials-folder context.
-    Write internal/naming/postprocess.go — tag stripping, title-casing, season hints.
-    Write internal/naming/parser_test.go — 60+ table-driven test cases.
-
-4.  Write internal/probe/types.go  — all probe structs with methods.
-    Write internal/probe/prober.go — single JSON ffprobe call.
-
-5.  Wire cmd/main.go → config → logging → banner → --check.
-    Run:  go build ./cmd && ./muxmaster --help
-```

@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.1.0] — 2026-02-24
+
+### Changed
+
+- **AAC passthrough enforced:** Existing AAC audio streams are never re-encoded regardless of action (encode or HEVC remux). Only non-AAC streams are transcoded. The HEVC remux action label now correctly reads "encode non-AAC audio via …" instead of the misleading "encode AAC via …".
+- **Analyze table: Audio Kbps column removed.** The per-file audio bitrate column has been removed from `--analyze` output (slow and unreliable). The audio description column (codec + channel count) remains.
+- **Analyze table: rich per-column coloring.** Resolution (4K→cyan, 1080p→green, 720p→yellow, SD→orange), video codec (HEVC/AV1→green, H.264→blue, legacy→orange), audio description (AAC→green, FLAC/PCM→cyan, AC3/DTS→yellow), bold headers, and dim separators. Two new ANSI variables (`Bold`, `Dim`) added to the `term` package.
+- **Banner rainbow uses `term.*` variables** instead of hardcoded ANSI escape codes, ensuring the banner stays in sync with color configuration.
+- **`FormatBitrateLabel` returns "—" for unknown bitrate** instead of "0 kbps" when the bitrate is zero or negative.
+
+### Added
+
+- **Batch analysis mode** (`--analyze` / `-a`): Probe-only mode that scans all media files in a directory and prints a tabular report of resolution, video codec, video kbps, and audio description. Uses IQR-based statistical detection to highlight outliers (`[*]` orange) and extreme outliers (`[!]` red) in the video bitrate column. Summary prints IQR bounds and counts. Usage: `muxmaster --analyze /path/to/media`.
+- **Audio bitrate reporting:** Per-stream input and output audio bitrates are logged for every processed file. Input bitrate (kbps) is read from `ffprobe`; output shows `copy` for AAC passthrough or the target bitrate (e.g. `256k`) for transcoded streams. Example: `Audio[0]: aac | in: 192 kbps | out: copy`.
+- **Audio `BitRate` in probe:** `AudioStream.BitRate` field parsed from `ffprobe` `bit_rate` for per-stream bitrate reporting.
+
+### Fixed
+
+- **Nil-pointer dereference in `logFileStats`:** Added nil guard for `pr.PrimaryVideo` — function previously assumed the caller validated, but was itself unsafe.
+- **`VideoStreamIdx` not set in `BuildPlan`:** The plan's video stream index was silently defaulting to 0 (wrong if stream 0 is a thumbnail). Now set inside `BuildPlan` from probe data.
+- **`Container` not set in `BuildPlan`:** Same fragile caller-sets-field pattern — `plan.Container` was set by `runner.go` after `BuildPlan` returned. Moved into `BuildPlan` so any caller gets the correct value.
+- **Duplicate `clamp()` and quality constants:** Both `planner/quality.go` and `ffmpeg/retry.go` defined identical functions and constants. Exported from `planner` as `Clamp`, `CpuCRFMin`, etc.; removed duplicates from `ffmpeg`.
+- **Custom `itoa` reimplementation in `probe/types.go`:** Removed 15-line hand-rolled function; replaced with `strconv.Itoa`.
+- **Misleading function name `colorPadRight`:** Renamed to `colorRightAlign` — the function right-aligns (left-pads), not right-pads.
+- **Analyze table alignment:** ANSI color escape sequences no longer break column padding. Plain text is padded first, then wrapped in color codes.
+- **Architecture docs:** Fixed false `logging` dependency listed for `planner` and `ffmpeg` packages; added missing `term` dependency for `pipeline`.
+- **Project docs:** Updated structure.md (all packages implemented, display no longer "Partial", analyze.go listed), fully rewrote audit.md to reflect current state.
+
+---
+
 ## [2.0.0] — 2026-02-24 — Go rewrite release
 
 Complete rewrite from a 2,600-line Bash script to a single static Go binary with full CLI parity.
@@ -101,6 +131,7 @@ Complete rewrite from a 2,600-line Bash script to a single static Go binary with
 - Pipeline (discover → probe → plan → execute) is not yet implemented; the binary runs config, check, and path validation only.
 - Unit tests are planned for a later phase; test files were removed in favor of a skeleton-first approach.
 
+[2.1.0]: https://github.com/backmassage/muxmaster/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev+lint...v2.0.0
 [2.0.0-dev+lint]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev+restructure...v2.0.0-dev+lint
 [2.0.0-dev+restructure]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev...v2.0.0-dev+restructure

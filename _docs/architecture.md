@@ -53,12 +53,10 @@ check
 planner
   -> config
   -> probe
-  -> logging
 
 ffmpeg
   -> config
   -> planner
-  -> logging
 
 pipeline (orchestrator)
   -> config
@@ -68,6 +66,7 @@ pipeline (orchestrator)
   -> planner
   -> ffmpeg
   -> display
+  -> term
 ```
 
 Leaf or near-leaf packages with the lowest internal coupling are `config`, `term`, `probe`, and `naming`.
@@ -83,7 +82,7 @@ Leaf or near-leaf packages with the lowest internal coupling are `config`, `term
 - **probe** and **naming** stay dependency-free (pure logic + external tool wrappers).
 - **planner** combines config + probe data to produce a `FilePlan`.
 - **ffmpeg** depends on config and planner (consumes `FilePlan`).
-- **pipeline** is the sole orchestrator — it wires probe, naming, planner, ffmpeg, and display into the per-file processing loop.
+- **pipeline** is the sole orchestrator — it wires probe, naming, planner, ffmpeg, display, and term into the per-file processing loop and analysis feature.
 - **check** depends only on config; it accepts a small Logger interface.
 
 ---

@@ -126,7 +126,7 @@ func convertVideo(s *ffprobeStream) VideoStream {
 		PixFmt:         s.PixFmt,
 		Width:          s.Width,
 		Height:         s.Height,
-		BitRate:        parseInt64(s.BitRate),
+		BitRate:        streamBitRate(s),
 		FieldOrder:     s.FieldOrder,
 		ColorTransfer:  s.ColorTransfer,
 		ColorPrimaries: s.ColorPrimaries,
@@ -143,9 +143,29 @@ func convertAudio(s *ffprobeStream) AudioStream {
 		Channels:      s.Channels,
 		ChannelLayout: s.ChannelLayout,
 		SampleRate:    parseInt(s.SampleRate),
+		BitRate:       streamBitRate(s),
 		Language:      s.Tags["language"],
 		IsDefault:     s.Disposition["default"] == 1,
 	}
+}
+
+// streamBitRate extracts the bitrate for a stream. ffprobe populates the
+// top-level bit_rate field for some containers (MP4) but leaves it empty
+// for others (MKV). Matroska muxers store per-stream bitrate in tags
+// under keys like "BPS", "BPS-eng", "BPS-jpn", etc. We try each source
+// in order and return the first positive value.
+func streamBitRate(s *ffprobeStream) int64 {
+	if br := parseInt64(s.BitRate); br > 0 {
+		return br
+	}
+	for k, v := range s.Tags {
+		if strings.EqualFold(k, "BPS") || (len(k) > 4 && strings.EqualFold(k[:4], "BPS-")) {
+			if br := parseInt64(v); br > 0 {
+				return br
+			}
+		}
+	}
+	return 0
 }
 
 var bitmapSubCodecs = map[string]bool{

@@ -23,7 +23,7 @@ import (
 // When built with plain "go build" (no make), these retain their defaults.
 // The Makefile is the authoritative source for VERSION; see the Makefile for ldflags details.
 var (
-	version = "2.0.0"
+	version = "2.1.0"
 	commit  = "unknown"
 )
 
@@ -60,6 +60,33 @@ func run() int {
 		if !check.RunCheck(&cfg, log) {
 			return 1
 		}
+		return 0
+	}
+
+	if cfg.AnalyzeOnly {
+		inputAbs, err := absPath(cfg.InputDir)
+		if err != nil {
+			log.Error("Input not found: %s", cfg.InputDir)
+			return 1
+		}
+		cfg.InputDir = inputAbs
+
+		log.Info("=== Muxmaster v%s (%s) — Analyze ===", version, commit)
+		log.Info("In: %s", cfg.InputDir)
+		fmt.Println()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		go func() {
+			<-sigCh
+			log.Warn("Received interrupt…")
+			cancel()
+		}()
+
+		pipeline.Analyze(ctx, &cfg, log)
 		return 0
 	}
 

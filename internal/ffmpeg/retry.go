@@ -88,14 +88,6 @@ func (s *RetryState) Advance(stderr string) RetryAction {
 	return RetryNone
 }
 
-// Quality clamp ranges from the legacy script.
-const (
-	cpuCRFMin  = 16
-	cpuCRFMax  = 30
-	vaapiQPMin = 14
-	vaapiQPMax = 36
-)
-
 // BumpQuality increments both VaapiQP and CpuCRF by QualityStep, clamped to
 // their respective valid ranges. Only the attempt counter is reset; retry
 // flags (attachments, subtitles, mux queue, timestamp fix) keep whatever
@@ -107,18 +99,8 @@ func (s *RetryState) BumpQuality() bool {
 		return false
 	}
 	s.QualityPass++
-	s.VaapiQP = clamp(s.VaapiQP+s.QualityStep, vaapiQPMin, vaapiQPMax)
-	s.CpuCRF = clamp(s.CpuCRF+s.QualityStep, cpuCRFMin, cpuCRFMax)
+	s.VaapiQP = planner.Clamp(s.VaapiQP+s.QualityStep, planner.VaapiQPMin, planner.VaapiQPMax)
+	s.CpuCRF = planner.Clamp(s.CpuCRF+s.QualityStep, planner.CpuCRFMin, planner.CpuCRFMax)
 	s.Attempt = 0
 	return true
-}
-
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
 }
