@@ -122,7 +122,6 @@ func processFile(
 	plan := planner.BuildPlan(cfg, pr)
 	plan.InputPath = path
 	plan.OutputPath = outputPath
-	plan.Container = cfg.OutputContainer
 
 	if plan.QualityNote != "" {
 		if strings.Contains(plan.QualityNote, "not browser-safe") {

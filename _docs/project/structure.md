@@ -19,15 +19,13 @@ Root meta-files: `README.md`, `CHANGELOG.md`, `LICENSE`, `Makefile`, `go.mod`, `
 | **config**  | Implemented | Defaults, CLI flags, validation | `config.go`, `flags.go` |
 | **term**    | Implemented | ANSI color state, TTY detection | `term.go` |
 | **logging** | Implemented | Leveled logger, optional file sink | `logger.go` |
-| **display** | Partial | Banner, byte/bitrate formatting; render-plan and outlier TBD | `banner.go`, `format.go` |
+| **display** | Implemented | Banner, byte/bitrate formatting | `banner.go`, `format.go` |
 | **check**   | Implemented | `--check` diagnostics and `CheckDeps` | `check.go` |
 | **probe**   | Implemented | ffprobe JSON → typed structs, HDR/interlace/HEVC-safe detection | `types.go`, `prober.go`, `hdr.go`, `interlace.go`, `probe_test.go` |
 | **naming**  | Implemented | Filename parsing, output paths, collision, harmonization | `parser.go`, `rules.go`, `postprocess.go`, `outputpath.go`, `collision.go`, `harmonize.go`, `parser_test.go` |
 | **planner** | Implemented | Encode vs remux vs skip, smart quality, estimation, audio/subtitle/filter plans | `types.go`, `planner.go`, `quality.go`, `estimation.go`, `filter.go`, `audio.go`, `subtitle.go`, `disposition.go`, `planner_test.go` |
 | **ffmpeg**  | Implemented | Command building, execution, retry | `builder.go`, `executor.go`, `errors.go`, `retry.go` |
-| **pipeline**| Implemented | File discovery, per-file processing, batch stats | `discover.go`, `runner.go`, `stats.go`, `pipeline_test.go` |
-
-Remaining stub packages contain a single `doc.go` with the package declaration and a comprehensive implementation plan. When implementing, split into multiple files along the boundaries documented in each `doc.go`.
+| **pipeline**| Implemented | File discovery, per-file processing, batch analysis, batch stats | `discover.go`, `runner.go`, `analyze.go`, `stats.go`, `pipeline_test.go` |
 
 For the full dependency map and rules, see [architecture.md](../architecture.md).
 

@@ -2,7 +2,7 @@
 
 This document reviews the project against its structure, documentation, Git, build, and automation guidelines.
 
-Last updated: 2026-02-23
+Last updated: 2026-02-24
 
 ---
 
@@ -12,7 +12,7 @@ Last updated: 2026-02-23
 |------|--------|-------|
 | Top-level layout | **Pass** | `cmd/`, `internal/`, `_docs/`, root meta-files. |
 | `internal/` packages | **Pass** | 10 packages: config, term, logging, display, check, probe, naming, planner, ffmpeg, pipeline. |
-| Stub consolidation | **Pass** | Unimplemented packages use a single `doc.go` with comprehensive implementation plan. |
+| All packages implemented | **Pass** | No stubs remain; every package has full production code. |
 | `.gitignore` | **Pass** | Ignores binary, coverage, IDE, OS files. `go.sum` is tracked (per Go modules spec). |
 | `.editorconfig` | **Pass** | Cross-editor consistency for Go, Markdown, Makefile. |
 | `LICENSE` | **Pass** | MIT license at root. |
@@ -20,12 +20,16 @@ Last updated: 2026-02-23
 
 ### Internal package layout
 
-- **config** — 2 files: `config.go` (types/defaults), `flags.go` (CLI).
-- **term** — 1 file: `term.go` (ANSI colors, TTY detection).
+- **config** — 3 files: `config.go` (types/defaults), `flags.go` (CLI), `config_test.go`.
+- **term** — 1 file: `term.go` (ANSI colors incl. Bold/Dim, TTY detection).
 - **logging** — 1 file: `logger.go`. Depends on config + term.
 - **display** — 2 files: `banner.go`, `format.go`. Depends on term (not logging).
-- **check** — 1 file: `check.go`.
-- **probe**, **naming**, **planner**, **ffmpeg**, **pipeline** — 1 file each (`doc.go`).
+- **check** — 1 file: `check.go`. Depends on config; accepts Logger interface.
+- **probe** — 5 files: `types.go`, `prober.go`, `hdr.go`, `interlace.go`, `probe_test.go` + `probe_live_test.go`. No internal deps.
+- **naming** — 7 files: `parser.go`, `rules.go`, `postprocess.go`, `outputpath.go`, `collision.go`, `harmonize.go`, `parser_test.go`. No internal deps.
+- **planner** — 9 files: `types.go`, `planner.go`, `quality.go`, `estimation.go`, `filter.go`, `audio.go`, `subtitle.go`, `disposition.go`, `doc.go`, `planner_test.go`. Depends on config + probe.
+- **ffmpeg** — 4 files: `builder.go`, `executor.go`, `errors.go`, `retry.go`. Depends on config + planner.
+- **pipeline** — 5 files: `discover.go`, `runner.go`, `analyze.go`, `stats.go`, `pipeline_test.go`. Depends on config, logging, probe, naming, planner, ffmpeg, display, term.
 
 ---
 
@@ -35,9 +39,9 @@ Last updated: 2026-02-23
 |-------|--------|
 | README: overview, build, usage, structure, docs links, license | **Pass** |
 | CHANGELOG: Keep a Changelog format, dated entries | **Pass** |
-| Documentation entrypoint | **Pass** |
-| _docs/architecture.md: dependency diagram includes `term` package | **Pass** |
-| _docs/project/structure.md: matches actual code layout | **Pass** |
+| Documentation entrypoint (`_docs/index.md`) | **Pass** |
+| `_docs/architecture.md`: dependency diagram matches actual imports | **Pass** |
+| `_docs/project/structure.md`: matches actual code layout | **Pass** |
 
 ---
 
@@ -61,7 +65,7 @@ Last updated: 2026-02-23
 |-------|--------|-------|
 | Makefile targets | **Pass** | build, test, vet, fmt, lint, docs-naming, coverage, ci, clean, install. |
 | `make ci` | **Pass** | Runs vet + fmt + docs-naming + build + test. |
-| Unit tests | **None** | No test files. Add when implementing stub packages. |
+| Unit tests | **Pass** | Test suites for config, probe, naming, planner, and pipeline (discovery + dry-run). |
 | golangci-lint config | **Pass** | `.golangci.yml` with 19 linters and project-specific exclusions. |
 
 ---
@@ -84,5 +88,5 @@ Last updated: 2026-02-23
 | Project structure | Pass | — |
 | Documentation | Pass | — |
 | Git practices | Pass | Create `dev` branch when ready |
-| Build & testing | Pass | Add tests when implementing stub packages |
+| Build & testing | Pass | — |
 | Naming | Pass | — |
