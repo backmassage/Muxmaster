@@ -4,6 +4,8 @@ Target Platform: Arch Linux
 Language: Go  
 Execution Model: CLI (single-run), systemd-compatible  
 
+> **Status:** Aspirational v2.0 design. The core pipeline is implemented (v2.1.0). Post-MVP features — subcommand CLI, persistent state store, atomic output, config file, JSON logging — are deferred. See [foundation-plan.md](foundation-plan.md) §3 for the full scope boundary.
+
 ---
 
 # 1. Purpose
@@ -546,19 +548,3 @@ Go selected because:
 - Low operational overhead  
 
 Muxmaster v2.0 replaces fragile shell logic with typed state, structured logging, hardened error handling, and deterministic execution.
-
----
-
-# 16. MVP Scope
-
-Initial milestone:
-
-- Scan directory  
-- Probe files  
-- Transcode/remux non-compliant media  
-- Atomic replace  
-- Structured logging  
-- No concurrency  
-- SQLite state optional  
-
-All other features deferred.

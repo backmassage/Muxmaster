@@ -16,4 +16,4 @@ All documentation for the Muxmaster project. Start with [architecture.md](archit
 
 | Document | Purpose |
 |----------|---------|
-| [../structure.md](../structure.md) | Folder layout, package table, "where to change what" quick finder |
+| [design/structure.md](design/structure.md) | Folder layout, package table, "where to change what" quick finder |
