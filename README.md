@@ -257,7 +257,7 @@ Key references:
 
 - **Architecture:** [_docs/architecture.md](_docs/architecture.md)
 - **Design plan:** [_docs/design/foundation-plan.md](_docs/design/foundation-plan.md)
-- **Project structure:** [_docs/project/structure.md](_docs/project/structure.md)
+- **Project structure:** [structure.md](structure.md)
 - **Changelog:** [CHANGELOG.md](CHANGELOG.md)
 
 ---
