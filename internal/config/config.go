@@ -57,10 +57,10 @@ type Config struct {
 	// Encoder settings.
 	EncoderMode      EncoderMode
 	VaapiDevice      string // Default: "/dev/dri/renderD128".
-	VaapiQP          int    // Default: 19. Overridden by --vaapi-qp or --quality.
+	VaapiQP          int    // Default: 18. Overridden by --vaapi-qp or --quality.
 	VaapiProfile     string // Derived at runtime: "main10" or "main".
 	VaapiSwFormat    string // Derived at runtime: "p010" or "nv12".
-	CpuCRF           int    // Default: 19. Overridden by --cpu-crf or --quality.
+	CpuCRF           int    // Default: 18. Overridden by --cpu-crf or --quality.
 	CpuPreset        string // Default: "slow".
 	CpuProfile       string // Fixed: "main10".
 	CpuPixFmt        string // Fixed: "yuv420p10le".
@@ -71,7 +71,7 @@ type Config struct {
 
 	// Audio encoding.
 	AudioChannels   int    // Default: 2 (stereo).
-	AudioBitrate    string // Default: "256k".
+	AudioBitrate    string // Default: "320k".
 	AudioSampleRate int    // Fixed: 48000 Hz.
 	AudioEncoder    string // Fixed default: "libfdk_aac".
 
@@ -89,8 +89,7 @@ type Config struct {
 	DeinterlaceAuto  bool    // Default: true.
 
 	// Quality tuning.
-	SmartQualityBias      int // Default: -1 (slightly favor smaller output).
-	SmartQualityRetryStep int // Default: 2 (QP/CRF bump per retry).
+	SmartQualityBias int // Default: -2 (favor higher quality / lower QP).
 
 	// Display and logging.
 	Verbose       bool
@@ -118,15 +117,15 @@ func DefaultConfig() Config {
 	return Config{
 		EncoderMode:           EncoderVAAPI,
 		VaapiDevice:           "/dev/dri/renderD128",
-		VaapiQP:               19,
-		CpuCRF:                19,
+		VaapiQP:               18,
+		CpuCRF:                18,
 		CpuPreset:             "slow",
 		CpuProfile:            "main10",
 		CpuPixFmt:             "yuv420p10le",
 		KeyframeInterval:      48,
 		OutputContainer:       ContainerMKV,
 		AudioChannels:         2,
-		AudioBitrate:          "256k",
+		AudioBitrate:          "320k",
 		AudioSampleRate:       48000,
 		AudioEncoder:          "libfdk_aac",
 		DryRun:                false,
@@ -140,8 +139,7 @@ func DefaultConfig() Config {
 		KeepAttachments:       true,
 		HandleHDR:             HDRPreserve,
 		DeinterlaceAuto:       true,
-		SmartQualityBias:      -1,
-		SmartQualityRetryStep: 2,
+		SmartQualityBias:      -2,
 		Verbose:               false,
 		ShowFileStats:         true,
 		ShowFfmpegFPS:         true,
@@ -153,12 +151,18 @@ func DefaultConfig() Config {
 }
 
 // NormalizeDirArg strips trailing slashes from a directory path.
-// The filesystem root "/" is returned unchanged so we don't produce an empty string.
+// The filesystem root "/" (or equivalent like "//") is returned as "/"
+// so we don't produce an empty string. An empty input is returned as-is
+// (caught by Validate).
 func NormalizeDirArg(path string) string {
-	if path == "/" {
+	if path == "" {
+		return ""
+	}
+	trimmed := strings.TrimRight(path, "/")
+	if trimmed == "" {
 		return "/"
 	}
-	return strings.TrimRight(path, "/")
+	return trimmed
 }
 
 // Validate checks that enum fields (mode, container, HDR) hold valid values.
@@ -220,7 +224,7 @@ func normalizeAudioBitrate(raw string) (string, error) {
 	}
 	n, err := strconv.Atoi(s)
 	if err != nil || n <= 0 {
-		return "", fmt.Errorf("invalid audio bitrate %q (use positive Kbps value, e.g. 128k)", raw)
+		return "", fmt.Errorf("invalid audio bitrate %q (use positive Kbps value, e.g. 320k)", raw)
 	}
 	return fmt.Sprintf("%dk", n), nil
 }

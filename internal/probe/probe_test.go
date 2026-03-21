@@ -308,25 +308,76 @@ func TestParseJSON_MinimalFile(t *testing.T) {
 
 func TestVideoBitRate(t *testing.T) {
 	// Stream bitrate available → use it.
-	pr, _ := ParseJSON([]byte(sampleHDR))
+	pr, err := ParseJSON([]byte(sampleHDR))
+	if err != nil {
+		t.Fatalf("ParseJSON(sampleHDR): %v", err)
+	}
 	if got := pr.VideoBitRate(); got != 5000000 {
 		t.Errorf("with stream bitrate: got %d, want 5000000", got)
 	}
 
 	// Stream bitrate missing → fall back to format.
-	pr, _ = ParseJSON([]byte(sampleMinimal))
+	pr, err = ParseJSON([]byte(sampleMinimal))
+	if err != nil {
+		t.Fatalf("ParseJSON(sampleMinimal): %v", err)
+	}
 	if got := pr.VideoBitRate(); got != 400000 {
 		t.Errorf("fallback to format: got %d, want 400000", got)
 	}
 }
 
+func TestVideoBitRate_SubtractsAudio(t *testing.T) {
+	// When video stream has no bitrate, format fallback should subtract
+	// known audio bitrate to avoid inflating the video bitrate estimate.
+	pr := &ProbeResult{
+		PrimaryVideo: &VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 0,
+		},
+		AudioStreams: []AudioStream{
+			{BitRate: 384000},  // AC3 5.1
+			{BitRate: 1500000}, // FLAC
+		},
+		Format: FormatInfo{BitRate: 10000000},
+	}
+	got := pr.VideoBitRate()
+	want := int64(10000000 - 384000 - 1500000) // 8116000
+	if got != want {
+		t.Errorf("format minus audio: got %d, want %d", got, want)
+	}
+}
+
+func TestTotalAudioBitRate(t *testing.T) {
+	pr := &ProbeResult{
+		AudioStreams: []AudioStream{
+			{BitRate: 384000},
+			{BitRate: 256000},
+			{BitRate: 0}, // unknown
+		},
+	}
+	if got := pr.TotalAudioBitRate(); got != 640000 {
+		t.Errorf("total audio: got %d, want 640000", got)
+	}
+
+	// No audio streams → 0.
+	empty := &ProbeResult{}
+	if got := empty.TotalAudioBitRate(); got != 0 {
+		t.Errorf("empty: got %d, want 0", got)
+	}
+}
+
 func TestResolution(t *testing.T) {
-	pr, _ := ParseJSON([]byte(sampleHDR))
+	pr, err := ParseJSON([]byte(sampleHDR))
+	if err != nil {
+		t.Fatalf("ParseJSON(sampleHDR): %v", err)
+	}
 	if got := pr.Resolution(); got != "1920x1080" {
 		t.Errorf("got %q, want 1920x1080", got)
 	}
 
-	pr, _ = ParseJSON([]byte(sampleMinimal))
+	pr, err = ParseJSON([]byte(sampleMinimal))
+	if err != nil {
+		t.Fatalf("ParseJSON(sampleMinimal): %v", err)
+	}
 	if got := pr.Resolution(); got != "1280x720" {
 		t.Errorf("got %q, want 1280x720", got)
 	}

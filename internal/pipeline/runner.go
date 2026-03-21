@@ -17,6 +17,7 @@ import (
 	"github.com/backmassage/muxmaster/internal/naming"
 	"github.com/backmassage/muxmaster/internal/planner"
 	"github.com/backmassage/muxmaster/internal/probe"
+	"github.com/backmassage/muxmaster/internal/term"
 )
 
 const minFileSize = 1000
@@ -65,7 +66,7 @@ func processFile(
 	resolver *naming.CollisionResolver,
 ) {
 	basename := filepath.Base(path)
-	log.Info("[%d/%d] %s", stats.Current, stats.Total, basename)
+	log.Info("[%d/%d] %s%s%s", stats.Current, stats.Total, term.Cyan, basename, term.NC)
 
 	// --- Validate ---
 	fi, err := os.Stat(path)
@@ -113,15 +114,16 @@ func processFile(
 	outputPath = resolver.Resolve(path, outputPath)
 
 	// --- Log file stats ---
-	if cfg.ShowFileStats {
-		logFileStats(log, pr)
-	}
 	logBitrateOutlier(log, pr)
 
 	// --- Build plan ---
 	plan := planner.BuildPlan(cfg, pr)
 	plan.InputPath = path
 	plan.OutputPath = outputPath
+
+	if cfg.ShowFileStats {
+		logFileStats(log, plan)
+	}
 
 	if plan.QualityNote != "" {
 		if strings.Contains(plan.QualityNote, "not browser-safe") {
@@ -144,7 +146,14 @@ func processFile(
 	// --- Log action ---
 	actionLabel := "Encoding"
 	if plan.Action == planner.ActionRemux {
-		actionLabel = fmt.Sprintf("Remuxing (copy HEVC, encode non-AAC audio via %s)", cfg.AudioEncoder)
+		switch {
+		case plan.Audio.NoAudio:
+			actionLabel = "Remuxing (copy HEVC, no audio)"
+		case plan.Audio.CopyAll:
+			actionLabel = "Remuxing (copy HEVC, copy audio)"
+		default:
+			actionLabel = fmt.Sprintf("Remuxing (copy HEVC, encode non-AAC audio via %s)", cfg.AudioEncoder)
+		}
 	}
 	log.Info("%s: %s", actionLabel, basename)
 	log.Info("  -> %s", filepath.Base(outputPath))
@@ -172,7 +181,7 @@ func processFile(
 
 	// --- Execute with retry ---
 	start := time.Now()
-	rs := ffmpeg.NewRetryState(plan, cfg.SmartQualityRetryStep)
+	rs := ffmpeg.NewRetryState(plan)
 	ok := executeWithRetry(ctx, cfg, log, plan, rs)
 
 	if !ok {
@@ -212,9 +221,15 @@ func processFile(
 	fmt.Println()
 }
 
-// executeWithRetry runs ffmpeg with the quality-retry outer loop and the
-// error-retry inner loop. The quality loop only applies to encodes; when
-// output exceeds 105% of input, quality is bumped and the file re-encoded.
+const (
+	maxQualityBumps = 3
+	qualityBumpStep = 2
+)
+
+// executeWithRetry runs ffmpeg with the error-retry inner loop, then checks
+// for output size overshoot. If the encode produces a file larger than the
+// input (smart quality enabled, no manual override), QP/CRF is bumped and
+// the encode is re-attempted up to maxQualityBumps times.
 func executeWithRetry(
 	ctx context.Context,
 	cfg *config.Config,
@@ -222,38 +237,78 @@ func executeWithRetry(
 	plan *planner.FilePlan,
 	rs *ffmpeg.RetryState,
 ) bool {
-	for {
+	if ctx.Err() != nil {
+		return false
+	}
+
+	if !attemptWithErrorRetry(ctx, cfg, log, plan, rs) {
+		return false
+	}
+
+	if plan.Action != planner.ActionEncode {
+		return true
+	}
+
+	canEscalate := cfg.SmartQuality && cfg.ActiveQualityOverride == ""
+	bumpsApplied := 0
+
+	for bump := 0; bump < maxQualityBumps && canEscalate; bump++ {
+		pct, ok := outputPct(plan)
+		if !ok || pct <= 100 {
+			break
+		}
+
+		if cfg.EncoderMode == config.EncoderVAAPI {
+			next := rs.VaapiQP + qualityBumpStep
+			if next > planner.VaapiQPMax {
+				log.Warn("Output larger than input (%d%%) — QP %d already at max", pct, rs.VaapiQP)
+				break
+			}
+			rs.VaapiQP = next
+			log.Warn("Output larger than input (%d%%), re-encoding at QP %d", pct, rs.VaapiQP)
+		} else {
+			next := rs.CpuCRF + qualityBumpStep
+			if next > planner.CpuCRFMax {
+				log.Warn("Output larger than input (%d%%) — CRF %d already at max", pct, rs.CpuCRF)
+				break
+			}
+			rs.CpuCRF = next
+			log.Warn("Output larger than input (%d%%), re-encoding at CRF %d", pct, rs.CpuCRF)
+		}
+
+		os.Remove(plan.OutputPath)
+		rs.Attempt = 0
+		bumpsApplied++
+
 		if ctx.Err() != nil {
 			return false
 		}
-
 		if !attemptWithErrorRetry(ctx, cfg, log, plan, rs) {
 			return false
 		}
-
-		if plan.Action != planner.ActionEncode {
-			return true
-		}
-
-		outInfo, err := os.Stat(plan.OutputPath)
-		if err != nil {
-			return true
-		}
-		inInfo, err := os.Stat(plan.InputPath)
-		if err != nil {
-			return true
-		}
-
-		if inInfo.Size() > 0 && outInfo.Size() > inInfo.Size()*105/100 {
-			if rs.BumpQuality() {
-				pct := outInfo.Size() * 100 / inInfo.Size()
-				log.Warn("Output larger than input (%d%%), retrying with quality +%d", pct, rs.QualityStep)
-				os.Remove(plan.OutputPath)
-				continue
-			}
-		}
-		return true
 	}
+
+	if pct, ok := outputPct(plan); ok && pct > 100 {
+		if bumpsApplied > 0 {
+			log.Warn("Output still larger than input (%d%%) after %d quality bump(s)", pct, bumpsApplied)
+		} else {
+			log.Warn("Output larger than input (%d%% of original)", pct)
+		}
+	}
+
+	return true
+}
+
+func outputPct(plan *planner.FilePlan) (int, bool) {
+	outInfo, err := os.Stat(plan.OutputPath)
+	if err != nil {
+		return 0, false
+	}
+	inInfo, err := os.Stat(plan.InputPath)
+	if err != nil || inInfo.Size() <= 0 {
+		return 0, false
+	}
+	return int(outInfo.Size() * 100 / inInfo.Size()), true
 }
 
 // attemptWithErrorRetry runs the inner retry loop: execute ffmpeg, classify
@@ -347,7 +402,7 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 	}
 
 	log.Info("Container: %s", strings.ToUpper(string(cfg.OutputContainer)))
-	log.Info("Audio: AAC passthrough if <320 kbps, otherwise encode to AAC via %s at %s", cfg.AudioEncoder, cfg.AudioBitrate)
+	log.Info("Audio: AAC passthrough, non-AAC encode to AAC via %s at %s", cfg.AudioEncoder, cfg.AudioBitrate)
 
 	if cfg.OutputContainer == config.ContainerMP4 {
 		log.Info("Compatibility: hvc1 tag for Apple/browser support")
@@ -371,7 +426,7 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 		log.Info("Attachments: Copy fonts/images")
 	}
 	if cfg.SkipHEVC {
-		log.Info("HEVC sources: Remux (copy video, encode audio)")
+		log.Info("HEVC sources: Remux (copy video, copy/encode audio)")
 	}
 	if cfg.StrictMode {
 		log.Info("Retry policy: Strict mode (no auto-retry)")
@@ -379,28 +434,43 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 	fmt.Println()
 }
 
-func logFileStats(log *logging.Logger, pr *probe.ProbeResult) {
-	v := pr.PrimaryVideo
-	if v == nil {
+func logFileStats(log *logging.Logger, plan *planner.FilePlan) {
+	if plan.Action == planner.ActionSkip {
 		return
 	}
-	resolution := pr.Resolution()
-	bitrateKbps := pr.VideoBitRate() / 1000
-	bitrateLabel := display.FormatBitrateLabel(bitrateKbps)
-	codec := v.Codec
-	if codec == "" {
-		codec = "unknown"
+
+	codec := plan.VideoCodec
+	if codec == "" || codec == "copy" {
+		log.Info("  Video: copy (remux)")
+		return
 	}
 
-	suffix := ""
-	if pr.HDRType() != "sdr" {
-		suffix += " [HDR]"
-	}
-	if pr.IsInterlaced() {
-		suffix += " [Interlaced]"
+	method := "CPU"
+	qLabel := fmt.Sprintf("CRF %d", plan.CpuCRF)
+	if strings.Contains(codec, "vaapi") {
+		method = "VAAPI"
+		qLabel = fmt.Sprintf("QP %d", plan.VaapiQP)
 	}
 
-	log.Info("  Video: %s | %s | %s%s", resolution, bitrateLabel, codec, suffix)
+	if plan.PreflightBumps > 0 {
+		log.Info("  Video: %s | %s (preflight +%d) | %s", codec, qLabel, plan.PreflightBumps, method)
+	} else {
+		log.Info("  Video: %s | %s | %s", codec, qLabel, method)
+	}
+
+	if plan.MaxRateKbps > 0 {
+		log.Info("  Maxrate: %d kb/s (bitrate ceiling)", plan.MaxRateKbps)
+	}
+
+	if plan.OptimalBitrateKbps > 0 {
+		log.Info("  Optimal target: %d kb/s", plan.OptimalBitrateKbps)
+	}
+
+	if plan.Estimate.Known {
+		log.Info("  Estimate: %d-%d kb/s (%d-%d%% of input)",
+			plan.Estimate.LowKbps, plan.Estimate.HighKbps,
+			plan.Estimate.LowPct, plan.Estimate.HighPct)
+	}
 }
 
 // Bitrate outlier thresholds by resolution tier (pixels → low/high kbps).

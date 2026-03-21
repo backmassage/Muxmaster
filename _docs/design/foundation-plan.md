@@ -9,7 +9,7 @@
 
 ## 1. About
 
-Muxmaster (v2.1.0) is a Go CLI application that replaces a 2,666-line Bash script with typed domain objects, structured logging, and a reliable ffmpeg retry engine. It targets a single static binary for Arch Linux.
+Muxmaster (v2.1.2) is a Go CLI application that replaces a 2,666-line Bash script with typed domain objects, structured logging, and a reliable ffmpeg retry engine. It targets a single static binary for Arch Linux.
 
 This document is the canonical reference for architecture, types, behavioral contracts, and technical decisions. For package layout and file navigation, see [structure.md](structure.md). For the aspirational v2.0 roadmap (subcommands, StateStore, etc.), see [product-spec.md](product-spec.md).
 
@@ -26,7 +26,7 @@ This document is the canonical reference for architecture, types, behavioral con
 | ffprobe strategy | Single JSON call per file | Replaces ~10 subprocess calls; biggest reliability win |
 | Primary container | MKV (MP4 rarely used) | MP4 support preserved for parity; lower testing priority |
 | Anime naming patterns | All 15 rules active | Parser test suite needs 60+ cases |
-| Smart quality bias | Configurable constant (default `-1`) | `SmartQualityBias` in Config; quality retry step (`+2`) also configurable |
+| Smart quality bias | Configurable constant (default `-2`, favors higher quality) | `SmartQualityBias` in Config |
 | Title-casing | Capitalize every word (match shell) | Simple parity; swap to proper title-case post-MVP if desired |
 | Logging | Custom leveled logger | Migrate to `log/slog` when JSON mode is added |
 | Retry logic | Single unified state machine | Replaces duplicated remux/encode retry loops in shell |
@@ -80,7 +80,7 @@ The 2.0 design doc is ambitious and well-structured, but it introduces several n
 
 ### 4.1 Package Dependency Map
 
-The project is organized into `cmd` (entrypoint) and 9 internal packages. Dependencies flow top-down; leaf packages have zero internal dependencies.
+The project is organized into `cmd` (entrypoint) and 10 internal packages. Dependencies flow top-down; leaf packages have zero internal dependencies.
 
 **Entrypoint:**
 
@@ -88,6 +88,7 @@ The project is organized into `cmd` (entrypoint) and 9 internal packages. Depend
 cmd/main.go
   ├── config     (parse flags, build Config)
   ├── logging    (initialize logger)
+  ├── display    (print banner)
   ├── pipeline   (run batch processing)
   └── check      (--check diagnostics)
 ```
@@ -96,10 +97,10 @@ cmd/main.go
 
 | Package | Depends on | Role |
 |---|---|---|
-| `pipeline` | config, logging, probe, naming, planner, ffmpeg, display | Batch orchestration: discover → process → summarize |
-| `planner` | config, probe, logging | Per-file encode/remux/skip decisions + quality |
-| `ffmpeg` | config, planner, logging | Command building, execution, error classification, retry |
-| `display` | term | Banner, formatters, render plan logs |
+| `pipeline` | config, logging, probe, naming, planner, ffmpeg, display, term | Batch orchestration: discover → process → summarize |
+| `planner` | config, probe | Per-file encode/remux/skip decisions + quality |
+| `ffmpeg` | config, planner | Command building, execution, error classification, retry |
+| `display` | term | Banner printing, byte/bitrate formatters |
 | `check` | config | System diagnostics (ffmpeg, ffprobe, VAAPI, x265) |
 | `config` | *(none)* | Config struct, flag parsing, defaults, validation |
 | `logging` | config, term | Leveled logger, color, file sink |
@@ -147,8 +148,7 @@ ParsedName
 RetryState
   ├── Attempt / MaxAttempts (4)
   ├── IncludeAttach, IncludeSubs, MuxQueueSize, TimestampFix
-  ├── QualityPass / MaxQualityPasses (2)
-  ├── VaapiQP, CpuCRF, QualityStep
+  ├── VaapiQP, CpuCRF
   └── Advance(stderr) → RetryAction
 
 RunStats
@@ -182,19 +182,19 @@ This is the step-by-step flow for processing a single file within the batch loop
             R → N: HarmonizeShowName(name, yearIndex)
             N returns: harmonized name
 
- 4. R → N: GetOutputPath(ParsedName, config)
+ 4. R → N: GetOutputPath(ParsedName, outputDir, container)
       N returns: requested output path
-    R → N: ResolveCollision(input_path, requested_path)
+    R → N: CollisionResolver.Resolve(input_path, requested_path)
       N returns: final resolved output path
 
- 5. R → D: LogFileStats(ProbeResult)
-    R → D: LogBitrateOutlier(ProbeResult)
+ 5. R: logFileStats(FilePlan, ProbeResult)
+    R: logBitrateOutlier(ProbeResult)
 
  6. R → PL: BuildPlan(Config, ProbeResult)
       PL returns: FilePlan (action = encode | remux | skip)
       └── if action == skip (existing file): mark skipped, continue
 
- 7. R → D: LogRenderPlan(FilePlan)
+ 7. R: logRenderPlan(FilePlan)
       └── if dry run: mark encoded (counted but not executed), continue
 
  8. R → RT: NewRetryState(FilePlan)
@@ -211,20 +211,18 @@ This is the step-by-step flow for processing a single file within the batch loop
             └── if no match OR strict mode:
                   give up, mark failed
 
-10. QUALITY CHECK (encode path only):
-      if output_size > 105% of source
-      AND smart quality enabled
-      AND no manual quality override
-      AND quality_pass < max_passes:
-        increment QP/CRF by SmartQualityRetryStep
-        reset retry state, go back to step 9
+10. QUALITY ESCALATION (encode path only, smart quality):
+      if output_size > input_size:
+        bump QP/CRF by 2, delete output, go back to step 9
+        (up to 3 bumps — ensures output ≤ input when possible)
+      if still larger after max bumps → log warning, accept
 
 11. R updates RunStats (byte counters, encoded/failed counts)
 ```
 
 ### 4.4 Retry State Machine
 
-The retry engine handles ffmpeg failures by classifying stderr against 4 known error patterns and applying one fix per attempt. The quality retry loop wraps the error-retry loop.
+The retry engine handles ffmpeg failures by classifying stderr against 4 known error patterns and applying one fix per attempt.
 
 **Error patterns (checked in this order):**
 
@@ -241,8 +239,8 @@ The retry engine handles ffmpeg failures by classifying stderr against 4 known e
 INITIAL STATE:
   attempt = 0, max_attempts = 4
   include_attach = true, include_subs = true
-  mux_queue = 4096, timestamp_fix = Config.CleanTimestamps
-  quality_pass = 0, max_quality_passes = 2
+  mux_queue = 4096
+  timestamp_fix = false (remux) | Config.CleanTimestamps (encode)
 
 ON EACH FFMPEG FAILURE:
   if strict_mode → abort immediately (mark failed)
@@ -259,22 +257,17 @@ ON EACH FFMPEG FAILURE:
 
   KEY RULE: only ONE fix per attempt. First matching unapplied fix wins.
 
-ON FFMPEG SUCCESS (encode path only):
-  if output_size > 105% of input_size
-  AND smart_quality enabled
-  AND no manual quality override (ActiveQualityOverride == "")
-  AND quality_pass < max_quality_passes:
-    quality_pass++
-    vaapi_qp += SmartQualityRetryStep
-    cpu_crf += SmartQualityRetryStep
-    reset attempt counter and retry flags
-    re-run from attempt 1
+ON FFMPEG SUCCESS (encode path, smart quality enabled):
+  if output_size > input_size:
+    bump QP/CRF by 2, delete output, reset attempt counter, re-run
+    (up to 3 quality bumps)
+  if still larger after max bumps → log warning, accept result
 
-  otherwise → done (mark success)
-
-GOTCHA: CleanTimestamps defaults to true, which means timestamp_fix is
-already enabled on the first attempt. This effectively disables the
+GOTCHA: For encodes, CleanTimestamps defaults to true, so timestamp_fix
+is already enabled on the first attempt. This effectively disables the
 timestamp retry path unless the user explicitly sets CleanTimestamps=false.
+For remuxes, timestamp_fix starts false and the retry engine can still
+activate it if ffmpeg fails with a timestamp error.
 ```
 
 ### 4.5 Batch Processing Flow
@@ -302,8 +295,8 @@ main()
   │
   ├── 8. discover_files:
   │       walk input dir
-  │       → filter by extension (.mkv, .mp4, .avi, .ts, .m2ts, .wmv, .flv, .webm)
-  │       → exclude "extras" directories (case-insensitive)
+  │       → filter by extension (.mkv, .mp4, .avi, .m4v, .mov, .wmv, .flv, .webm, .ts, .m2ts, .mpg, .mpeg, .vob, .ogv)
+  │       → exclude extras directories: extras, extra, bonus, featurettes (case-insensitive)
   │       → sort alphabetically
   │
   ├── 9. build_tv_year_variant_index:
@@ -357,7 +350,7 @@ The parser tries 15 ordered regex rules against each filename. First match wins.
 
 **Pre-processing:**
 1. Strip file extension → `base`
-2. Check if parent directory is specials-like (`specials`, `ncop*`, `nced*`, etc.)
+2. Check if parent directory is specials-like (`extras`, `extra`, `specials`, `bonus`, `featurettes`, `nc`, `ncop*`, `nced*`)
    - If yes: use grandparent directory as show name context
    - If no: use parent directory as show name context
 
@@ -392,7 +385,7 @@ The parser tries 15 ordered regex rules against each filename. First match wins.
 
 ## 5. Core Types
 
-### 6.1 Enums (Custom String Types)
+### 5.1 Enums (Custom String Types)
 
 ```go
 // config/config.go
@@ -427,7 +420,7 @@ const (
 )
 ```
 
-### 6.2 Config
+### 5.2 Config
 
 ```go
 // config/config.go
@@ -440,10 +433,10 @@ type Config struct {
     // --- Encoder ---
     EncoderMode      EncoderMode
     VaapiDevice      string // default: "/dev/dri/renderD128"
-    VaapiQP          int    // default: 19
+    VaapiQP          int    // default: 18
     VaapiProfile     string // derived at runtime: "main10" or "main"
     VaapiSwFormat    string // derived at runtime: "p010" or "nv12"
-    CpuCRF           int    // default: 19
+    CpuCRF           int    // default: 18
     CpuPreset        string // default: "slow"
     CpuProfile       string // fixed: "main10"
     CpuPixFmt        string // fixed: "yuv420p10le"
@@ -454,8 +447,9 @@ type Config struct {
 
     // --- Audio ---
     AudioChannels   int    // default: 2
-    AudioBitrate    string // default: "256k"
+    AudioBitrate    string // default: "320k"
     AudioSampleRate int    // fixed: 48000
+    AudioEncoder    string // fixed: "libfdk_aac"
 
     // --- Behavior ---
     DryRun           bool    // default: false
@@ -471,8 +465,7 @@ type Config struct {
     DeinterlaceAuto  bool    // default: true
 
     // --- Quality tuning (configurable constants) ---
-    SmartQualityBias      int // default: -1 (applied to smart-computed QP/CRF)
-    SmartQualityRetryStep int // default: 2  (QP/CRF increment on output-too-large retry)
+    SmartQualityBias int // default: -2 (applied to smart-computed QP/CRF, favors higher quality)
 
     // --- Display ---
     Verbose       bool      // default: false
@@ -481,6 +474,7 @@ type Config struct {
     ColorMode     ColorMode // default: "auto"
     LogFile       string    // default: ""
     CheckOnly     bool      // default: false
+    AnalyzeOnly   bool      // default: false (--analyze mode)
 
     // --- Quality overrides (set during flag parsing) ---
     QualityOverride       string // from --quality
@@ -494,16 +488,13 @@ type Config struct {
 }
 ```
 
-### 6.3 ProbeResult
+### 5.3 ProbeResult
 
 ```go
 // probe/types.go
 
 type ProbeResult struct {
-    Format  FormatInfo
-    Streams []StreamInfo // raw from ffprobe JSON
-
-    // Derived during construction (immutable after).
+    Format          FormatInfo
     PrimaryVideo    *VideoStream
     AudioStreams    []AudioStream
     SubtitleStreams []SubtitleStream
@@ -511,11 +502,15 @@ type ProbeResult struct {
 }
 
 // VideoBitRate returns the primary video stream bitrate,
-// falling back to the format-level bitrate when the stream
-// value is unavailable or zero.
+// falling back to (format bitrate − total audio bitrate)
+// when the stream value is unavailable or zero.
 func (p *ProbeResult) VideoBitRate() int64 {
     if p.PrimaryVideo != nil && p.PrimaryVideo.BitRate > 0 {
         return p.PrimaryVideo.BitRate
+    }
+    fb := p.Format.BitRate - p.TotalAudioBitRate()
+    if fb > 0 {
+        return fb
     }
     return p.Format.BitRate
 }
@@ -564,6 +559,7 @@ type AudioStream struct {
     Channels      int
     ChannelLayout string
     SampleRate    int
+    BitRate       int64
     Language      string
     IsDefault     bool
 }
@@ -576,7 +572,7 @@ type SubtitleStream struct {
 }
 ```
 
-### 6.4 ParsedName
+### 5.4 ParsedName
 
 ```go
 // naming/parser.go
@@ -598,7 +594,7 @@ type ParsedName struct {
 }
 ```
 
-### 6.5 FilePlan
+### 5.5 FilePlan
 
 ```go
 // planner/planner.go
@@ -621,9 +617,14 @@ type FilePlan struct {
     ColorOpts    []string // -color_trc, -color_primaries, -colorspace
 
     // Quality (resolved per-file by smart quality)
-    VaapiQP     int
-    CpuCRF      int
-    QualityNote string
+    VaapiQP            int
+    CpuCRF             int
+    QualityNote        string
+    Estimate           BitrateEstimate // pre-encode output size prediction
+    PreflightBumps     int             // QP/CRF bumps from pre-flight check
+    MaxRateKbps        int             // hard bitrate ceiling for CPU (-maxrate), 0 = no cap
+    BufSizeKbps        int             // VBV buffer size (2× maxrate)
+    OptimalBitrateKbps int             // estimated target output bitrate
 
     // Audio
     Audio AudioPlan
@@ -641,13 +642,16 @@ type FilePlan struct {
 
     // Retry initial state
     MuxQueueSize  int  // 4096
-    TimestampFix  bool // initially Config.CleanTimestamps
+    TimestampFix  bool // false (remux) | Config.CleanTimestamps (encode)
     IncludeSubs   bool // initially true
     IncludeAttach bool // initially true
 
     // Output
-    OutputPath string
-    Container  Container
+    InputPath        string
+    OutputPath       string
+    Container        Container
+    VideoStreamIdx   int
+    AudioStreamCount int
 }
 
 type AudioPlan struct {
@@ -660,7 +664,7 @@ type AudioStreamPlan struct {
     StreamIndex int
     Copy        bool   // true for AAC passthrough
     Channels    int    // target (capped at Config.AudioChannels)
-    Bitrate     string // "256k"
+    Bitrate     string // "320k"
     SampleRate  int    // 48000
     Layout      string // "mono", "stereo", or ""
     NeedsFilter bool
@@ -668,8 +672,10 @@ type AudioStreamPlan struct {
 }
 
 type SubtitlePlan struct {
-    Include bool
-    Codec   string // "copy", "mov_text", or ""
+    Include    bool
+    Codec      string // "copy", "mov_text", or ""
+    SkipBitmap bool   // when true, only text subtitle streams are mapped (MP4 with mixed subs)
+    TextIdxs   []int  // absolute stream indices of text subtitle streams (used when SkipBitmap)
 }
 
 type AttachmentPlan struct {
@@ -677,7 +683,7 @@ type AttachmentPlan struct {
 }
 ```
 
-### 6.6 RetryState
+### 5.6 RetryState
 
 ```go
 // ffmpeg/retry.go
@@ -699,14 +705,10 @@ type RetryState struct {
     IncludeAttach bool
     IncludeSubs   bool
     MuxQueueSize  int  // 4096 → 16384
-    TimestampFix  bool // initialized from Config.CleanTimestamps
+    TimestampFix  bool // false (remux) | Config.CleanTimestamps (encode)
 
-    // Quality retry (encode path only)
-    QualityPass      int
-    MaxQualityPasses int // 2
-    VaapiQP          int
-    CpuCRF           int
-    QualityStep      int // from Config.SmartQualityRetryStep
+    VaapiQP int
+    CpuCRF  int
 }
 
 // Advance inspects stderr, finds the first matching error
@@ -716,7 +718,7 @@ type RetryState struct {
 func (s *RetryState) Advance(stderr string) RetryAction { ... }
 ```
 
-### 6.7 RunStats
+### 5.7 RunStats
 
 ```go
 // pipeline/stats.go
@@ -740,7 +742,7 @@ func (s *RunStats) SpaceSaved() int64 {
 
 ## 6. Key Technical Decisions
 
-### 7.1 Single JSON ffprobe Call
+### 6.1 Single JSON ffprobe Call
 
 The shell script makes 6–10 separate `ffprobe` calls per file. Go makes one:
 
@@ -755,7 +757,7 @@ cmd := exec.CommandContext(ctx, "ffprobe",
 
 All downstream code consumes the typed `ProbeResult`.
 
-### 7.2 Shared ffmpeg Command Skeleton
+### 6.2 Shared ffmpeg Command Skeleton
 
 Every ffmpeg invocation (remux and encode) shares this structure. The builder assembles it once, then the caller injects codec-specific options:
 
@@ -766,11 +768,12 @@ ffmpeg -hide_banner -nostdin -y
     -probesize 100M -analyzeduration 100M
     -ignore_unknown
     [-fflags +genpts+discardcorrupt]
+    [-init_hw_device vaapi=va:{device}  -filter_hw_device va]   (VAAPI encode only)
     -i {input}
+    [-vf {filter chain}]                                         (encode only)
     -map 0:{video_idx} {audio_maps} {sub_maps} {attach_maps}
     -dn
     -max_muxing_queue_size {4096|16384}
-    -max_interleave_delta 0
     {video codec opts}
     {tag opts}
     {color opts}
@@ -781,7 +784,7 @@ ffmpeg -hide_banner -nostdin -y
     {output}
 ```
 
-### 7.3 Stderr Capture Without Temp Files
+### 6.3 Stderr Capture Without Temp Files
 
 ```go
 var stderrBuf bytes.Buffer
@@ -792,7 +795,7 @@ if cfg.Verbose || cfg.ShowFfmpegFPS {
 }
 ```
 
-### 7.4 Pre-compiled Error Classifiers
+### 6.4 Pre-compiled Error Classifiers
 
 ```go
 var (
@@ -816,7 +819,7 @@ var (
 )
 ```
 
-### 7.5 Ordered Regex Parse Table
+### 6.5 Ordered Regex Parse Table
 
 ```go
 // naming/rules.go
@@ -824,7 +827,7 @@ var (
 type ParseRule struct {
     Name    string
     Pattern *regexp.Regexp
-    Extract func(matches []string, parent string) ParsedName
+    Extract func(base string, matches []string, parent string) ParsedName
 }
 
 var rules = []ParseRule{
@@ -846,7 +849,7 @@ var rules = []ParseRule{
 }
 ```
 
-### 7.6 Title-Casing
+### 6.6 Title-Casing
 
 Simple word-boundary capitalizer for MVP parity:
 
@@ -870,20 +873,19 @@ func titleCase(s string) string {
 
 ## 7. Testing Strategy
 
-### 10.1 Unit Tests (No Subprocesses)
+### 7.1 Unit Tests (No Subprocesses)
 
 | Test file | Priority | Coverage |
 |---|---|---|
-| `naming/parser_test.go` | **Highest** | 60+ cases for all 15 regex rules, post-processing, edge cases |
-| `planner/planner_test.go` | High | Decision matrix: HEVC remux eligibility, skip conditions |
-| `planner/quality_test.go` | High | Smart quality curves, configurable bias, estimation model |
-| `ffmpeg/errors_test.go` | High | All 4 stderr patterns with real error strings |
-| `ffmpeg/builder_test.go` | High | Assert generated arg slices for encode, remux, MP4, VAAPI, CPU |
+| `naming/parser_test.go` | **Highest** | 60+ cases for all 15 regex rules, post-processing, output paths, collision resolution |
+| `planner/planner_test.go` | High | Decision matrix, smart quality curves, estimation, audio plans, timestamp fix |
+| `ffmpeg/retry_test.go` | High | All 4 stderr patterns, retry state machine, mux queue escalation |
 | `config/config_test.go` | High | Flag precedence, validation, quality override logic |
 | `display/format_test.go` | Medium | Byte formatting, bitrate labels |
-| `naming/collision_test.go` | Medium | Duplicate resolution sequences |
+| `probe/probe_test.go` | Medium | JSON parsing, HDR detection, interlace, HEVC safety |
+| `pipeline/pipeline_test.go` | Medium | Discovery, dry-run integration |
 
-### 10.2 Integration Tests (Guarded)
+### 7.2 Integration Tests (Guarded)
 
 ```go
 func TestProbeRealFile(t *testing.T) {
@@ -894,7 +896,7 @@ func TestProbeRealFile(t *testing.T) {
 }
 ```
 
-### 10.3 Parity Harness
+### 7.3 Parity Harness
 
 Script that runs both implementations with `--dry-run` on the same directory and diffs:
 1. File discovery order
@@ -910,7 +912,7 @@ Script that runs both implementations with `--dry-run` on the same directory and
 
 ```makefile
 BINARY  := muxmaster
-VERSION := 2.1.0
+VERSION := 2.1.2
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
@@ -966,15 +968,15 @@ These are specific behaviors that are easy to get wrong. Each should have a corr
 
 | # | Gotcha | What to watch for |
 |---|---|---|
-| 1 | Quality override precedence | `--vaapi-qp`/`--cpu-crf` > `--quality` > defaults. `ActiveQualityOverride` gates smart retry. |
+| 1 | Quality override precedence | `--vaapi-qp`/`--cpu-crf` > `--quality` > defaults. `ActiveQualityOverride` gates smart quality. |
 | 2 | Edge-safe HEVC check | Case-insensitive. Handle `"main 10"` (with space) and `"main10"`. |
 | 3 | Retry order | attachments → subtitles → mux queue → timestamp. One fix per iteration. Break on no match. |
-| 4 | `CleanTimestamps` disables timestamp retry | Default `true` means timestamp fix already active on first attempt. |
+| 4 | `CleanTimestamps` and timestamp retry | Encode: default `true` means timestamp fix already active on first attempt. Remux: always starts `false`, retry engine can activate on error. |
 | 5 | Unified retry | Shell duplicates loops for remux and encode. Go uses single `retry.Run()`. |
 | 6 | Audio as `[]string` | Build slices directly. Never join and re-split. |
 | 7 | File discovery order | `sort.Strings` must match `sort -z` locale behavior. |
 | 8 | Extras exclusion | Case-insensitive directory name match. Only prunes dirs, not files. |
-| 9 | Exit codes | `0` even with file failures. Only startup errors exit `1`. |
+| 9 | Exit codes | `0` when all files succeed. `1` when any file fails or on startup error. |
 | 10 | MP4 constraints | `-movflags +faststart`, `-tag:v hvc1`, no attachments, `mov_text` text subs, skip bitmap subs. |
 | 11 | Specials-folder globs | `ncop*` and `nced*` are prefix matches, not exact. |
 | 12 | Two-pass discovery | Pre-parse all filenames before processing (year-variant index). |

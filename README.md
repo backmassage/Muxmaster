@@ -2,7 +2,7 @@
 
 Jellyfin-optimized media encoder: batch HEVC/AAC encoding and remuxing with smart per-file quality, automatic retry, and deterministic Jellyfin-friendly output naming.
 
-**Version:** 2.1.0
+**Version:** 2.1.2
 
 ---
 
@@ -129,10 +129,10 @@ muxmaster --analyze /media/library
 |------|-------------|---------|
 | `-m, --mode <vaapi\|cpu>` | Encoder backend | `vaapi` |
 | `-q, --quality <value>` | Fixed QP (VAAPI) or CRF (CPU) | smart per-file |
-| `--vaapi-qp <value>` | Fixed VAAPI QP (overrides `--quality`) | 19 |
-| `--cpu-crf <value>` | Fixed CPU CRF (overrides `--quality`) | 19 |
+| `--vaapi-qp <value>` | Fixed VAAPI QP (overrides `--quality`) | 18 |
+| `--cpu-crf <value>` | Fixed CPU CRF (overrides `--quality`) | 18 |
 | `-p, --preset <name>` | x265 CPU preset | `slow` |
-| `--audio-bitrate <rate>` | AAC bitrate for non-AAC audio transcodes (e.g. `128k`, `256k`) | `256k` |
+| `--audio-bitrate <rate>` | AAC bitrate for non-AAC audio transcodes (e.g. `128k`, `320k`) | `320k` |
 
 **Container & HDR**
 
@@ -202,12 +202,12 @@ Validate → Probe → Parse filename → Resolve output path → Plan → Execu
 - **Parse filename**: 14 regex rules extract show name, season, episode, or movie title and year
 - **Plan**: smart quality selects QP/CRF per-file based on resolution and bitrate curves; decides encode vs remux based on HEVC edge-safety (profile + pix_fmt)
 - **Execute**: runs ffmpeg with automatic retry (up to 4 attempts) for attachment errors, subtitle mux issues, queue overflow, and timestamp discontinuities
-- **Quality retry**: if output exceeds 105% of input size, re-encodes with tighter quality settings
+- **Quality escalation**: if output exceeds input size, QP/CRF is bumped by 2 and re-encoded (up to 3 times) to ensure output stays smaller than the original
 
 ### Audio handling
 
 - AAC streams are always copied (no lossy-to-lossy re-encode)
-- Non-AAC streams are transcoded to AAC via `libfdk_aac` at configured bitrate (`--audio-bitrate`, default `256k`), 48 kHz, up to 2 channels
+- Non-AAC streams are transcoded to AAC via `libfdk_aac` at configured bitrate (`--audio-bitrate`, default `320k`), 48 kHz, up to 2 channels
 - Optional channel layout normalization (`--match-audio-layout`)
 
 ### Subtitle and attachment handling
@@ -242,7 +242,7 @@ internal/        All application logic (10 packages)
   planner/       Per-file quality, estimation, filters, audio/subtitle plans
   ffmpeg/        Command builder, executor, error patterns, retry state
   pipeline/      File discovery, per-file orchestration, batch stats
-_docs/           Design docs, project reference, legacy artifacts
+_docs/           Design docs and project reference
 ```
 
 For the full dependency map and architecture, see [_docs/architecture.md](_docs/architecture.md).

@@ -159,7 +159,7 @@ func streamBitRate(s *ffprobeStream) int64 {
 		return br
 	}
 	for k, v := range s.Tags {
-		if strings.EqualFold(k, "BPS") || (len(k) > 4 && strings.EqualFold(k[:4], "BPS-")) {
+		if strings.EqualFold(k, "BPS") || (len(k) >= 4 && strings.EqualFold(k[:4], "BPS-")) {
 			if br := parseInt64(v); br > 0 {
 				return br
 			}

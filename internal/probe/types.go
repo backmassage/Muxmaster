@@ -62,13 +62,29 @@ type ProbeResult struct {
 }
 
 // VideoBitRate returns the primary video stream bitrate in bits/sec,
-// falling back to the format-level bitrate when the stream value is
-// unavailable or zero.
+// falling back to the format-level bitrate (minus known audio bitrate)
+// when the stream value is unavailable or zero.
 func (p *ProbeResult) VideoBitRate() int64 {
 	if p.PrimaryVideo != nil && p.PrimaryVideo.BitRate > 0 {
 		return p.PrimaryVideo.BitRate
 	}
+	// Format.BitRate is the total container bitrate including all audio.
+	// Subtract known audio to approximate the video-only bitrate.
+	fb := p.Format.BitRate - p.TotalAudioBitRate()
+	if fb > 0 {
+		return fb
+	}
 	return p.Format.BitRate
+}
+
+// TotalAudioBitRate returns the sum of all known audio stream bitrates
+// in bits/sec.
+func (p *ProbeResult) TotalAudioBitRate() int64 {
+	var total int64
+	for _, a := range p.AudioStreams {
+		total += a.BitRate
+	}
+	return total
 }
 
 // AudioBitRate returns the first audio stream's bitrate in bits/sec, or 0.

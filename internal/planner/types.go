@@ -8,7 +8,7 @@ type Action int
 const (
 	ActionEncode Action = iota
 	ActionRemux
-	ActionSkip
+	ActionSkip // Reserved; BuildPlan currently produces only Encode or Remux.
 )
 
 // FilePlan holds the complete set of decisions for processing a single media
@@ -24,9 +24,14 @@ type FilePlan struct {
 	ColorOpts    []string // -color_trc, -color_primaries, -colorspace pairs
 
 	// Quality (resolved per-file by smart quality).
-	VaapiQP     int
-	CpuCRF      int
-	QualityNote string
+	VaapiQP            int
+	CpuCRF             int
+	QualityNote        string
+	Estimate           BitrateEstimate // Pre-encode output size prediction.
+	PreflightBumps     int             // How many QP/CRF bumps the pre-flight check applied.
+	MaxRateKbps        int             // Hard bitrate ceiling for CPU encodes (0 = no cap).
+	BufSizeKbps        int             // VBV buffer size (typically 2× maxrate).
+	OptimalBitrateKbps int             // Estimated target output bitrate based on input analysis.
 
 	// Audio.
 	Audio AudioPlan
@@ -68,7 +73,7 @@ type AudioStreamPlan struct {
 	StreamIndex int
 	Copy        bool   // true for AAC passthrough
 	Channels    int    // target channel count (capped at Config.AudioChannels)
-	Bitrate     string // e.g. "256k"
+	Bitrate     string // e.g. "320k"
 	SampleRate  int    // e.g. 48000
 	Layout      string // "mono", "stereo", or "" (passthrough)
 	NeedsFilter bool

@@ -20,8 +20,8 @@ const (
 )
 
 // RetryState tracks which fallback fixes have been applied across ffmpeg
-// retry attempts for a single file. It also carries quality-retry state
-// for the encode path (output-too-large detection).
+// retry attempts for a single file. Quality adjustment is handled at plan
+// time (preflight QP adjustment and CPU maxrate cap), not via retries.
 type RetryState struct {
 	Attempt     int
 	MaxAttempts int
@@ -31,27 +31,21 @@ type RetryState struct {
 	MuxQueueSize  int
 	TimestampFix  bool
 
-	QualityPass      int
-	MaxQualityPasses int
-	VaapiQP          int
-	CpuCRF           int
-	QualityStep      int
+	VaapiQP int
+	CpuCRF  int
 }
 
 // NewRetryState initializes a RetryState from the plan's initial values.
-func NewRetryState(plan *planner.FilePlan, qualityStep int) *RetryState {
+func NewRetryState(plan *planner.FilePlan) *RetryState {
 	return &RetryState{
-		Attempt:          0,
-		MaxAttempts:      maxAttempts,
-		IncludeAttach:    plan.IncludeAttach,
-		IncludeSubs:      plan.IncludeSubs,
-		MuxQueueSize:     plan.MuxQueueSize,
-		TimestampFix:     plan.TimestampFix,
-		QualityPass:      0,
-		MaxQualityPasses: 2,
-		VaapiQP:          plan.VaapiQP,
-		CpuCRF:           plan.CpuCRF,
-		QualityStep:      qualityStep,
+		Attempt:       0,
+		MaxAttempts:   maxAttempts,
+		IncludeAttach: plan.IncludeAttach,
+		IncludeSubs:   plan.IncludeSubs,
+		MuxQueueSize:  plan.MuxQueueSize,
+		TimestampFix:  plan.TimestampFix,
+		VaapiQP:       plan.VaapiQP,
+		CpuCRF:        plan.CpuCRF,
 	}
 }
 
@@ -86,21 +80,4 @@ func (s *RetryState) Advance(stderr string) RetryAction {
 	}
 
 	return RetryNone
-}
-
-// BumpQuality increments both VaapiQP and CpuCRF by QualityStep, clamped to
-// their respective valid ranges. Only the attempt counter is reset; retry
-// flags (attachments, subtitles, mux queue, timestamp fix) keep whatever
-// values they reached during the previous quality pass, matching legacy
-// behavior. Returns false if the maximum number of quality passes has been
-// reached.
-func (s *RetryState) BumpQuality() bool {
-	if s.QualityPass+1 >= s.MaxQualityPasses {
-		return false
-	}
-	s.QualityPass++
-	s.VaapiQP = planner.Clamp(s.VaapiQP+s.QualityStep, planner.VaapiQPMin, planner.VaapiQPMax)
-	s.CpuCRF = planner.Clamp(s.CpuCRF+s.QualityStep, planner.CpuCRFMin, planner.CpuCRFMax)
-	s.Attempt = 0
-	return true
 }

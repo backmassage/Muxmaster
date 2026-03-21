@@ -24,16 +24,32 @@ func BuildVideoFilter(cfg *config.Config, pr *probe.ProbeResult) string {
 
 	// HDR tonemap to SDR.
 	if pr.HDRType() == "hdr10" && cfg.HandleHDR == config.HDRTonemap {
-		filters = append(filters, cpuTonemapChain)
+		if cfg.EncoderMode == config.EncoderVAAPI {
+			// VAAPI path: tonemap to SDR, output in the VAAPI sw format
+			// (p010 or nv12) so the subsequent hwupload works directly.
+			swFormat := cfg.VaapiSwFormat
+			if swFormat == "" {
+				swFormat = "nv12"
+			}
+			filters = append(filters, vaapiTonemapChain(swFormat))
+		} else {
+			filters = append(filters, cpuTonemapChain)
+		}
 	}
 
-	// VAAPI requires format conversion and hwupload.
+	// VAAPI requires format conversion and hwupload. When a tonemap chain
+	// was already added above, it already outputs the correct sw format,
+	// so we only need the hwupload step.
 	if cfg.EncoderMode == config.EncoderVAAPI {
-		swFormat := cfg.VaapiSwFormat
-		if swFormat == "" {
-			swFormat = "p010"
+		tonemapped := pr.HDRType() == "hdr10" && cfg.HandleHDR == config.HDRTonemap
+		if !tonemapped {
+			swFormat := cfg.VaapiSwFormat
+			if swFormat == "" {
+				swFormat = "p010"
+			}
+			filters = append(filters, "format="+swFormat)
 		}
-		filters = append(filters, "format="+swFormat, "hwupload")
+		filters = append(filters, "hwupload")
 	}
 
 	return strings.Join(filters, ",")
@@ -44,6 +60,16 @@ func BuildVideoFilter(cfg *config.Config, pr *probe.ProbeResult) string {
 const cpuTonemapChain = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709," +
 	"tonemap=tonemap=hable:desat=0," +
 	"zscale=t=bt709:m=bt709:r=tv,format=yuv420p"
+
+// vaapiTonemapChain returns the zscale+tonemap pipeline for VAAPI mode.
+// It is identical to the CPU chain except the final format outputs the
+// VAAPI-compatible pixel format (nv12 or p010) instead of yuv420p, avoiding
+// a redundant format conversion before hwupload.
+func vaapiTonemapChain(swFormat string) string {
+	return "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709," +
+		"tonemap=tonemap=hable:desat=0," +
+		"zscale=t=bt709:m=bt709:r=tv,format=" + swFormat
+}
 
 // BuildColorOpts returns the ffmpeg color metadata flags for HDR preservation
 // on the encode path. When HDR is detected and preserve mode is active, the

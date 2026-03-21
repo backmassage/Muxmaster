@@ -4,7 +4,7 @@ Target Platform: Arch Linux
 Language: Go  
 Execution Model: CLI (single-run), systemd-compatible  
 
-> **Status:** Aspirational v2.0 design. The core pipeline is implemented (v2.1.0). Post-MVP features — subcommand CLI, persistent state store, atomic output, config file, JSON logging — are deferred. See [foundation-plan.md](foundation-plan.md) §3 for the full scope boundary.
+> **Status:** Aspirational v2.0 design. The core pipeline is implemented (v2.1.2). Post-MVP features — subcommand CLI, persistent state store, atomic output, config file, JSON logging — are deferred. See [foundation-plan.md](foundation-plan.md) §3 for the full scope boundary.
 
 ---
 

@@ -8,19 +8,14 @@ import (
 	"github.com/backmassage/muxmaster/internal/probe"
 )
 
-// audioCopyMaxBitrate is the upper bound (exclusive) for copying an AAC
-// stream. AAC at or above this bitrate is re-encoded to the configured
-// target to avoid carrying unnecessarily large audio.
-const audioCopyMaxBitrate int64 = 320_000 // 320 kbps
-
 // BuildAudioPlan produces the audio handling strategy for a file.
 //
 //   - No audio streams → NoAudio (produces -an).
-//   - All streams are AAC with bitrate < 320 kbps → CopyAll (produces
-//     -map 0:a -c:a copy). Unknown bitrate (0) is treated as acceptable
-//     to avoid lossy-to-lossy re-encoding when we cannot verify the rate.
-//   - Otherwise → per-stream plan: copy AAC below threshold, transcode
-//     everything else to AAC with optional MATCH_AUDIO_LAYOUT filter chains.
+//   - All streams are AAC → CopyAll (produces -map 0:a -c:a copy).
+//     AAC is already the target codec for Jellyfin direct play; re-encoding
+//     it at any bitrate is lossy-to-lossy with no compatibility benefit.
+//   - Otherwise → per-stream plan: copy all AAC streams, transcode
+//     non-AAC to AAC with optional MATCH_AUDIO_LAYOUT filter chains.
 func BuildAudioPlan(cfg *config.Config, pr *probe.ProbeResult) AudioPlan {
 	if len(pr.AudioStreams) == 0 {
 		return AudioPlan{NoAudio: true}
@@ -28,7 +23,7 @@ func BuildAudioPlan(cfg *config.Config, pr *probe.ProbeResult) AudioPlan {
 
 	copyAll := true
 	for _, a := range pr.AudioStreams {
-		if !strings.EqualFold(a.Codec, "aac") || (a.BitRate > 0 && a.BitRate >= audioCopyMaxBitrate) {
+		if !strings.EqualFold(a.Codec, "aac") {
 			copyAll = false
 			break
 		}
@@ -46,7 +41,7 @@ func BuildAudioPlan(cfg *config.Config, pr *probe.ProbeResult) AudioPlan {
 			SampleRate:  cfg.AudioSampleRate,
 		}
 
-		if strings.EqualFold(a.Codec, "aac") && (a.BitRate == 0 || a.BitRate < audioCopyMaxBitrate) {
+		if strings.EqualFold(a.Codec, "aac") {
 			asp.Copy = true
 			streams = append(streams, asp)
 			continue

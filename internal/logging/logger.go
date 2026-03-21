@@ -8,12 +8,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/term"
 )
+
+// reANSI matches ANSI escape sequences so they can be stripped from log file output.
+var reANSI = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // Logger writes leveled messages to stdout/stderr and optionally to a log
 // file. All write operations are serialized under a mutex for safe
@@ -61,7 +65,8 @@ func (l *Logger) Close() error {
 // is appended there as well.
 func (l *Logger) line(level, ansiColor, text string) {
 	ts := time.Now().Format("2006-01-02 15:04:05")
-	plain := ts + " [" + level + "] " + text + "\n"
+	plainText := reANSI.ReplaceAllString(text, "")
+	plain := ts + " [" + level + "] " + plainText + "\n"
 
 	l.mu.Lock()
 	defer l.mu.Unlock()

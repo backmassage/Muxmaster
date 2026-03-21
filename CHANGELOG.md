@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.1.2] — 2026-02-25
+
+### Changed
+
+- **Post-encode quality escalation.** When the output file is larger than the input (encode path, smart quality enabled), Muxmaster now bumps QP/CRF by 2, deletes the output, and re-encodes — up to 3 times. This prevents VAAPI constant-QP encodes from producing larger files than the source, which happened when encoding already-efficient H.264 sources at low bitrate densities. Previously, only a 102% warning was logged and the larger output was accepted.
+- **Improved estimation for low-density sources.** The `estimationDensityBias` values for density < 2500 kbps/Mpx have been significantly increased (e.g. density < 2500: 35→150, density < 1500: 100→250). This makes the preflight QP/CRF bump catch more cases before encoding, and produces more realistic estimated output ranges in the log.
+- **Preflight target tightened to 100%.** The pre-encode estimate now bumps QP/CRF until the pessimistic output estimate is ≤100% of input (was 102%), reducing first-pass overshoots.
+- **Smart quality favors higher quality.** Default VaapiQP/CpuCRF lowered from 19 to 18; SmartQualityBias from -1 to -2; OptimalBitrate base ratio for h264→HEVC raised from 65% to 68%. Produces ~2 QP steps lower (higher bitrate) for typical content.
+- **AAC default bitrate 320 kbps.** Non-AAC audio transcodes now target 320k by default (was 256k).
+
+### Fixed
+
+- **Documentation–code audit.** Systematic review of all documentation against the codebase; every discrepancy listed below has been corrected.
+- **foundation-plan.md: broken subsection numbering.** §5 subsections used 6.x, §6 used 7.x, §7 used 10.x — all renumbered to match their parent (5.x, 6.x, 7.x).
+- **foundation-plan.md: stale quality retry loop.** §4.3 step 10 and §4.4 state machine updated to reflect post-encode quality escalation (bump QP/CRF when output > input, re-encode up to 3 times).
+- **foundation-plan.md: wrong API signatures.** `GetOutputPath(ParsedName, config)` → `GetOutputPath(ParsedName, outputDir, container)`. `ResolveCollision(input, output)` → `CollisionResolver.Resolve(input, output)`. `ParseRule.Extract` was missing `base` parameter.
+- **foundation-plan.md: stale type definitions.** `ProbeResult.Streams []StreamInfo` removed (field never existed). `VideoBitRate()` fallback now documents actual behavior (format bitrate minus audio). `AudioStream.BitRate` added. `FilePlan` gained `InputPath`, `VideoStreamIdx`, `AudioStreamCount`, `Estimate`, `PreflightBumps`, `MaxRateKbps`, `BufSizeKbps`, `OptimalBitrateKbps`. `SubtitlePlan` gained `SkipBitmap`, `TextIdxs`. `RetryState` quality fields (`QualityPass`, `MaxQualityPasses`, `QualityStep`) removed.
+- **foundation-plan.md: stale Config.** Removed `SmartQualityRetryStep` (never implemented). Added `AudioEncoder` and `AnalyzeOnly`.
+- **foundation-plan.md: package count.** §4.1 said "9 internal packages" — corrected to 10. Added missing `display` to entrypoint dependency list.
+- **foundation-plan.md: file discovery.** Extensions list updated from 8 to 14 (added `.m4v`, `.mov`, `.mpg`, `.mpeg`, `.vob`, `.ogv`). Extras exclusion list now shows all 4 directory names (`extras`, `extra`, `bonus`, `featurettes`). Specials-folder list updated to include `extras`, `extra`, `bonus`, `featurettes`, `nc`.
+- **foundation-plan.md: test file names.** Replaced nonexistent files (`quality_test.go`, `errors_test.go`, `builder_test.go`, `collision_test.go`) with actual test files (`planner_test.go`, `retry_test.go`, `probe_test.go`, `pipeline_test.go`).
+- **foundation-plan.md: ffmpeg skeleton.** Added VAAPI hardware init (`-init_hw_device`, `-filter_hw_device`) and `-vf` filter chain placement to the shared command skeleton.
+- **foundation-plan.md: decision table.** Removed stale "quality retry step (+2) also configurable" from smart quality bias row.
+- **architecture.md: per-file flow.** Corrected `naming.OutputPath` → `naming.GetOutputPath`, `naming.ResolveCollision` → `CollisionResolver.Resolve`, `display.LogFileStats` / `display.LogRenderPlan` → internal runner helpers.
+- **README.md: quality retry.** Replaced "Quality retry: if output exceeds 105% of input size" with quality escalation description (bump QP/CRF when output > input, re-encode up to 3 times). Fixed `_docs/` description ("legacy artifacts" → "design docs and project reference").
+
+---
+
+## [2.1.1] — 2026-02-25
+
+### Changed
+
+- **AAC passthrough is now unconditional.** Removed the 400 kbps bitrate threshold that caused lossy-to-lossy re-encoding of high-bitrate AAC streams (e.g. 415 kbps BluRay audio). AAC is already the target codec for Jellyfin direct play — bitrate has no bearing on compatibility.
+- **Remux path no longer applies `+genpts`.** `CleanTimestamps` (`-fflags +genpts+discardcorrupt`, `-avoid_negative_ts make_zero`) is now disabled for `ActionRemux`. Edge-safe HEVC sources don't need PTS regeneration, and the flags were adding 4–7% container overhead on every remux. The retry engine can still activate timestamp repair if ffmpeg actually fails with a timestamp error.
+- **Removed `-max_interleave_delta 0`.** ffmpeg's default 10-second interleaving buffer is more optimal for cluster packing than the legacy zero-buffer setting. Improves MKV output size slightly, especially with sparse subtitle streams.
+- **Batch header log updated.** Audio line now reads "AAC passthrough, non-AAC encode to AAC via …" (was "AAC passthrough if <400 kbps"). HEVC remux line now reads "copy/encode audio" (was "encode audio").
+- **Documentation streamlined.** Deleted `git-guidelines.md`, `audit.md`, and `legacy/` folder. Moved `structure.md` to `_docs/design/`. Removed obsolete sections from `foundation-plan.md` (migration phases, gap analysis, bootstrap checklist, duplicate repo structure). Added status callout to `product-spec.md`. Renumbered `foundation-plan.md` sections 1–9.
+
+### Fixed
+
+- **`OptimalBitrate` nil-pointer on files without video.** `OptimalBitrate` returned the format-level bitrate instead of 0 when `PrimaryVideo` was nil (e.g. audio-only files reaching the estimator). Now early-returns 0.
+- **Retry test stderr strings didn't match regex patterns.** `TestAdvance_DropAttachments` used a string that didn't match `reAttachmentIssue`; `TestAdvance_MuxQueueEscalation` was missing "stream" from the mux queue overflow pattern. Both now use realistic ffmpeg stderr excerpts.
+- **Stale ratio table spot-checks.** `TestVaapiRatioTable` expected QP27→390 (actual: 395); `TestCpuRatioTable` expected CRF28→230 (actual: 235). Updated to match the implemented tables.
+- **Preflight test used wrong target threshold.** `TestPreflightAdjust_CompressedSource` used 105% target but the planner calls `PreflightAdjust` with 100%. Test now uses 100% to match the actual call site.
+- **4K density assertion too strict.** `TestSmartQuality_Matrix` asserted QP > 19 for all sources with density < 2500 kbps/Mpx, but at 4K the resolution bonus (−1) and bitrate bonus (−1) offset the density penalty (+3), correctly producing QP=19. Assertion now excludes 4K+ resolutions where bonuses are expected to dominate.
+
+---
+
 ## [2.1.0] — 2026-02-24
 
 ### Changed
@@ -131,6 +179,8 @@ Complete rewrite from a 2,600-line Bash script to a single static Go binary with
 - Pipeline (discover → probe → plan → execute) is not yet implemented; the binary runs config, check, and path validation only.
 - Unit tests are planned for a later phase; test files were removed in favor of a skeleton-first approach.
 
+[2.1.2]: https://github.com/backmassage/muxmaster/compare/v2.1.1...v2.1.2
+[2.1.1]: https://github.com/backmassage/muxmaster/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/backmassage/muxmaster/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev+lint...v2.0.0
 [2.0.0-dev+lint]: https://github.com/backmassage/muxmaster/compare/v2.0.0-dev+restructure...v2.0.0-dev+lint
