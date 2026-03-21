@@ -80,10 +80,10 @@ var reSeasonHintShort = regexp.MustCompile(
 // name like "Season 02" or "S2". Returns 0 if no season hint is found.
 func extractParentSeasonHint(parent string) int {
 	if m := reSeasonHintFull.FindStringSubmatch(parent); m != nil {
-		return atoi(m[2])
+		return parseIntOr0(m[2])
 	}
 	if m := reSeasonHintShort.FindStringSubmatch(parent); m != nil {
-		return atoi(m[2])
+		return parseIntOr0(m[2])
 	}
 	return 0
 }

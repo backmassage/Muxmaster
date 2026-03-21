@@ -13,6 +13,7 @@ Package dependency map and design overview for the Muxmaster Go project.
 ## Technical choices
 
 - **One ffprobe call per file** — JSON with `-show_format` and `-show_streams`; all logic uses typed structs.
+- **VAAPI hardware decode** — Full GPU pipeline (decode + encode on same device) when no CPU-only filters are needed; automatic software-decode fallback for HDR tonemapping.
 - **Unified retry** — Single state machine for both encode and remux (attachment → subtitle → mux queue → timestamp); up to 4 attempts per file.
 - **14 naming rules** — Ordered regex-based parser for TV/movie and specials; Jellyfin-style output paths; collision resolution and TV year harmonization.
 - **Quality** — Smart per-file QP/CRF with configurable bias; optional fixed override via `--quality` or `--vaapi-qp`/`--cpu-crf`.
@@ -36,6 +37,7 @@ cmd (CLI entrypoint)
   -> logging
   -> check
   -> display
+  -> pipeline
 
 term
   -> config
@@ -69,7 +71,7 @@ pipeline (orchestrator)
   -> term
 ```
 
-Leaf or near-leaf packages with the lowest internal coupling are `config`, `term`, `probe`, and `naming`.
+Leaf packages (no internal imports): `config`, `probe`, `naming`. Near-leaf: `term` (config), `check` (config), `display` (term).
 
 ---
 
@@ -94,14 +96,17 @@ pipeline.Run
   │
   ├─ 1. Validate input file (readable, not too small)
   ├─ 2. probe.Probe(path) → ProbeResult
-  ├─ 3. naming.ParseFilename(basename, parentDir) → ParsedName
-  ├─ 4. naming.GetOutputPath(ParsedName, outputDir, container) → output path
-  ├─ 5. CollisionResolver.Resolve(input, output) → final path
-  ├─ 6. logFileStats / logBitrateOutlier (internal to runner)
-  ├─ 7. planner.BuildPlan(Config, ProbeResult) → FilePlan
-  ├─ 8. logRenderPlan (internal to runner)
-  ├─ 9. ffmpeg.Execute(FilePlan) with retry loop
-  └─ 10. Update RunStats (encoded / skipped / failed)
+  ├─ 3. logInputMeta (codec, resolution, bitrate, HDR/interlace flags)
+  ├─ 4. naming.ParseFilename(basename, parentDir) → ParsedName
+  ├─ 5. naming.GetOutputPath(ParsedName, outputDir, container) → output path
+  ├─ 6. CollisionResolver.Resolve(input, output) → final path
+  ├─ 7. logBitrateOutlier (internal to runner)
+  ├─ 8. planner.BuildPlan(Config, ProbeResult) → FilePlan (sets HWDecode for VAAPI)
+  ├─ 9. logFileStats (internal to runner)
+  ├─ 10. Skip-existing check → skip if output exists
+  ├─ 11. ffmpeg.Execute(FilePlan) with retry loop
+  ├─ 12. Post-encode quality escalation (if output > input)
+  └─ 13. Update RunStats (encoded / skipped / failed)
 ```
 
 For full type definitions and behavioral detail, see [design/foundation-plan.md](design/foundation-plan.md).

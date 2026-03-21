@@ -72,13 +72,13 @@ func processFile(
 	if err != nil {
 		log.Error("File not found: %s", path)
 		stats.Failed++
-		fmt.Println()
+		log.Blank()
 		return
 	}
 	if fi.Size() < minFileSize {
 		log.Error("File too small (possibly corrupt): %s", path)
 		stats.Failed++
-		fmt.Println()
+		log.Blank()
 		return
 	}
 
@@ -87,16 +87,26 @@ func processFile(
 	if err != nil {
 		log.Error("Cannot probe file (possibly corrupt): %v", err)
 		stats.Failed++
-		fmt.Println()
+		log.Blank()
 		return
 	}
 
 	if pr.PrimaryVideo == nil {
 		log.Warn("No video stream found, skipping")
 		stats.Skipped++
-		fmt.Println()
+		log.Blank()
 		return
 	}
+
+	v := pr.PrimaryVideo
+	if v.Width <= 0 || v.Height <= 0 {
+		log.Error("Invalid video dimensions (%dx%d), skipping", v.Width, v.Height)
+		stats.Failed++
+		log.Blank()
+		return
+	}
+
+	logInputMeta(log, pr)
 
 	// --- Parse filename and resolve output path ---
 	parsed := naming.ParseFilename(basename, filepath.Dir(path))
@@ -137,7 +147,7 @@ func processFile(
 		if _, err := os.Stat(outputPath); err == nil {
 			log.Warn("Skip (exists): %s", filepath.Base(outputPath))
 			stats.Skipped++
-			fmt.Println()
+			log.Blank()
 			return
 		}
 	}
@@ -158,14 +168,6 @@ func processFile(
 	log.Info("  -> %s", filepath.Base(outputPath))
 	logAudioBitrates(log, pr, plan)
 
-	// --- Create output directory ---
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-		log.Error("Cannot create output directory: %v", err)
-		stats.Failed++
-		fmt.Println()
-		return
-	}
-
 	// --- Dry-run ---
 	if cfg.DryRun {
 		if plan.Action == planner.ActionRemux {
@@ -174,7 +176,15 @@ func processFile(
 			log.Success("[DRY] Would encode")
 		}
 		stats.Encoded++
-		fmt.Println()
+		log.Blank()
+		return
+	}
+
+	// --- Create output directory ---
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
+		log.Error("Cannot create output directory: %v", err)
+		stats.Failed++
+		log.Blank()
 		return
 	}
 
@@ -191,7 +201,7 @@ func processFile(
 		}
 		os.Remove(outputPath)
 		stats.Failed++
-		fmt.Println()
+		log.Blank()
 		return
 	}
 
@@ -217,7 +227,7 @@ func processFile(
 	} else {
 		log.Success("Encoded in %ds (%d%% of original)", int(elapsed.Seconds()), ratio)
 	}
-	fmt.Println()
+	log.Blank()
 }
 
 const (
@@ -357,17 +367,19 @@ func attemptWithErrorRetry(
 	}
 }
 
+const maxStderrLines = 20
+
 func logStderr(log *logging.Logger, stderr string) {
 	if stderr == "" {
 		return
 	}
 	log.Error("Last ffmpeg output:")
 	lines := strings.Split(strings.TrimSpace(stderr), "\n")
-	start := 0
-	if len(lines) > 20 {
-		start = len(lines) - 20
+	if len(lines) > maxStderrLines {
+		log.Error("  ... %d lines omitted ...", len(lines)-maxStderrLines)
+		lines = lines[len(lines)-maxStderrLines:]
 	}
-	for _, l := range lines[start:] {
+	for _, l := range lines {
 		log.Error("  %s", l)
 	}
 }
@@ -430,7 +442,34 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 	if cfg.StrictMode {
 		log.Info("Retry policy: Strict mode (no auto-retry)")
 	}
-	fmt.Println()
+	log.Blank()
+}
+
+func logInputMeta(log *logging.Logger, pr *probe.ProbeResult) {
+	v := pr.PrimaryVideo
+	if v == nil {
+		return
+	}
+
+	codec := strings.ToUpper(v.Codec)
+	res := pr.Resolution()
+	bitrate := display.FormatBitrateLabel(pr.VideoBitRate() / 1000)
+
+	hdr := pr.HDRType()
+	var flags []string
+	if hdr == "hdr10" {
+		flags = append(flags, "HDR10")
+	}
+	if pr.IsInterlaced() {
+		flags = append(flags, "interlaced")
+	}
+
+	tag := fmt.Sprintf("%s[Input]%s", term.Magenta, term.NC)
+	if len(flags) > 0 {
+		log.Info("  %s %s | %s | %s | %s", tag, codec, res, bitrate, strings.Join(flags, ", "))
+	} else {
+		log.Info("  %s %s | %s | %s", tag, codec, res, bitrate)
+	}
 }
 
 func logFileStats(log *logging.Logger, plan *planner.FilePlan) {

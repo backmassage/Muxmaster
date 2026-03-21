@@ -39,7 +39,7 @@ internal/ffmpeg       → config, planner
 internal/pipeline     → config, logging, probe, naming, planner, ffmpeg, display, term
 ```
 
-**Leaf packages** (`config`, `term`, `probe`, `naming`) must stay dependency-free.
+**Leaf packages** (`config`, `probe`, `naming`) must stay dependency-free. `term` is near-leaf (imports only `config`).
 `planner` combines config + probe; it must never import ffmpeg or pipeline.
 `pipeline` is the sole orchestrator — only it wires all packages together.
 
@@ -49,13 +49,14 @@ internal/pipeline     → config, logging, probe, naming, planner, ffmpeg, displ
 pipeline.Run → for each file:
   1. Validate (readable, >1KB)
   2. probe.Probe → ProbeResult
-  3. naming.ParseFilename → ParsedName
-  4. naming.GetOutputPath → output path
-  5. CollisionResolver.Resolve → final path
-  6. planner.BuildPlan → FilePlan
-  7. ffmpeg.Execute with retry loop
-  8. Post-encode quality escalation (if output > input)
-  9. Update RunStats
+  3. logInputMeta (codec, resolution, bitrate, HDR/interlace flags)
+  4. naming.ParseFilename → ParsedName
+  5. naming.GetOutputPath → output path
+  6. CollisionResolver.Resolve → final path
+  7. planner.BuildPlan → FilePlan (sets HWDecode for VAAPI)
+  8. ffmpeg.Execute with retry loop
+  9. Post-encode quality escalation (if output > input)
+  10. Update RunStats
 ```
 
 ## Quality system (SmartQuality pipeline)
@@ -87,6 +88,7 @@ than destroying quality. The post-encode loop handles genuine blowups.
 ## Key conventions
 
 - VAAPI constant-QP encoding; CPU uses CRF with maxrate ceiling.
+- VAAPI hardware decode enabled by default (full GPU pipeline); falls back to software decode for HDR tonemap.
 - VaapiQPMax = 30 — QP above this produces severe visible artifacts.
 - AAC audio is always passthrough (never re-encoded lossy-to-lossy).
 - Remux path skips timestamp fix (+genpts); retry engine handles failures.

@@ -23,7 +23,7 @@ import (
 // When built with plain "go build" (no make), these retain their defaults.
 // The Makefile is the authoritative source for VERSION; see the Makefile for ldflags details.
 var (
-	version = "2.2.0"
+	version = "2.3.0"
 	commit  = "unknown"
 )
 
@@ -36,7 +36,10 @@ func run() int {
 	// directly to stderr via fmt. Once NewLogger succeeds, all output
 	// goes through the logger for consistent formatting and log-file capture.
 	cfg := config.DefaultConfig()
-	if err := config.ParseFlags(&cfg, version); err != nil {
+	if err := config.ParseFlags(&cfg, version, commit); err != nil {
+		if err == config.ErrExitClean {
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "muxmaster: %v\n", err)
 		return 1
 	}
@@ -66,25 +69,17 @@ func run() int {
 	if cfg.AnalyzeOnly {
 		inputAbs, err := absPath(cfg.InputDir)
 		if err != nil {
-			log.Error("Input not found: %s", cfg.InputDir)
+			log.Error("Input path error: %v", err)
 			return 1
 		}
 		cfg.InputDir = inputAbs
 
 		log.Info("=== Muxmaster v%s (%s) — Analyze ===", version, commit)
 		log.Info("In: %s", cfg.InputDir)
-		fmt.Println()
+		log.Blank()
 
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := signalContext(log)
 		defer cancel()
-
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		go func() {
-			<-sigCh
-			log.Warn("Received interrupt…")
-			cancel()
-		}()
 
 		pipeline.Analyze(ctx, &cfg, log)
 		return 0
@@ -94,16 +89,16 @@ func run() int {
 	// needed, and output must not be inside input (prevents recursive processing).
 	inputAbs, err := absPath(cfg.InputDir)
 	if err != nil {
-		log.Error("Input not found: %s", cfg.InputDir)
+		log.Error("Input path error: %v", err)
 		return 1
 	}
 	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
-		log.Error("Cannot create output directory: %s", cfg.OutputDir)
+		log.Error("Cannot create output directory: %v", err)
 		return 1
 	}
 	outputAbs, err := absPath(cfg.OutputDir)
 	if err != nil {
-		log.Error("Cannot resolve output path: %s", cfg.OutputDir)
+		log.Error("Cannot resolve output path: %v", err)
 		return 1
 	}
 	if err := cfg.ValidatePaths(inputAbs, outputAbs); err != nil {
@@ -126,26 +121,36 @@ func run() int {
 		return 1
 	}
 
-	// Phase 3: Signal handling — cancel context on SIGINT/SIGTERM so the
-	// pipeline can stop between files without leaving partial output.
-	ctx, cancel := context.WithCancel(context.Background())
+	// Phase 3: Signal handling + pipeline execution.
+	ctx, cancel := signalContext(log)
 	defer cancel()
 
-	sigCh := make(chan os.Signal, 1)
+	stats := pipeline.Run(ctx, &cfg, log)
+
+	if ctx.Err() != nil {
+		return 1
+	}
+	if stats.Failed > 0 {
+		return 1
+	}
+	return 0
+}
+
+// signalContext returns a context that is cancelled on SIGINT/SIGTERM.
+// A second signal forces immediate exit.
+func signalContext(log *logging.Logger) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.Background())
+	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
 		log.Warn("Received interrupt, finishing current file…")
 		cancel()
+		<-sigCh
+		log.Error("Forced exit")
+		os.Exit(1)
 	}()
-
-	// Phase 4: Run pipeline (discover → probe → plan → execute).
-	stats := pipeline.Run(ctx, &cfg, log)
-
-	if stats.Failed > 0 {
-		return 1
-	}
-	return 0
+	return ctx, cancel
 }
 
 // absPath returns the absolute, symlink-resolved path for safe comparison

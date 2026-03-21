@@ -31,18 +31,6 @@ func FormatBytes(bytes int64) string {
 	return fmt.Sprintf("%.1f %s", float64(bytes)/float64(div), suffixes[exp])
 }
 
-// FormatBytesWithSign formats a size delta with a leading "+ " or "- " for saved/used space in summaries.
-func FormatBytesWithSign(bytes int64) string {
-	sign := ""
-	if bytes > 0 {
-		sign = "+ "
-	} else if bytes < 0 {
-		sign = "- "
-		bytes = -bytes
-	}
-	return sign + FormatBytes(bytes)
-}
-
 // FormatBitrateLabel returns a short bitrate string (e.g. "800 kbps" or "1.2 Mbps") for display in file stats.
 // Returns "—" when the bitrate is unknown (zero or negative).
 func FormatBitrateLabel(kbps int64) string {

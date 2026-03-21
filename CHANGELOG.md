@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.3.0] — 2026-03-21
+
+### Added
+
+- **VAAPI hardware decode acceleration.** VAAPI encodes now use a full GPU pipeline: decode and encode happen on the same device, eliminating CPU decode overhead and CPU↔GPU memory transfers. Enabled automatically for all VAAPI encodes except HDR tonemapping (which requires CPU-only `zscale`/`tonemap` filters). `FilePlan.HWDecode` controls the mode; the builder injects `-hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi` before `-i` when active.
+- **VAAPI-native deinterlace.** When hardware decode is active, interlaced content uses `deinterlace_vaapi` instead of CPU `yadif`, keeping the entire pipeline on GPU.
+- **Input metadata display.** Each file now logs a magenta `[Input]` tag with codec, resolution, bitrate, and flags (HDR10, interlaced) before processing begins.
+- **Logger `Blank()` method.** Spacing lines now go through the logger, appearing in both terminal and log file output.
+- **Force-quit on second signal.** A second `SIGINT`/`SIGTERM` forces immediate exit instead of waiting for the current file to finish.
+- **`ErrExitClean` sentinel.** `--help` and `--version` now return a testable sentinel error instead of calling `os.Exit(0)`, improving testability of flag parsing.
+
+### Changed
+
+- **Filter chain split.** `BuildVideoFilter` now dispatches to `buildVAAPIHWDecodeFilters` (GPU-native path, no `hwupload`) or `buildSoftwareDecodeFilters` (legacy CPU path with `format` + `hwupload`), based on `HWDecode`.
+- **HDR tonemap fallback.** When HDR tonemapping is requested, the planner disables hardware decode and uses the existing software decode path, since `zscale` and `tonemap` are CPU-only filters.
+- **Signal handling refactored.** Extracted `signalContext()` helper in `cmd/main.go`, replacing duplicated signal setup code.
+- **Interrupted batch exit code.** `cmd/main.go` now returns exit code 1 when the context is cancelled (interrupted batch), ensuring scripts detect incomplete runs.
+- **`--version` includes commit hash.** Output now shows `muxmaster v2.3.0 (abc1234)`.
+- **Stderr truncation.** `logStderr` in `runner.go` now caps ffmpeg error output at 20 lines with an omission indicator.
+- **Dry-run directory safety.** `os.MkdirAll` for the output directory now runs after the dry-run check, so `--dry-run` no longer creates empty directories.
+- **Audio sample rate from config.** `buildAudioFilterWithRate` now reads `cfg.AudioSampleRate` instead of a hardcoded `48000`.
+- **Probe dimension validation.** Videos with zero or negative dimensions are rejected before planning.
+- **Named constants.** `MaxOptimalOverride`, `cpuMaxrateHeadroomPct`, and `MinOptimalBitrateKbps` replace magic numbers in planner and estimation code.
+- **`Density()` helper.** Extracted shared density calculation from quality curves and estimation code.
+- **`parseIntOr0` rename.** The `atoi` helper in naming/rules.go was renamed to `parseIntOr0` to clarify its error-swallowing behavior.
+- **Docs-naming uses `--no-ignore`.** The Makefile `docs-naming` target now checks all `.md` files regardless of `.gitignore` rules.
+
+### Fixed
+
+- **`FormatBytesWithSign` dead code.** Removed unused exported function from `display/format.go`.
+- **`muxQueueDefault` dead code.** Removed unused constant from `ffmpeg/retry.go`.
+- **`fmt.Println` bypassing logger.** All 9 spacing calls in `runner.go` replaced with `log.Blank()`.
+- **`IsTTY` → `IsTerminal` doc references.** Corrected stale function name in `term/doc.go` and `term/term.go` comments.
+- **Error messages include OS details.** Path-related errors in `cmd/main.go` now include the underlying OS error via `%v`.
+
+---
+
 ## [2.2.0] — 2026-03-21
 
 ### Changed
@@ -213,6 +250,7 @@ Complete rewrite from a 2,600-line Bash script to a single static Go binary with
 - Pipeline (discover → probe → plan → execute) is not yet implemented; the binary runs config, check, and path validation only.
 - Unit tests are planned for a later phase; test files were removed in favor of a skeleton-first approach.
 
+[2.3.0]: https://github.com/backmassage/muxmaster/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/backmassage/muxmaster/compare/v2.1.2...v2.2.0
 [2.1.2]: https://github.com/backmassage/muxmaster/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/backmassage/muxmaster/compare/v2.1.0...v2.1.1

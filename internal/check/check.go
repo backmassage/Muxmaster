@@ -31,6 +31,7 @@ type Logger interface {
 	Warn(string, ...interface{})
 	Error(string, ...interface{})
 	Debug(bool, string, ...interface{})
+	Blank()
 }
 
 // RunCheck runs the interactive --check flow: prints availability of ffmpeg,

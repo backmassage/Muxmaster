@@ -9,7 +9,7 @@
 
 ## 1. About
 
-Muxmaster (v2.1.2) is a Go CLI application that replaces a 2,666-line Bash script with typed domain objects, structured logging, and a reliable ffmpeg retry engine. It targets a single static binary for Arch Linux.
+Muxmaster (v2.3.0) is a Go CLI application that replaces a 2,666-line Bash script with typed domain objects, structured logging, and a reliable ffmpeg retry engine. It targets a single static binary for Arch Linux.
 
 This document is the canonical reference for architecture, types, behavioral contracts, and technical decisions. For package layout and file navigation, see [structure.md](structure.md). For the aspirational v2.0 roadmap (subcommands, StateStore, etc.), see [product-spec.md](product-spec.md).
 
@@ -107,7 +107,7 @@ cmd/main.go
 | `naming` | *(none — pure logic)* | Filename parser, output paths, collision resolution |
 | `probe` | *(none — wraps ffprobe)* | ffprobe JSON wrapper, typed ProbeResult |
 
-**Leaf packages** (no internal dependencies): `naming`, `probe`, `config`. Near-leaf (single dep): `term`, `check`, `logging`, `display`.
+**Leaf packages** (no internal dependencies): `naming`, `probe`, `config`. Near-leaf (single dep): `term`, `check`, `display`. Near-leaf (two deps): `logging`.
 
 **Key constraint:** `naming` and `probe` must remain dependency-free. All file-level decisions flow through `planner`, which is the only package that combines probe data with config to produce a `FilePlan`.
 
@@ -176,6 +176,9 @@ This is the step-by-step flow for processing a single file within the batch loop
       P returns: ProbeResult
       └── if no primary video stream: mark skipped, continue
 
+ 2b. R: logInputMeta(ProbeResult)
+      Displays [Input] tag with codec, resolution, bitrate, HDR/interlace flags
+
  3. R → N: ParseFilename(basename, parent_dir)
       N returns: ParsedName
       └── if media_type == tv:
@@ -187,14 +190,13 @@ This is the step-by-step flow for processing a single file within the batch loop
     R → N: CollisionResolver.Resolve(input_path, requested_path)
       N returns: final resolved output path
 
- 5. R: logFileStats(FilePlan, ProbeResult)
-    R: logBitrateOutlier(ProbeResult)
+ 5. R: logBitrateOutlier(ProbeResult)
 
  6. R → PL: BuildPlan(Config, ProbeResult)
-      PL returns: FilePlan (action = encode | remux | skip)
-      └── if action == skip (existing file): mark skipped, continue
+      PL returns: FilePlan (action = encode | remux)
 
- 7. R: logRenderPlan(FilePlan)
+ 7. R: logFileStats(Logger, FilePlan)
+      └── if skip-existing and output exists: mark skipped, continue
       └── if dry run: mark encoded (counted but not executed), continue
 
  8. R → RT: NewRetryState(FilePlan)
@@ -213,8 +215,8 @@ This is the step-by-step flow for processing a single file within the batch loop
 
 10. QUALITY ESCALATION (encode path only, smart quality):
       if output_size > input_size:
-        bump QP/CRF by 2, delete output, go back to step 9
-        (up to 3 bumps — ensures output ≤ input when possible)
+        bump QP/CRF by 1, delete output, go back to step 9
+        (up to 2 bumps — ensures output ≤ input when possible)
       if still larger after max bumps → log warning, accept
 
 11. R updates RunStats (byte counters, encoded/failed counts)
@@ -259,8 +261,8 @@ ON EACH FFMPEG FAILURE:
 
 ON FFMPEG SUCCESS (encode path, smart quality enabled):
   if output_size > input_size:
-    bump QP/CRF by 2, delete output, reset attempt counter, re-run
-    (up to 3 quality bumps)
+    bump QP/CRF by 1, delete output, reset attempt counter, re-run
+    (up to 2 quality bumps)
   if still larger after max bumps → log warning, accept result
 
 GOTCHA: For encodes, CleanTimestamps defaults to true, so timestamp_fix
@@ -316,6 +318,8 @@ main()
   │       ├── probe file → ProbeResult
   │       │   └── no primary video stream → mark skipped, continue
   │       │
+  │       ├── log input metadata (codec, resolution, bitrate, flags)
+  │       │
   │       ├── parse filename + harmonize TV name (using year index)
   │       │
   │       ├── compute output path + resolve collisions
@@ -327,6 +331,7 @@ main()
   │       │     → REMUX PATH (copy video, process audio)
   │       │   else:
   │       │     → ENCODE PATH (re-encode video + process audio)
+  │       │       VAAPI: HWDecode enabled unless HDR tonemap required
   │       │
   │       ├── if output already exists AND skip_existing → mark skipped, continue
   │       │
@@ -346,7 +351,7 @@ main()
 
 ### 4.6 Filename Parser Rule Cascade
 
-The parser tries 15 ordered regex rules against each filename. First match wins. If no rule matches, the fallback treats the entire basename as a movie name.
+The parser tries 14 ordered regex rules against each filename. First match wins. If no rule matches, the fallback (rule 15) treats the entire basename as a movie name.
 
 **Pre-processing:**
 1. Strip file extension → `base`
@@ -597,7 +602,7 @@ type ParsedName struct {
 ### 5.5 FilePlan
 
 ```go
-// planner/planner.go
+// planner/types.go
 
 type Action int
 
@@ -615,6 +620,7 @@ type FilePlan struct {
     VideoCodec   string   // "hevc_vaapi", "libx265", or "copy"
     VideoFilters string   // comma-joined filter chain
     ColorOpts    []string // -color_trc, -color_primaries, -colorspace
+    HWDecode     bool     // VAAPI hardware decode (frames stay on GPU)
 
     // Quality (resolved per-file by smart quality)
     VaapiQP            int
@@ -768,7 +774,9 @@ ffmpeg -hide_banner -nostdin -y
     -probesize 100M -analyzeduration 100M
     -ignore_unknown
     [-fflags +genpts+discardcorrupt]
-    [-init_hw_device vaapi=va:{device}  -filter_hw_device va]   (VAAPI encode only)
+    [-init_hw_device vaapi=va:{device}]                          (VAAPI encode only)
+    [-hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi]  (VAAPI HW decode)
+    [-filter_hw_device va]                                       (VAAPI encode only)
     -i {input}
     [-vf {filter chain}]                                         (encode only)
     -map 0:{video_idx} {audio_maps} {sub_maps} {attach_maps}
@@ -836,7 +844,7 @@ var rules = []ParseRule{
     {Name: "S01-OP/ED",           Pattern: reSeasonOPED,     Extract: extractSeasonOPED},
     {Name: "Creditless-OP/ED",    Pattern: reCreditless,     Extract: extractCreditless},
     {Name: "Episode-keyword",     Pattern: reEpisodeKeyword, Extract: extractEpisodeKeyword},
-    {Name: "Named-special-index", Pattern: reNamedSpecial,   Extract: extractNamedSpecial},
+    {Name: "Named-special-index", Pattern: reNamedSpecialIdx, Extract: extractNamedSpecialIdx},
     {Name: "Named-special-bare",  Pattern: reBareSpecial,    Extract: extractBareSpecial},
     {Name: "Movie-part",          Pattern: reMoviePart,      Extract: extractMoviePart},
     {Name: "Anime-dash",          Pattern: reAnimeDash,      Extract: extractAnimeDash},
@@ -881,7 +889,7 @@ func titleCase(s string) string {
 | `planner/planner_test.go` | High | Decision matrix, smart quality curves, estimation, audio plans, timestamp fix |
 | `ffmpeg/retry_test.go` | High | All 4 stderr patterns, retry state machine, mux queue escalation |
 | `config/config_test.go` | High | Flag precedence, validation, quality override logic |
-| `display/format_test.go` | Medium | Byte formatting, bitrate labels |
+| `probe/probe_live_test.go` | Medium | Live ffprobe integration (guarded by `exec.LookPath`) |
 | `probe/probe_test.go` | Medium | JSON parsing, HDR detection, interlace, HEVC safety |
 | `pipeline/pipeline_test.go` | Medium | Discovery, dry-run integration |
 
@@ -912,8 +920,8 @@ Script that runs both implementations with `--dry-run` on the same directory and
 
 ```makefile
 BINARY  := muxmaster
-VERSION := 2.1.2
-COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+VERSION := 2.3.0
+COMMIT  := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
 .PHONY: build test vet fmt lint docs-naming coverage ci clean install
@@ -955,7 +963,7 @@ install: build
 // cmd/main.go
 
 var (
-    version = "dev"
+    version = "2.3.0"
     commit  = "unknown"
 )
 ```

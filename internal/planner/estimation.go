@@ -115,7 +115,7 @@ func qualityRatioPerMille(mode config.EncoderMode, q int) int {
 	return cpuRatio(q)
 }
 
-// vaapiRatio covers QP 14–36 (the full VaapiQPMin–VaapiQPMax range).
+// vaapiRatio maps QP to an estimated output-to-input percentage (permille).
 func vaapiRatio(qp int) int {
 	switch {
 	case qp <= 14:
@@ -290,7 +290,7 @@ func OptimalBitrate(pr *probe.ProbeResult) int {
 	// Density adjustment: low-density (already compressed) sources can't be
 	// compressed as aggressively. High-density sources have more room.
 	pixels := v.Width * v.Height
-	density := inputKbps * 1_000_000 / pixels
+	density := Density(inputKbps, pixels)
 	switch {
 	case density < DensityUltraLow:
 		baseRatio += 30
@@ -318,9 +318,8 @@ func OptimalBitrate(pr *probe.ProbeResult) int {
 	if target > inputKbps {
 		target = inputKbps
 	}
-	// Floor: don't target below 200 kbps regardless.
-	if target < 200 && inputKbps >= 200 {
-		target = 200
+	if target < MinOptimalBitrateKbps && inputKbps >= MinOptimalBitrateKbps {
+		target = MinOptimalBitrateKbps
 	}
 
 	return target
@@ -404,7 +403,7 @@ func estimationDensityBias(kbps, pixels int) int {
 	if kbps <= 0 || pixels <= 0 {
 		return 0
 	}
-	density := kbps * 1_000_000 / pixels
+	density := Density(kbps, pixels)
 	switch {
 	case density < DensityUltraLow:
 		return 250

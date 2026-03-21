@@ -2,7 +2,7 @@
 
 Jellyfin-optimized media encoder: batch HEVC/AAC encoding and remuxing with smart per-file quality, automatic retry, and deterministic Jellyfin-friendly output naming.
 
-**Version:** 2.2.0
+**Version:** 2.3.0
 
 ---
 
@@ -200,7 +200,7 @@ Validate → Probe → Parse filename → Resolve output path → Plan → Execu
 - **Validate**: skip files under 1 KB (likely corrupt)
 - **Probe**: single `ffprobe -print_format json` call extracts codec, resolution, bitrate, HDR, interlace, and stream info
 - **Parse filename**: 14 regex rules extract show name, season, episode, or movie title and year
-- **Plan**: smart quality selects QP/CRF per-file based on resolution and bitrate curves; decides encode vs remux based on HEVC edge-safety (profile + pix_fmt)
+- **Plan**: smart quality selects QP/CRF per-file based on resolution and bitrate curves; decides encode vs remux based on HEVC edge-safety (profile + pix_fmt); VAAPI encodes use hardware decode for a full GPU pipeline (automatic software fallback for HDR tonemapping)
 - **Execute**: runs ffmpeg with automatic retry (up to 4 attempts) for attachment errors, subtitle mux issues, queue overflow, and timestamp discontinuities
 - **Quality escalation**: if output exceeds input size, QP/CRF is bumped and re-encoded (up to 2 times) to ensure output stays smaller than the original
 

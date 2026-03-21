@@ -61,7 +61,7 @@ func SmartQuality(cfg *config.Config, pr *probe.ProbeResult) QualityResult {
 
 	densityLabel := "n/a"
 	if bitrateKbps > 0 && pixels > 0 {
-		densityLabel = fmt.Sprintf("%d kbps/Mpx", bitrateKbps*1_000_000/pixels)
+		densityLabel = fmt.Sprintf("%d kbps/Mpx", Density(bitrateKbps, pixels))
 	}
 
 	note := fmt.Sprintf("smart (%s, %s, density=%s, cpu_adj=%d, vaapi_adj=%d, smart_bias=%d, cpu_crf=%d, vaapi_qp=%d, mode=%s)",
@@ -189,7 +189,7 @@ func vaapiDensityCurve(kbps, pixels int) int {
 	if kbps <= 0 || pixels <= 0 {
 		return 0
 	}
-	density := kbps * 1_000_000 / pixels
+	density := Density(kbps, pixels)
 	switch {
 	case density < DensityUltraLow:
 		return 4
@@ -211,7 +211,7 @@ func cpuDensityCurve(kbps, pixels int) int {
 	if kbps <= 0 || pixels <= 0 {
 		return 0
 	}
-	density := kbps * 1_000_000 / pixels
+	density := Density(kbps, pixels)
 	switch {
 	case density < DensityUltraLow:
 		return 3
@@ -245,6 +245,28 @@ const (
 	DensityHigh     = 8000  // High quality source (Blu-ray).
 	DensityVeryHigh = 10000 // Premium quality (remux grade).
 )
+
+// Planner-level tuning constants exported for cross-package use.
+const (
+	// MaxOptimalOverride caps how far the optimal bitrate model can push
+	// QP/CRF above the SmartQuality result.
+	MaxOptimalOverride = 3
+
+	// cpuMaxrateHeadroomPct is the headroom factor (as a percentage) applied
+	// to the optimal bitrate when computing the CPU maxrate ceiling.
+	cpuMaxrateHeadroomPct = 115
+
+	// MinOptimalBitrateKbps is the floor for the optimal bitrate target.
+	MinOptimalBitrateKbps = 200
+)
+
+// Density computes bitrate density in kbps per megapixel.
+func Density(kbps, pixels int) int {
+	if pixels <= 0 {
+		return 0
+	}
+	return kbps * 1_000_000 / pixels
+}
 
 // Clamp restricts v to the range [lo, hi].
 func Clamp(v, lo, hi int) int {
