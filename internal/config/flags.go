@@ -1,3 +1,4 @@
+// flags.go defines CLI flags and resolves quality override precedence.
 package config
 
 // This file implements CLI flag parsing and help text.

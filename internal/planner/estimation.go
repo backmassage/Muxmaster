@@ -1,3 +1,4 @@
+// Output bitrate estimation, preflight adjustment, and QP/CRF targeting.
 package planner
 
 import (
@@ -60,7 +61,7 @@ func EstimateBitrate(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF 
 	ratio = Clamp(ratio, 220, 1050)
 
 	lowRatio := ratio * 75 / 100
-	highRatio := ratio * 145 / 100
+	highRatio := ratio * 130 / 100
 
 	return BitrateEstimate{
 		LowKbps:  (inputKbps*lowRatio + 500) / 1000,
@@ -77,11 +78,11 @@ func EstimateBitrate(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF 
 // many bumps were applied.
 //
 // It only adjusts the active encoder mode's value. targetPct is typically
-// 100 (output should not exceed input). The adjustment is capped at 8
-// steps from the starting values to prevent the estimator from over-
-// correcting on files where the model is unreliable.
+// 105 (5% overshoot tolerance to avoid chasing marginal gains at quality
+// cost). The adjustment is capped at 4 steps from the starting values to
+// prevent the estimator from over-correcting on unreliable models.
 func PreflightAdjust(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF, targetPct int) (adjQP, adjCRF, bumps int) {
-	const maxBumps = 8
+	const maxBumps = 4
 	adjQP, adjCRF = vaapiQP, cpuCRF
 
 	for i := 0; i < maxBumps; i++ {
@@ -291,15 +292,15 @@ func OptimalBitrate(pr *probe.ProbeResult) int {
 	pixels := v.Width * v.Height
 	density := inputKbps * 1_000_000 / pixels
 	switch {
-	case density < 1000:
-		baseRatio += 30 // ultra-compressed — almost no room, expect bloat
-	case density < 1500:
-		baseRatio += 25 // heavily compressed — very little room
-	case density < 2500:
-		baseRatio += 12 // below average — limited room
-	case density > 10000:
-		baseRatio -= 8 // premium quality — more room to compress
-	case density > 8000:
+	case density < DensityUltraLow:
+		baseRatio += 30
+	case density < DensityLow:
+		baseRatio += 25
+	case density < DensityBelowAvg:
+		baseRatio += 12
+	case density > DensityVeryHigh:
+		baseRatio -= 8
+	case density > DensityHigh:
 		baseRatio -= 5
 	}
 
@@ -405,17 +406,17 @@ func estimationDensityBias(kbps, pixels int) int {
 	}
 	density := kbps * 1_000_000 / pixels
 	switch {
-	case density < 1000:
-		return 400
-	case density < 1500:
+	case density < DensityUltraLow:
 		return 250
-	case density < 2500:
+	case density < DensityLow:
 		return 150
-	case density < 3500:
-		return 40
-	case density > 10000:
+	case density < DensityBelowAvg:
+		return 80
+	case density < DensityMedium:
+		return 20
+	case density > DensityVeryHigh:
 		return -20
-	case density > 8000:
+	case density > DensityHigh:
 		return -10
 	default:
 		return 0

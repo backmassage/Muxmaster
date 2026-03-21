@@ -1,3 +1,4 @@
+// harmonize.go normalizes TV show names across year-variant releases.
 package naming
 
 import (

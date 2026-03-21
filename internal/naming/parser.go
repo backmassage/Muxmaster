@@ -1,3 +1,4 @@
+// parser.go parses filenames via ordered regex rule matching.
 package naming
 
 import (

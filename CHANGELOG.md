@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.2.0] — 2026-03-21
+
+### Changed
+
+- **Quality-first smart quality curves.** All VAAPI density, resolution, and bitrate curve adjustments reduced to prioritize quality over compression. Density curve: ultra-low +8→+4, low +5→+2, below-average +3→+1. Resolution curve: 360p +6→+3, 480p +4→+2, 720p +3→+1. Bitrate curve: <1200 kbps +3→+2, <2500 kbps +2→+1. CPU curves reduced proportionally. High-density bonus made more aggressive (>8000 kbps/Mpx: -1→-2).
+- **VaapiQPMax lowered from 36 to 30.** QP above 30 produces severe visible artifacts; the new cap prevents the pipeline from reaching destructive quality levels.
+- **Optimal bitrate override capped at +3.** `QPForTargetBitrate` can no longer push QP more than 3 steps above the SmartQuality result, preventing the estimation model from overriding quality curves by a large margin.
+- **Preflight target relaxed to 105%.** `PreflightAdjust` now tolerates 5% overshoot (was 100%) to avoid chasing marginal gains at the cost of quality. Max bumps reduced from 8 to 4.
+- **Estimation high ratio reduced from 145% to 130%.** The pessimistic estimate multiplier was overestimating output, causing unnecessary preflight bumps.
+- **Estimation density biases reduced.** Ultra-low: 400→250, low: 250→150, below-average: 150→80, medium: 40→20. Keeps biases proportional to the gentler quality curves.
+- **Post-encode escalation made gentler.** Quality bump step reduced from 2 to 1; max re-encodes from 3 to 2. Each re-encode attempt now only increases QP/CRF by 1 instead of 2.
+- **Build version injection uses `git describe --always --dirty`** instead of `git rev-parse --short HEAD`, showing uncommitted-change state in the binary version string.
+
+### Added
+
+- **`AGENTS.md`** — Project-level guide for AI assistants and new contributors: architecture, quality system overview, dependency rules, conventions, common gotchas.
+- **Quality system architecture doc** (`_docs/design/quality-system.md`) — Full pipeline stage reference with estimation model, constants table, and density threshold definitions.
+- **`doc.go` for all packages** — Package-level documentation with purpose statements and file manifests for `config`, `term`, `logging`, `display`, `check`, `probe`, `naming`, `ffmpeg`, and `pipeline`.
+- **File-level header comments** on all 27 implementation files that were missing them. Each comment describes the file's role within its package.
+- **Named density constants** — `DensityUltraLow` (1000) through `DensityVeryHigh` (10000) replace magic numbers in quality curves and estimation biases.
+- **`.cursor/rules/`** — Three Cursor rule files (`project.mdc`, `quality.mdc`, `testing.mdc`) for project-specific AI guidance.
+- **Test helper extraction** — Probe-result builders (`h264SDR`, `hevcEdgeSafe`, etc.) moved from `planner_test.go` to `helpers_test.go`.
+
+### Fixed
+
+- **Duplicate `// Package` doc comments.** Source files that predated `doc.go` had package-level comments that would conflict with `go doc`. Replaced with file-level comments; `doc.go` is now the single source of package documentation.
+- **Stale `PreflightAdjust` docstring.** Comment still referenced "100% target" and "8 steps" after values were changed to 105% and 4.
+- **README quality escalation description.** Updated to match new behavior: "bumped and re-encoded (up to 2 times)" (was "bumped by 2… up to 3 times").
+- **Architecture naming rule count.** Corrected "15 naming rules" to 14 (matching `rules.go`).
+- **Docs-naming check.** `AGENTS.md` added to the Makefile allowlist for root-level markdown files.
+- **`.gitignore` cleanup.** Removed duplicate `.cursor/` entries; added `!.cursor/rules/` exception so rule files are tracked.
+
+---
+
 ## [2.1.2] — 2026-02-25
 
 ### Changed
@@ -179,6 +213,7 @@ Complete rewrite from a 2,600-line Bash script to a single static Go binary with
 - Pipeline (discover → probe → plan → execute) is not yet implemented; the binary runs config, check, and path validation only.
 - Unit tests are planned for a later phase; test files were removed in favor of a skeleton-first approach.
 
+[2.2.0]: https://github.com/backmassage/muxmaster/compare/v2.1.2...v2.2.0
 [2.1.2]: https://github.com/backmassage/muxmaster/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/backmassage/muxmaster/compare/v2.1.0...v2.1.1
 [2.1.0]: https://github.com/backmassage/muxmaster/compare/v2.0.0...v2.1.0

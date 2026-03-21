@@ -1,3 +1,4 @@
+// format.go provides human-readable byte and bitrate formatting helpers.
 package display
 
 // format.go implements human-readable size and bitrate formatting for

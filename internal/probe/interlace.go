@@ -1,3 +1,4 @@
+// Interlace detection from field_order stream metadata.
 package probe
 
 import "strings"

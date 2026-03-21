@@ -1,3 +1,4 @@
+// Per-stream audio strategy: AAC passthrough, non-AAC transcoding, layout normalization.
 package planner
 
 import (

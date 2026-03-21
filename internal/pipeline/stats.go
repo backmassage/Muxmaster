@@ -1,3 +1,4 @@
+// Aggregate batch statistics for the summary report.
 package pipeline
 
 // RunStats tracks aggregate counters and byte totals across a batch run.

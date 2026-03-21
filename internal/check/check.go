@@ -1,6 +1,4 @@
-// Package check provides system diagnostics (--check mode) and pre-pipeline
-// dependency validation (CheckDeps) for ffmpeg, ffprobe, video encoders,
-// and the configured AAC encoder.
+// check.go implements --check diagnostics and CheckDeps pre-pipeline validation.
 package check
 
 import (

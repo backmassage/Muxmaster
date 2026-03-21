@@ -1,3 +1,4 @@
+// executor.go runs ffmpeg subprocesses with stderr capture and optional FPS display.
 package ffmpeg
 
 import (

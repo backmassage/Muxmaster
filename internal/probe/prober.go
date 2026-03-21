@@ -1,3 +1,4 @@
+// Single ffprobe JSON call with stream classification into typed structs.
 package probe
 
 import (

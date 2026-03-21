@@ -1,3 +1,4 @@
+// postprocess.go applies title-casing, bracket stripping, and release tag removal.
 package naming
 
 import (

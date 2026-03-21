@@ -1,3 +1,4 @@
+// SmartQuality: per-file QP/CRF from resolution, bitrate, and density curves.
 package planner
 
 import (
@@ -97,22 +98,21 @@ func cpuResolutionCurve(pixels int) int {
 	}
 }
 
-// VAAPI resolution curve: generally needs a slightly different QP ramp.
+// VAAPI resolution curve: gentle adjustments that avoid crushing
+// low-resolution content where quality loss is most visible.
 func vaapiResolutionCurve(pixels int) int {
 	if pixels <= 0 {
 		return 0
 	}
 	switch {
 	case pixels <= 640*360:
-		return 6
-	case pixels <= 854*480:
-		return 4
-	case pixels <= 1280*720:
 		return 3
-	case pixels <= 1920*1080:
+	case pixels <= 854*480:
+		return 2
+	case pixels <= 1280*720:
 		return 1
 	case pixels >= 3840*2160:
-		return -1
+		return -2
 	case pixels >= 2560*1440:
 		return -1
 	default:
@@ -146,9 +146,9 @@ func vaapiBitrateCurve(kbps int) int {
 	}
 	switch {
 	case kbps < 1200:
-		return 3
-	case kbps < 2500:
 		return 2
+	case kbps < 2500:
+		return 1
 	case kbps > 30000:
 		return -2
 	case kbps > 16000:
@@ -182,48 +182,44 @@ func modeLabel(cfg *config.Config) string {
 //   > 8000  — very high quality (Blu-ray remux, lossless-adjacent)
 
 // vaapiDensityCurve returns a QP adjustment based on bitrate density.
+// Adjustments are conservative: quality preservation takes priority over
+// preventing output size overshoot. The post-encode escalation loop
+// handles genuine overshoot cases.
 func vaapiDensityCurve(kbps, pixels int) int {
 	if kbps <= 0 || pixels <= 0 {
 		return 0
 	}
-	// kbps per megapixel (multiply by 1M to avoid float).
 	density := kbps * 1_000_000 / pixels
 	switch {
-	case density < 1000:
-		// Ultra-low density: source is so compressed that HEVC at any
-		// reasonable quality level will produce output LARGER than the
-		// input. Aggressive QP bump to minimize bloat.
-		return 8
-	case density < 1500:
-		return 5
-	case density < 2500:
-		return 3
-	case density < 3500:
+	case density < DensityUltraLow:
+		return 4
+	case density < DensityLow:
+		return 2
+	case density < DensityBelowAvg:
 		return 1
-	case density > 8000:
-		return -1
+	case density > DensityHigh:
+		return -2
 	default:
 		return 0
 	}
 }
 
 // cpuDensityCurve returns a CRF adjustment based on bitrate density.
+// Kept proportional to VAAPI density curve to maintain consistent
+// quality behavior across encoder modes.
 func cpuDensityCurve(kbps, pixels int) int {
 	if kbps <= 0 || pixels <= 0 {
 		return 0
 	}
 	density := kbps * 1_000_000 / pixels
 	switch {
-	case density < 1000:
-		// Ultra-low density: source is extremely compressed.
-		return 6
-	case density < 1500:
-		return 4
-	case density < 2500:
+	case density < DensityUltraLow:
+		return 3
+	case density < DensityLow:
 		return 2
-	case density < 3500:
+	case density < DensityBelowAvg:
 		return 1
-	case density > 8000:
+	case density > DensityHigh:
 		return -1
 	default:
 		return 0
@@ -236,7 +232,18 @@ const (
 	CpuCRFMin  = 16
 	CpuCRFMax  = 30
 	VaapiQPMin = 14
-	VaapiQPMax = 36
+	VaapiQPMax = 30
+)
+
+// Density thresholds in kbps per megapixel. Used by both quality curves
+// and estimation biases. See _docs/design/quality-system.md.
+const (
+	DensityUltraLow = 1000  // Heavily compressed (streaming rips, web-dl).
+	DensityLow      = 1500  // Below average for resolution.
+	DensityBelowAvg = 2500  // Slightly below typical.
+	DensityMedium   = 3500  // Average for resolution.
+	DensityHigh     = 8000  // High quality source (Blu-ray).
+	DensityVeryHigh = 10000 // Premium quality (remux grade).
 )
 
 // Clamp restricts v to the range [lo, hi].

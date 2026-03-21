@@ -1,3 +1,4 @@
+// FilePlan, Action, AudioPlan, SubtitlePlan, and other planner domain types.
 package planner
 
 import "github.com/backmassage/muxmaster/internal/config"

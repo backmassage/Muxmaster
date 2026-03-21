@@ -1,3 +1,4 @@
+// collision.go deduplicates output paths with -dupN suffixes.
 package naming
 
 import (

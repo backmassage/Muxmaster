@@ -1,9 +1,5 @@
-// Package term provides ANSI color state and terminal detection.
-//
-// Colors are package-level variables because multiple packages (logging,
-// display) need them for output formatting. [Configure] sets them once
-// during startup; when colors are disabled the variables are empty strings,
-// making string concatenation a no-op.
+// term.go implements Configure, IsTTY, and exports color variables as
+// package-level strings (set once, read by logging and display).
 package term
 
 import (
