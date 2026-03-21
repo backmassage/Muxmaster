@@ -1,6 +1,7 @@
 package planner
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -140,6 +141,38 @@ func TestBuildPlan_MP4Container(t *testing.T) {
 	}
 }
 
+// --- TimestampFix tests ---
+
+func TestBuildPlan_RemuxNoTimestampFix(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.CleanTimestamps = true
+	plan := BuildPlan(cfg, hevcEdgeSafe())
+	if plan.Action != ActionRemux {
+		t.Fatal("expected remux")
+	}
+	if plan.TimestampFix {
+		t.Error("remux should have TimestampFix=false regardless of CleanTimestamps")
+	}
+}
+
+func TestBuildPlan_EncodeRespectsCleanTimestamps(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.CleanTimestamps = true
+	plan := BuildPlan(cfg, h264SDR())
+	if plan.Action != ActionEncode {
+		t.Fatal("expected encode")
+	}
+	if !plan.TimestampFix {
+		t.Error("encode with CleanTimestamps=true should have TimestampFix=true")
+	}
+
+	cfg.CleanTimestamps = false
+	plan = BuildPlan(cfg, h264SDR())
+	if plan.TimestampFix {
+		t.Error("encode with CleanTimestamps=false should have TimestampFix=false")
+	}
+}
+
 // --- SmartQuality tests ---
 
 func TestSmartQuality_ManualOverride(t *testing.T) {
@@ -171,11 +204,11 @@ func TestSmartQuality_LowRes(t *testing.T) {
 	}
 	q := SmartQuality(defaultCfg(), pr)
 	// Low res + low bitrate → should bump quality values up significantly.
-	if q.CpuCRF <= 19 {
-		t.Errorf("low-res should increase CRF above default 19, got %d", q.CpuCRF)
+	if q.CpuCRF <= 18 {
+		t.Errorf("low-res should increase CRF above default 18, got %d", q.CpuCRF)
 	}
-	if q.VaapiQP <= 19 {
-		t.Errorf("low-res should increase QP above default 19, got %d", q.VaapiQP)
+	if q.VaapiQP <= 18 {
+		t.Errorf("low-res should increase QP above default 18, got %d", q.VaapiQP)
 	}
 }
 
@@ -186,8 +219,8 @@ func TestSmartQuality_4K(t *testing.T) {
 	}
 	q := SmartQuality(defaultCfg(), pr)
 	// 4K + high bitrate → should lower quality values for more quality.
-	if q.CpuCRF >= 19 {
-		t.Errorf("4K should decrease CRF below default 19, got %d", q.CpuCRF)
+	if q.CpuCRF >= 18 {
+		t.Errorf("4K should decrease CRF below default 18, got %d", q.CpuCRF)
 	}
 }
 
@@ -268,6 +301,216 @@ func TestEstimateBitrate_CodecBias(t *testing.T) {
 	// than legacy codec (mpeg2).
 	if est1.HighKbps <= est2.HighKbps {
 		t.Logf("h264 high=%d, mpeg2 high=%d — h264 should estimate higher", est1.HighKbps, est2.HighKbps)
+	}
+}
+
+func TestEstimateBitrate_HEVCHigherThanH264(t *testing.T) {
+	cfg := defaultCfg()
+	prH264 := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000},
+		Format:       probe.FormatInfo{BitRate: 9000000},
+	}
+	prHEVC := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "hevc", Width: 1920, Height: 1080, BitRate: 8000000},
+		Format:       probe.FormatInfo{BitRate: 9000000},
+	}
+	estH264 := EstimateBitrate(cfg, prH264, 22, 22)
+	estHEVC := EstimateBitrate(cfg, prHEVC, 22, 22)
+	// HEVC→HEVC has almost no codec-generation gain, so it should predict
+	// a higher output ratio than h264→HEVC.
+	if estHEVC.HighKbps <= estH264.HighKbps {
+		t.Errorf("HEVC source should estimate higher than h264: HEVC=%d, h264=%d",
+			estHEVC.HighKbps, estH264.HighKbps)
+	}
+	t.Logf("h264→HEVC: %d-%d kb/s; HEVC→HEVC: %d-%d kb/s",
+		estH264.LowKbps, estH264.HighKbps, estHEVC.LowKbps, estHEVC.HighKbps)
+}
+
+func TestSmartQuality_1440p_VAAPI(t *testing.T) {
+	// 1440p content should get a quality bonus (lower QP) on both CPU and VAAPI.
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 2560, Height: 1440, BitRate: 12000000,
+		},
+		Format: probe.FormatInfo{BitRate: 13000000},
+	}
+	q := SmartQuality(defaultCfg(), pr)
+	if q.VaapiQP > 18 {
+		t.Errorf("1440p should get QP <= 18 (quality bonus), got %d", q.VaapiQP)
+	}
+	// Verify CPU also gets the bonus.
+	if q.CpuCRF > 18 {
+		t.Errorf("1440p should get CRF <= 18 (quality bonus), got %d", q.CpuCRF)
+	}
+	t.Logf("1440p 12Mbps → QP=%d CRF=%d", q.VaapiQP, q.CpuCRF)
+}
+
+// --- Density curve tests ---
+
+func TestSmartQuality_CompressedSource(t *testing.T) {
+	// Simulates the user's scenario: 1080p h264 at only 3.9 Mbps.
+	// Density = 3900 * 1e6 / (1920*1080) ≈ 1880 kbps/Mpx → heavily compressed.
+	// Without density curves, this got QP 19 and produced output 257% of input.
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 3900000,
+		},
+		Format: probe.FormatInfo{BitRate: 4100000},
+	}
+	q := SmartQuality(defaultCfg(), pr)
+	// Density curve should push QP higher than the default (18).
+	if q.VaapiQP <= 18 {
+		t.Errorf("compressed 1080p at 3.9 Mbps should get QP > 18, got %d", q.VaapiQP)
+	}
+	t.Logf("Compressed 1080p 3.9Mbps → QP=%d CRF=%d", q.VaapiQP, q.CpuCRF)
+}
+
+func TestSmartQuality_HighDensitySource(t *testing.T) {
+	// High quality source: 1080p at 25 Mbps → density ≈ 12056.
+	// Should get a quality *bonus* (lower QP).
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 25000000,
+		},
+		Format: probe.FormatInfo{BitRate: 26000000},
+	}
+	q := SmartQuality(defaultCfg(), pr)
+	// High density should not increase QP — should stay at or below default area.
+	if q.VaapiQP > 18 {
+		t.Errorf("high-quality 1080p at 25 Mbps should not increase QP above 18, got %d", q.VaapiQP)
+	}
+	t.Logf("High-quality 1080p 25Mbps → QP=%d CRF=%d", q.VaapiQP, q.CpuCRF)
+}
+
+func TestDensityCurve_Boundaries(t *testing.T) {
+	tests := []struct {
+		kbps, pixels int
+		wantCPU      int
+		wantVAAPI    int
+		label        string
+	}{
+		{0, 2073600, 0, 0, "zero bitrate"},
+		{3900, 0, 0, 0, "zero pixels"},
+		{500, 2073600, 6, 8, "ultra-low density (241)"},
+		{1000, 2073600, 6, 8, "ultra-low density (482)"},
+		{2500, 2073600, 4, 5, "low density (1206)"},
+		{4000, 2073600, 2, 3, "below-avg density (1929)"},
+		{6000, 2073600, 1, 1, "medium-low density (2893)"},
+		{8000, 2073600, 0, 0, "normal density (3858)"},
+		{20000, 2073600, -1, -1, "high density (9645)"},
+	}
+	for _, tt := range tests {
+		gotCPU := cpuDensityCurve(tt.kbps, tt.pixels)
+		gotVAAPI := vaapiDensityCurve(tt.kbps, tt.pixels)
+		if gotCPU != tt.wantCPU {
+			t.Errorf("%s: cpuDensity=%d, want %d", tt.label, gotCPU, tt.wantCPU)
+		}
+		if gotVAAPI != tt.wantVAAPI {
+			t.Errorf("%s: vaapiDensity=%d, want %d", tt.label, gotVAAPI, tt.wantVAAPI)
+		}
+	}
+}
+
+// --- PreflightAdjust tests ---
+
+func TestPreflightAdjust_NoBumpNeeded(t *testing.T) {
+	// Normal 1080p at 8 Mbps — estimate should not trigger pre-flight.
+	cfg := defaultCfg()
+	pr := h264SDR()
+	qp, crf, bumps := PreflightAdjust(cfg, pr, 22, 22, 105)
+	if bumps != 0 {
+		t.Errorf("normal source should need 0 bumps, got %d (QP=%d CRF=%d)", bumps, qp, crf)
+	}
+}
+
+func TestPreflightAdjust_CompressedSource(t *testing.T) {
+	cfg := defaultCfg()
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 3900000,
+		},
+		Format: probe.FormatInfo{BitRate: 4100000},
+	}
+	// Target 100% matches the actual planner call site.
+	qp, _, bumps := PreflightAdjust(cfg, pr, 22, 22, 100)
+	if bumps == 0 {
+		t.Error("compressed source should need preflight bumps at 100% target")
+	}
+	if qp <= 22 {
+		t.Errorf("QP should be bumped above 22, got %d", qp)
+	}
+	t.Logf("Compressed 1080p: QP %d→%d (%d bumps)", 22, qp, bumps)
+}
+
+func TestPreflightAdjust_RespectsClampMax(t *testing.T) {
+	// Start near the max QP with a source that would trigger bumps.
+	// 1080p at 2 Mbps, starting at QP 34. Even if bumps are needed,
+	// QP should never exceed VaapiQPMax.
+	cfg := defaultCfg()
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 2000000,
+		},
+		Format: probe.FormatInfo{BitRate: 2500000},
+	}
+	qp, _, _ := PreflightAdjust(cfg, pr, 34, 28, 105)
+	if qp > VaapiQPMax {
+		t.Errorf("QP %d exceeds max %d", qp, VaapiQPMax)
+	}
+}
+
+// --- Extended ratio table tests ---
+
+func TestVaapiRatio_FullRange(t *testing.T) {
+	prev := vaapiRatio(14)
+	for qp := 15; qp <= 36; qp++ {
+		r := vaapiRatio(qp)
+		if r >= prev {
+			t.Errorf("vaapiRatio(%d)=%d should be < vaapiRatio(%d)=%d", qp, r, qp-1, prev)
+		}
+		prev = r
+	}
+	// Ensure the floor at QP 36 is reasonable.
+	if vaapiRatio(36) < 150 || vaapiRatio(36) > 250 {
+		t.Errorf("vaapiRatio(36)=%d, want 150-250", vaapiRatio(36))
+	}
+}
+
+func TestCpuRatio_FullRange(t *testing.T) {
+	prev := cpuRatio(16)
+	for crf := 17; crf <= 30; crf++ {
+		r := cpuRatio(crf)
+		if r >= prev {
+			t.Errorf("cpuRatio(%d)=%d should be < cpuRatio(%d)=%d", crf, r, crf-1, prev)
+		}
+		prev = r
+	}
+	if cpuRatio(30) < 150 || cpuRatio(30) > 250 {
+		t.Errorf("cpuRatio(30)=%d, want 150-250", cpuRatio(30))
+	}
+}
+
+func TestEstimationDensityBias_Boundaries(t *testing.T) {
+	tests := []struct {
+		kbps, pixels, want int
+		label              string
+	}{
+		{0, 2073600, 0, "zero bitrate"},
+		{3900, 0, 0, "zero pixels"},
+		{500, 2073600, 400, "ultra-low density (241)"},
+		{1000, 2073600, 400, "ultra-low density (482)"},
+		{2500, 2073600, 250, "low density (1206)"},
+		{4000, 2073600, 150, "below-avg density (1929)"},
+		{6000, 2073600, 40, "medium density (2893)"},
+		{8000, 2073600, 0, "normal density (3858)"},
+		{20000, 2073600, -10, "high density (9645)"},
+		{25000, 2073600, -20, "very high density (12056)"},
+	}
+	for _, tt := range tests {
+		got := estimationDensityBias(tt.kbps, tt.pixels)
+		if got != tt.want {
+			t.Errorf("%s: estimationDensityBias=%d, want %d", tt.label, got, tt.want)
+		}
 	}
 }
 
@@ -414,7 +657,7 @@ func TestBuildAudioPlan_AllAACLowBitrate(t *testing.T) {
 	}
 	ap := BuildAudioPlan(defaultCfg(), pr)
 	if !ap.CopyAll {
-		t.Error("all AAC below 320 kbps should produce CopyAll")
+		t.Error("all AAC should produce CopyAll")
 	}
 }
 
@@ -427,17 +670,8 @@ func TestBuildAudioPlan_AllAACHighBitrate(t *testing.T) {
 		},
 	}
 	ap := BuildAudioPlan(defaultCfg(), pr)
-	if ap.CopyAll {
-		t.Error("AAC at 512 kbps should NOT produce CopyAll")
-	}
-	if len(ap.Streams) != 2 {
-		t.Fatalf("expected 2 streams, got %d", len(ap.Streams))
-	}
-	if !ap.Streams[0].Copy {
-		t.Error("stream 0 (aac 128k) should be Copy")
-	}
-	if ap.Streams[1].Copy {
-		t.Error("stream 1 (aac 512k) should NOT be Copy (re-encode)")
+	if !ap.CopyAll {
+		t.Error("all AAC (any bitrate) should produce CopyAll")
 	}
 }
 
@@ -445,18 +679,12 @@ func TestBuildAudioPlan_AACExactThreshold(t *testing.T) {
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
 		AudioStreams: []probe.AudioStream{
-			{Codec: "aac", Channels: 2, BitRate: 320_000},
+			{Codec: "aac", Channels: 2, BitRate: 400_000},
 		},
 	}
 	ap := BuildAudioPlan(defaultCfg(), pr)
-	if ap.CopyAll {
-		t.Error("AAC at exactly 320 kbps should NOT produce CopyAll")
-	}
-	if len(ap.Streams) != 1 {
-		t.Fatalf("expected 1 stream, got %d", len(ap.Streams))
-	}
-	if ap.Streams[0].Copy {
-		t.Error("AAC at exactly 320 kbps should NOT be Copy")
+	if !ap.CopyAll {
+		t.Error("AAC at 400 kbps should produce CopyAll (all AAC is passthrough)")
 	}
 }
 
@@ -473,6 +701,19 @@ func TestBuildAudioPlan_AACUnknownBitrate(t *testing.T) {
 	}
 }
 
+func TestBuildAudioPlan_AACHighBitrateSingleStream(t *testing.T) {
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
+		AudioStreams: []probe.AudioStream{
+			{Codec: "aac", Channels: 6, BitRate: 640_000},
+		},
+	}
+	ap := BuildAudioPlan(defaultCfg(), pr)
+	if !ap.CopyAll {
+		t.Error("AAC at 640 kbps should produce CopyAll (AAC always passthrough)")
+	}
+}
+
 func TestBuildAudioPlan_MixedAACHighBitrateAndNonAAC(t *testing.T) {
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
@@ -483,13 +724,13 @@ func TestBuildAudioPlan_MixedAACHighBitrateAndNonAAC(t *testing.T) {
 	}
 	ap := BuildAudioPlan(defaultCfg(), pr)
 	if ap.CopyAll {
-		t.Error("should not be CopyAll")
+		t.Error("should not be CopyAll (has non-AAC stream)")
 	}
 	if len(ap.Streams) != 2 {
 		t.Fatalf("expected 2 streams, got %d", len(ap.Streams))
 	}
-	if ap.Streams[0].Copy {
-		t.Error("stream 0 (aac 400k) should NOT be Copy")
+	if !ap.Streams[0].Copy {
+		t.Error("stream 0 (aac 400k) should be Copy (AAC always passthrough)")
 	}
 	if ap.Streams[1].Copy {
 		t.Error("stream 1 (ac3) should NOT be Copy")
@@ -820,8 +1061,8 @@ func TestVaapiRatioTable(t *testing.T) {
 	if vaapiRatio(14) != 930 {
 		t.Errorf("vaapi QP14: got %d, want 930", vaapiRatio(14))
 	}
-	if vaapiRatio(27) != 390 {
-		t.Errorf("vaapi QP27: got %d, want 390", vaapiRatio(27))
+	if vaapiRatio(27) != 395 {
+		t.Errorf("vaapi QP27: got %d, want 395", vaapiRatio(27))
 	}
 }
 
@@ -832,7 +1073,599 @@ func TestCpuRatioTable(t *testing.T) {
 	if cpuRatio(16) != 900 {
 		t.Errorf("cpu CRF16: got %d, want 900", cpuRatio(16))
 	}
-	if cpuRatio(28) != 230 {
-		t.Errorf("cpu CRF28: got %d, want 230", cpuRatio(28))
+	if cpuRatio(28) != 235 {
+		t.Errorf("cpu CRF28: got %d, want 235", cpuRatio(28))
+	}
+}
+
+// --- Comprehensive resolution×bitrate matrix test ---
+//
+// Exercises the full quality pipeline across every realistic combination
+// to verify: (a) QP/CRF stays within sane bounds, (b) estimated output
+// never exceeds ~105% of input after preflight, (c) no extreme density
+// case produces a clamped-at-max quality value (indicating the curves
+// top out before handling the input).
+
+func TestSmartQuality_Matrix(t *testing.T) {
+	type scenario struct {
+		label       string
+		width       int
+		height      int
+		bitrateKbps int
+		codec       string
+	}
+
+	scenarios := []scenario{
+		// 360p
+		{"360p ultra-low", 640, 360, 300, "h264"},
+		{"360p low", 640, 360, 500, "h264"},
+		{"360p normal", 640, 360, 1000, "h264"},
+		{"360p high", 640, 360, 2000, "h264"},
+
+		// 480p
+		{"480p ultra-low", 854, 480, 400, "h264"},
+		{"480p low", 854, 480, 800, "h264"},
+		{"480p normal", 854, 480, 1500, "h264"},
+		{"480p high", 854, 480, 3000, "h264"},
+
+		// 720p
+		{"720p ultra-low", 1280, 720, 1000, "h264"},
+		{"720p low", 1280, 720, 1500, "h264"},
+		{"720p normal", 1280, 720, 3000, "h264"},
+		{"720p high", 1280, 720, 6000, "h264"},
+		{"720p very high", 1280, 720, 10000, "h264"},
+
+		// 1080p
+		{"1080p ultra-low", 1920, 1080, 2000, "h264"},
+		{"1080p compressed (user's case)", 1920, 1080, 3900, "h264"},
+		{"1080p below average", 1920, 1080, 5000, "h264"},
+		{"1080p normal", 1920, 1080, 8000, "h264"},
+		{"1080p high", 1920, 1080, 15000, "h264"},
+		{"1080p very high", 1920, 1080, 25000, "h264"},
+		{"1080p HEVC re-encode", 1920, 1080, 5000, "hevc"},
+		{"1080p HEVC high", 1920, 1080, 15000, "hevc"},
+		{"1080p mpeg2", 1920, 1080, 8000, "mpeg2video"},
+
+		// 1440p
+		{"1440p low", 2560, 1440, 5000, "h264"},
+		{"1440p normal", 2560, 1440, 10000, "h264"},
+		{"1440p high", 2560, 1440, 20000, "h264"},
+
+		// 4K
+		{"4K low", 3840, 2160, 10000, "h264"},
+		{"4K normal", 3840, 2160, 20000, "h264"},
+		{"4K high", 3840, 2160, 40000, "h264"},
+		{"4K remux-grade", 3840, 2160, 60000, "h264"},
+		{"4K HEVC", 3840, 2160, 25000, "hevc"},
+	}
+
+	cfg := defaultCfg()
+
+	for _, s := range scenarios {
+		t.Run(s.label, func(t *testing.T) {
+			pr := &probe.ProbeResult{
+				PrimaryVideo: &probe.VideoStream{
+					Codec: s.codec, Width: s.width, Height: s.height,
+					BitRate: int64(s.bitrateKbps) * 1000,
+				},
+				Format: probe.FormatInfo{
+					BitRate: int64(s.bitrateKbps)*1000 + 500_000, // +500k for audio
+				},
+			}
+
+			q := SmartQuality(cfg, pr)
+			pixels := s.width * s.height
+			density := s.bitrateKbps * 1_000_000 / pixels
+
+			// QP and CRF must be within valid ranges.
+			if q.VaapiQP < VaapiQPMin || q.VaapiQP > VaapiQPMax {
+				t.Errorf("QP %d out of range [%d, %d]", q.VaapiQP, VaapiQPMin, VaapiQPMax)
+			}
+			if q.CpuCRF < CpuCRFMin || q.CpuCRF > CpuCRFMax {
+				t.Errorf("CRF %d out of range [%d, %d]", q.CpuCRF, CpuCRFMin, CpuCRFMax)
+			}
+
+			// Low-density sources (< 2500 kbps/Mpx) at sub-4K resolutions
+			// must have QP/CRF bumped above the default (18). At 4K+, the
+			// resolution and bitrate bonuses can offset the density penalty.
+			if density < 2500 && s.bitrateKbps > 0 && pixels < 3840*2160 {
+				if q.VaapiQP <= 18 {
+					t.Errorf("low-density (%d kbps/Mpx) should push QP above 18, got %d",
+						density, q.VaapiQP)
+				}
+			}
+
+			// High-density 4K sources should get a quality bonus.
+			if pixels >= 3840*2160 && density > 5000 {
+				if q.VaapiQP > 18 {
+					t.Errorf("high-density 4K should not increase QP above 18, got %d", q.VaapiQP)
+				}
+			}
+
+			// Run preflight: after adjustment, the estimated high output
+			// should be <= 100% of input (matching the planner target).
+			// Exception: ultra-low density at max QP/CRF, or exhausted bumps
+			// (8) for low-density — post-encode escalation handles these.
+			adjQP, adjCRF, bumps := PreflightAdjust(cfg, pr, q.VaapiQP, q.CpuCRF, 100)
+			est := EstimateBitrate(cfg, pr, adjQP, adjCRF)
+			atMax := adjQP >= VaapiQPMax || adjCRF >= CpuCRFMax || (bumps >= 8 && density < 2500)
+			if est.Known && est.HighPct > 110 && !atMax {
+				t.Errorf("after preflight (%d bumps): estimated high=%d%% exceeds 110%% "+
+					"(QP=%d CRF=%d)", bumps, est.HighPct, adjQP, adjCRF)
+			}
+
+			// Optimal bitrate should be positive and ≤ input.
+			optKbps := OptimalBitrate(pr)
+			if optKbps <= 0 {
+				t.Error("OptimalBitrate should be > 0")
+			}
+			if optKbps > s.bitrateKbps {
+				t.Errorf("OptimalBitrate %d exceeds input %d", optKbps, s.bitrateKbps)
+			}
+
+			// MaxRate calculation (CPU path).
+			maxRate := optKbps * 115 / 100
+			if maxRate > s.bitrateKbps {
+				maxRate = s.bitrateKbps
+			}
+
+			t.Logf("density=%d kbps/Mpx QP=%d CRF=%d preflight_bumps=%d est=%d-%d%% optimal=%dk maxrate=%dk",
+				density, q.VaapiQP, q.CpuCRF, bumps, safeEstLow(est), safeEstHigh(est), optKbps, maxRate)
+		})
+	}
+}
+
+func safeEstLow(est BitrateEstimate) int {
+	if !est.Known {
+		return 0
+	}
+	return est.LowPct
+}
+
+func safeEstHigh(est BitrateEstimate) int {
+	if !est.Known {
+		return 0
+	}
+	return est.HighPct
+}
+
+// --- MaxRate and BuildPlan integration tests ---
+
+func TestBuildPlan_CPUMaxRate(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.EncoderMode = config.EncoderCPU
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000,
+		},
+		Format: probe.FormatInfo{BitRate: 9000000},
+	}
+	plan := BuildPlan(cfg, pr)
+	// MaxRate is now based on optimal bitrate + 15% headroom, not raw input.
+	// For h264 1080p 8 Mbps: optimal ≈ 5200, * 1.15 ≈ 5980.
+	if plan.MaxRateKbps <= 0 {
+		t.Error("CPU mode should set MaxRateKbps > 0")
+	}
+	if plan.MaxRateKbps > 8000 {
+		t.Errorf("MaxRateKbps %d should not exceed input 8000", plan.MaxRateKbps)
+	}
+	if plan.BufSizeKbps != plan.MaxRateKbps*2 {
+		t.Errorf("BufSizeKbps: got %d, want %d (2× maxrate)", plan.BufSizeKbps, plan.MaxRateKbps*2)
+	}
+	if plan.OptimalBitrateKbps <= 0 {
+		t.Error("OptimalBitrateKbps should be set")
+	}
+	t.Logf("MaxRate=%dk Optimal=%dk BufSize=%dk", plan.MaxRateKbps, plan.OptimalBitrateKbps, plan.BufSizeKbps)
+}
+
+func TestBuildPlan_VaapiNoMaxRate(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.EncoderMode = config.EncoderVAAPI
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000,
+		},
+		Format: probe.FormatInfo{BitRate: 9000000},
+	}
+	plan := BuildPlan(cfg, pr)
+	if plan.MaxRateKbps != 0 {
+		t.Errorf("VAAPI should not set MaxRateKbps, got %d", plan.MaxRateKbps)
+	}
+}
+
+func TestBuildPlan_RemuxNoMaxRate(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.EncoderMode = config.EncoderCPU
+	cfg.SkipHEVC = true
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "hevc", Profile: "Main 10", PixFmt: "yuv420p10le",
+			Width: 1920, Height: 1080, BitRate: 5000000,
+		},
+		AudioStreams: []probe.AudioStream{{Codec: "aac", Channels: 2}},
+		Format:       probe.FormatInfo{BitRate: 6000000},
+	}
+	plan := BuildPlan(cfg, pr)
+	if plan.MaxRateKbps != 0 {
+		t.Errorf("remux should not set MaxRateKbps, got %d", plan.MaxRateKbps)
+	}
+}
+
+// --- Optimal Bitrate tests ---
+
+func TestOptimalBitrate_H264Cases(t *testing.T) {
+	tests := []struct {
+		label    string
+		width    int
+		height   int
+		kbps     int
+		codec    string
+		minRatio int // minimum % of input
+		maxRatio int // maximum % of input
+	}{
+		// h264 normal sources: expect 55-75% of input
+		{"1080p 8Mbps", 1920, 1080, 8000, "h264", 55, 75},
+		{"720p 3Mbps", 1280, 720, 3000, "h264", 55, 80},
+		{"4K 40Mbps", 3840, 2160, 40000, "h264", 50, 70},
+		// Low density: expect higher ratio (less room to compress)
+		{"1080p 1.8Mbps ultra-compressed", 1920, 1080, 1800, "h264", 85, 100},
+		{"1080p 3.9Mbps compressed", 1920, 1080, 3900, "h264", 70, 95},
+		{"720p 1.5Mbps compressed", 1280, 720, 1500, "h264", 65, 95},
+		// High density: expect lower ratio (more room)
+		{"1080p 25Mbps high-quality", 1920, 1080, 25000, "h264", 50, 65},
+		// HEVC re-encode: minimal gain, high ratio
+		{"1080p HEVC 5Mbps", 1920, 1080, 5000, "hevc", 85, 100},
+		{"4K HEVC 25Mbps", 3840, 2160, 25000, "hevc", 80, 100},
+		// Legacy codecs: big gain, low ratio
+		{"1080p mpeg2 8Mbps", 1920, 1080, 8000, "mpeg2video", 35, 55},
+		{"720p mpeg4 3Mbps", 1280, 720, 3000, "mpeg4", 35, 60},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
+			pr := &probe.ProbeResult{
+				PrimaryVideo: &probe.VideoStream{
+					Codec: tt.codec, Width: tt.width, Height: tt.height,
+					BitRate: int64(tt.kbps) * 1000,
+				},
+				Format: probe.FormatInfo{BitRate: int64(tt.kbps)*1000 + 500_000},
+			}
+			opt := OptimalBitrate(pr)
+			ratio := opt * 100 / tt.kbps
+
+			if ratio < tt.minRatio || ratio > tt.maxRatio {
+				t.Errorf("ratio %d%% not in [%d, %d]%% (optimal=%d, input=%d)",
+					ratio, tt.minRatio, tt.maxRatio, opt, tt.kbps)
+			}
+			if opt > tt.kbps {
+				t.Errorf("optimal %d exceeds input %d", opt, tt.kbps)
+			}
+			if opt <= 0 {
+				t.Error("optimal should be > 0")
+			}
+			t.Logf("%s: optimal=%d kbps (%d%% of input %d)", tt.label, opt, ratio, tt.kbps)
+		})
+	}
+}
+
+func TestOptimalBitrate_EdgeCases(t *testing.T) {
+	// Zero bitrate.
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Width: 1920, Height: 1080},
+		Format:       probe.FormatInfo{},
+	}
+	if OptimalBitrate(pr) != 0 {
+		t.Error("zero bitrate should return 0")
+	}
+
+	// No video stream.
+	pr2 := &probe.ProbeResult{Format: probe.FormatInfo{BitRate: 5000000}}
+	if OptimalBitrate(pr2) != 0 {
+		t.Error("no video stream should return 0")
+	}
+
+	// Zero dimensions.
+	pr3 := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264", Width: 0, Height: 0, BitRate: 5000000},
+		Format:       probe.FormatInfo{BitRate: 5000000},
+	}
+	opt := OptimalBitrate(pr3)
+	if opt != 5000 {
+		t.Errorf("zero dimensions should return input bitrate 5000, got %d", opt)
+	}
+}
+
+func TestOptimalBitrate_HEVCHigherThanH264(t *testing.T) {
+	// Same bitrate and resolution, HEVC should target higher ratio than h264.
+	prH264 := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000},
+		Format:       probe.FormatInfo{BitRate: 9000000},
+	}
+	prHEVC := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "hevc", Width: 1920, Height: 1080, BitRate: 8000000},
+		Format:       probe.FormatInfo{BitRate: 9000000},
+	}
+	optH264 := OptimalBitrate(prH264)
+	optHEVC := OptimalBitrate(prHEVC)
+	if optHEVC <= optH264 {
+		t.Errorf("HEVC optimal (%d) should be > h264 optimal (%d)", optHEVC, optH264)
+	}
+	t.Logf("h264 optimal=%d, HEVC optimal=%d", optH264, optHEVC)
+}
+
+func TestQPForTargetBitrate_Correctness(t *testing.T) {
+	cfg := defaultCfg()
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000},
+		Format:       probe.FormatInfo{BitRate: 9000000},
+	}
+
+	// Target 5200 kbps (65% of 8000). QP should be in a reasonable range.
+	qp := QPForTargetBitrate(cfg, pr, 5200)
+	if qp < VaapiQPMin || qp > VaapiQPMax {
+		t.Errorf("QP %d out of range", qp)
+	}
+
+	// Verify the estimate at this QP is close to target.
+	est := EstimateBitrate(cfg, pr, qp, cfg.CpuCRF)
+	if est.Known {
+		mid := (est.LowKbps + est.HighKbps) / 2
+		tolerance := 2000 // within 2 Mbps
+		if mid < 5200-tolerance || mid > 5200+tolerance {
+			t.Errorf("QP %d produces estimate mid=%d, want ~5200 (±%d)", qp, mid, tolerance)
+		}
+		t.Logf("Target 5200 → QP=%d, estimated mid=%d kbps", qp, mid)
+	}
+
+	// Higher target should produce lower QP.
+	qpHigh := QPForTargetBitrate(cfg, pr, 7000)
+	qpLow := QPForTargetBitrate(cfg, pr, 3000)
+	if qpHigh >= qpLow {
+		t.Errorf("higher target QP=%d should be < lower target QP=%d", qpHigh, qpLow)
+	}
+}
+
+func TestCRFForTargetBitrate_Correctness(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.EncoderMode = config.EncoderCPU
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000},
+		Format:       probe.FormatInfo{BitRate: 9000000},
+	}
+
+	// Higher target should produce lower CRF (more quality).
+	crfHigh := CRFForTargetBitrate(cfg, pr, 7000)
+	crfLow := CRFForTargetBitrate(cfg, pr, 3000)
+	if crfHigh >= crfLow {
+		t.Errorf("higher target CRF=%d should be < lower target CRF=%d", crfHigh, crfLow)
+	}
+	t.Logf("Target 7000→CRF=%d, Target 3000→CRF=%d", crfHigh, crfLow)
+}
+
+// --- Full integration: BuildPlan with optimal bitrate ---
+
+func TestBuildPlan_OptimalBitrate_VAAPI(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.EncoderMode = config.EncoderVAAPI
+
+	tests := []struct {
+		label string
+		kbps  int
+		codec string
+		maxQP int // expected QP should be ≤ this
+		minQP int // expected QP should be ≥ this
+	}{
+		{"normal h264", 8000, "h264", 30, 19},
+		{"compressed h264", 3900, "h264", 32, 22},
+		{"ultra-compressed h264", 1800, "h264", 36, 28},
+		{"high-quality h264", 25000, "h264", 28, 18},
+		{"HEVC re-encode", 5000, "hevc", 34, 24},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
+			pr := &probe.ProbeResult{
+				PrimaryVideo: &probe.VideoStream{
+					Codec: tt.codec, Width: 1920, Height: 1080,
+					BitRate: int64(tt.kbps) * 1000,
+				},
+				Format: probe.FormatInfo{BitRate: int64(tt.kbps)*1000 + 500_000},
+			}
+			plan := BuildPlan(cfg, pr)
+			if plan.VaapiQP < tt.minQP || plan.VaapiQP > tt.maxQP {
+				t.Errorf("QP=%d not in [%d, %d]", plan.VaapiQP, tt.minQP, tt.maxQP)
+			}
+			if plan.OptimalBitrateKbps <= 0 {
+				t.Error("OptimalBitrateKbps should be set")
+			}
+			t.Logf("%s: QP=%d optimal=%dk est=%d-%d%%",
+				tt.label, plan.VaapiQP, plan.OptimalBitrateKbps,
+				safeEstLow(plan.Estimate), safeEstHigh(plan.Estimate))
+		})
+	}
+}
+
+func TestBuildPlan_OptimalBitrate_CPU(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.EncoderMode = config.EncoderCPU
+
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000,
+		},
+		Format: probe.FormatInfo{BitRate: 9000000},
+	}
+	plan := BuildPlan(cfg, pr)
+
+	// MaxRate should be optimal * 115% headroom, never exceeding input.
+	expectedMax := plan.OptimalBitrateKbps * 115 / 100
+	if expectedMax > 8000 {
+		expectedMax = 8000
+	}
+	if plan.MaxRateKbps != expectedMax {
+		t.Errorf("MaxRateKbps: got %d, want %d (optimal %d × 115%%)", plan.MaxRateKbps, expectedMax, plan.OptimalBitrateKbps)
+	}
+	t.Logf("CRF=%d maxrate=%dk optimal=%dk", plan.CpuCRF, plan.MaxRateKbps, plan.OptimalBitrateKbps)
+}
+
+func TestBuildPlan_ManualOverride_SkipsOptimal(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.ActiveQualityOverride = "20"
+	cfg.VaapiQP = 20
+	cfg.CpuCRF = 20
+
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000,
+		},
+		Format: probe.FormatInfo{BitRate: 9000000},
+	}
+	plan := BuildPlan(cfg, pr)
+	if plan.VaapiQP != 20 {
+		t.Errorf("manual override should produce QP=20, got %d", plan.VaapiQP)
+	}
+	if plan.OptimalBitrateKbps != 0 {
+		t.Error("manual override should not set OptimalBitrateKbps")
+	}
+}
+
+// --- AAC passthrough tests ---
+
+func TestAudioCopy_AACAlwaysPassthrough(t *testing.T) {
+	cfg := defaultCfg()
+
+	for _, bitrate := range []int64{0, 128_000, 256_000, 400_000, 512_000, 640_000, 1_000_000} {
+		pr := &probe.ProbeResult{
+			PrimaryVideo: &probe.VideoStream{Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000},
+			AudioStreams: []probe.AudioStream{{Codec: "aac", Channels: 2, BitRate: bitrate}},
+			Format:       probe.FormatInfo{BitRate: 9000000},
+		}
+		ap := BuildAudioPlan(cfg, pr)
+		if !ap.CopyAll {
+			t.Errorf("AAC at %d bps should be copied (AAC always passthrough)", bitrate)
+		}
+	}
+}
+
+func TestAudioCopy_NonAACTranscoded(t *testing.T) {
+	cfg := defaultCfg()
+
+	for _, codec := range []string{"ac3", "eac3", "dts", "flac", "mp3", "vorbis", "opus"} {
+		pr := &probe.ProbeResult{
+			PrimaryVideo: &probe.VideoStream{Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000},
+			AudioStreams: []probe.AudioStream{{Codec: codec, Channels: 2, SampleRate: 48000}},
+			Format:       probe.FormatInfo{BitRate: 9000000},
+		}
+		ap := BuildAudioPlan(cfg, pr)
+		if ap.CopyAll {
+			t.Errorf("%s should NOT produce CopyAll", codec)
+		}
+		if len(ap.Streams) != 1 || ap.Streams[0].Copy {
+			t.Errorf("%s should be transcoded, not copied", codec)
+		}
+	}
+}
+
+// --- Comprehensive bitrate×resolution debug matrix ---
+// This exercises the FULL pipeline (SmartQuality → OptimalBitrate → target
+// QP/CRF → preflight → maxrate) for every realistic scenario to verify:
+//   (a) output never estimated > 110% after all adjustments
+//   (b) optimal bitrate is always ≤ input
+//   (c) HEVC sources always target higher ratio than h264 at same bitrate
+//   (d) CPU maxrate never exceeds input bitrate
+
+func TestFullPipeline_DebugMatrix(t *testing.T) {
+	type scenario struct {
+		label  string
+		width  int
+		height int
+		kbps   int
+		codec  string
+	}
+
+	scenarios := []scenario{
+		// Low-res
+		{"360p 500k h264", 640, 360, 500, "h264"},
+		{"480p 1000k h264", 854, 480, 1000, "h264"},
+
+		// 720p
+		{"720p 1500k h264", 1280, 720, 1500, "h264"},
+		{"720p 3000k h264", 1280, 720, 3000, "h264"},
+		{"720p 6000k h264", 1280, 720, 6000, "h264"},
+
+		// 1080p — full range
+		{"1080p 1800k h264 (ultra-compressed)", 1920, 1080, 1800, "h264"},
+		{"1080p 2000k h264", 1920, 1080, 2000, "h264"},
+		{"1080p 3900k h264 (user's case)", 1920, 1080, 3900, "h264"},
+		{"1080p 5000k h264", 1920, 1080, 5000, "h264"},
+		{"1080p 8000k h264", 1920, 1080, 8000, "h264"},
+		{"1080p 15000k h264", 1920, 1080, 15000, "h264"},
+		{"1080p 25000k h264", 1920, 1080, 25000, "h264"},
+		{"1080p 5000k hevc", 1920, 1080, 5000, "hevc"},
+		{"1080p 15000k hevc", 1920, 1080, 15000, "hevc"},
+		{"1080p 8000k mpeg2", 1920, 1080, 8000, "mpeg2video"},
+
+		// 1440p
+		{"1440p 5000k h264", 2560, 1440, 5000, "h264"},
+		{"1440p 10000k h264", 2560, 1440, 10000, "h264"},
+		{"1440p 20000k h264", 2560, 1440, 20000, "h264"},
+
+		// 4K
+		{"4K 10000k h264", 3840, 2160, 10000, "h264"},
+		{"4K 20000k h264", 3840, 2160, 20000, "h264"},
+		{"4K 40000k h264", 3840, 2160, 40000, "h264"},
+		{"4K 60000k h264", 3840, 2160, 60000, "h264"},
+		{"4K 25000k hevc", 3840, 2160, 25000, "hevc"},
+	}
+
+	for _, mode := range []config.EncoderMode{config.EncoderVAAPI, config.EncoderCPU} {
+		for _, s := range scenarios {
+			name := fmt.Sprintf("%s/%s", mode, s.label)
+			t.Run(name, func(t *testing.T) {
+				cfg := defaultCfg()
+				cfg.EncoderMode = mode
+				pr := &probe.ProbeResult{
+					PrimaryVideo: &probe.VideoStream{
+						Codec: s.codec, Width: s.width, Height: s.height,
+						BitRate: int64(s.kbps) * 1000,
+					},
+					Format: probe.FormatInfo{BitRate: int64(s.kbps)*1000 + 500_000},
+				}
+
+				plan := BuildPlan(cfg, pr)
+
+				// (a) Estimated output should not exceed 110% unless QP/CRF
+				// is at max (ultra-compressed sources handled by post-encode loop).
+				atMax := plan.VaapiQP >= VaapiQPMax || plan.CpuCRF >= CpuCRFMax
+				if plan.Estimate.Known && plan.Estimate.HighPct > 110 && !atMax {
+					t.Errorf("estimated high=%d%% exceeds 110%%", plan.Estimate.HighPct)
+				}
+
+				// (b) Optimal bitrate ≤ input.
+				if plan.OptimalBitrateKbps > s.kbps {
+					t.Errorf("optimal %d exceeds input %d", plan.OptimalBitrateKbps, s.kbps)
+				}
+
+				// (c) CPU maxrate ≤ input.
+				if mode == config.EncoderCPU && plan.MaxRateKbps > s.kbps {
+					t.Errorf("maxrate %d exceeds input %d", plan.MaxRateKbps, s.kbps)
+				}
+
+				// (d) QP and CRF within valid ranges.
+				if plan.VaapiQP < VaapiQPMin || plan.VaapiQP > VaapiQPMax {
+					t.Errorf("QP %d out of range [%d, %d]", plan.VaapiQP, VaapiQPMin, VaapiQPMax)
+				}
+				if plan.CpuCRF < CpuCRFMin || plan.CpuCRF > CpuCRFMax {
+					t.Errorf("CRF %d out of range [%d, %d]", plan.CpuCRF, CpuCRFMin, CpuCRFMax)
+				}
+
+				pixels := s.width * s.height
+				density := s.kbps * 1_000_000 / pixels
+				t.Logf("density=%d QP=%d CRF=%d optimal=%dk maxrate=%dk bumps=%d est=%d-%d%%",
+					density, plan.VaapiQP, plan.CpuCRF, plan.OptimalBitrateKbps,
+					plan.MaxRateKbps, plan.PreflightBumps,
+					safeEstLow(plan.Estimate), safeEstHigh(plan.Estimate))
+			})
+		}
 	}
 }

@@ -72,7 +72,6 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	args = append(args,
 		"-dn",
 		"-max_muxing_queue_size", strconv.Itoa(rs.MuxQueueSize),
-		"-max_interleave_delta", "0",
 	)
 
 	// --- Video codec ---
@@ -129,6 +128,14 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 				"-g", strconv.Itoa(cfg.KeyframeInterval),
 				"-x265-params", "log-level=error:open-gop=0",
 			)
+			// VBV-constrained CRF: cap output at the input video bitrate
+			// so the encoder never produces output larger than the source.
+			if plan.MaxRateKbps > 0 {
+				args = append(args,
+					"-maxrate", strconv.Itoa(plan.MaxRateKbps)+"k",
+					"-bufsize", strconv.Itoa(plan.BufSizeKbps)+"k",
+				)
+			}
 		}
 	}
 	return args

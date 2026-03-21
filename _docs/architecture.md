@@ -94,12 +94,12 @@ pipeline.Run
   │
   ├─ 1. Validate input file (readable, not too small)
   ├─ 2. probe.Probe(path) → ProbeResult
-  ├─ 3. naming.ParseFilename(basename) → ParsedName
-  ├─ 4. naming.OutputPath(ParsedName) → output path
-  ├─ 5. naming.ResolveCollision(input, output) → final path
-  ├─ 6. display.LogFileStats(ProbeResult)
+  ├─ 3. naming.ParseFilename(basename, parentDir) → ParsedName
+  ├─ 4. naming.GetOutputPath(ParsedName, outputDir, container) → output path
+  ├─ 5. CollisionResolver.Resolve(input, output) → final path
+  ├─ 6. logFileStats / logBitrateOutlier (internal to runner)
   ├─ 7. planner.BuildPlan(Config, ProbeResult) → FilePlan
-  ├─ 8. display.LogRenderPlan(FilePlan)
+  ├─ 8. logRenderPlan (internal to runner)
   ├─ 9. ffmpeg.Execute(FilePlan) with retry loop
   └─ 10. Update RunStats (encoded / skipped / failed)
 ```

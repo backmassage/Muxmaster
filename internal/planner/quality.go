@@ -52,14 +52,19 @@ func SmartQuality(cfg *config.Config, pr *probe.ProbeResult) QualityResult {
 		bitrateLabel = fmt.Sprintf("%dkb/s", bitrateKbps)
 	}
 
-	cpuAdj := cpuResolutionCurve(pixels) + cpuBitrateCurve(bitrateKbps)
-	vaapiAdj := vaapiResolutionCurve(pixels) + vaapiBitrateCurve(bitrateKbps)
+	cpuAdj := cpuResolutionCurve(pixels) + cpuBitrateCurve(bitrateKbps) + cpuDensityCurve(bitrateKbps, pixels)
+	vaapiAdj := vaapiResolutionCurve(pixels) + vaapiBitrateCurve(bitrateKbps) + vaapiDensityCurve(bitrateKbps, pixels)
 
 	selectedCRF := Clamp(cfg.CpuCRF+cpuAdj+cfg.SmartQualityBias, CpuCRFMin, CpuCRFMax)
 	selectedQP := Clamp(cfg.VaapiQP+vaapiAdj+cfg.SmartQualityBias, VaapiQPMin, VaapiQPMax)
 
-	note := fmt.Sprintf("smart (%s, %s, cpu_adj=%d, vaapi_adj=%d, smart_bias=%d, cpu_crf=%d, vaapi_qp=%d, mode=%s)",
-		resLabel, bitrateLabel, cpuAdj, vaapiAdj, cfg.SmartQualityBias, selectedCRF, selectedQP, cfg.EncoderMode)
+	densityLabel := "n/a"
+	if bitrateKbps > 0 && pixels > 0 {
+		densityLabel = fmt.Sprintf("%d kbps/Mpx", bitrateKbps*1_000_000/pixels)
+	}
+
+	note := fmt.Sprintf("smart (%s, %s, density=%s, cpu_adj=%d, vaapi_adj=%d, smart_bias=%d, cpu_crf=%d, vaapi_qp=%d, mode=%s)",
+		resLabel, bitrateLabel, densityLabel, cpuAdj, vaapiAdj, cfg.SmartQualityBias, selectedCRF, selectedQP, cfg.EncoderMode)
 
 	return QualityResult{
 		VaapiQP: selectedQP,
@@ -107,6 +112,8 @@ func vaapiResolutionCurve(pixels int) int {
 	case pixels <= 1920*1080:
 		return 1
 	case pixels >= 3840*2160:
+		return -1
+	case pixels >= 2560*1440:
 		return -1
 	default:
 		return 0
@@ -156,6 +163,71 @@ func modeLabel(cfg *config.Config) string {
 		return "VAAPI_QP"
 	}
 	return "CPU_CRF"
+}
+
+// --- Bits-per-pixel density curves ---
+//
+// The resolution and bitrate curves above use absolute thresholds, which miss
+// the case where bitrate is low *relative to* resolution (e.g. 3.9 Mbps at
+// 1080p vs 3.9 Mbps at 480p). The density curves use kbps per megapixel to
+// detect already-compressed sources and apply extra compression to avoid
+// producing output that is larger than the input.
+//
+// Typical density ranges (kbps per megapixel):
+//
+//   < 1500  — heavily compressed (streaming rips, web-dl at low bitrate)
+//   1500-2500 — below average for resolution
+//   2500-5000 — typical for the resolution
+//   5000-8000 — high quality source
+//   > 8000  — very high quality (Blu-ray remux, lossless-adjacent)
+
+// vaapiDensityCurve returns a QP adjustment based on bitrate density.
+func vaapiDensityCurve(kbps, pixels int) int {
+	if kbps <= 0 || pixels <= 0 {
+		return 0
+	}
+	// kbps per megapixel (multiply by 1M to avoid float).
+	density := kbps * 1_000_000 / pixels
+	switch {
+	case density < 1000:
+		// Ultra-low density: source is so compressed that HEVC at any
+		// reasonable quality level will produce output LARGER than the
+		// input. Aggressive QP bump to minimize bloat.
+		return 8
+	case density < 1500:
+		return 5
+	case density < 2500:
+		return 3
+	case density < 3500:
+		return 1
+	case density > 8000:
+		return -1
+	default:
+		return 0
+	}
+}
+
+// cpuDensityCurve returns a CRF adjustment based on bitrate density.
+func cpuDensityCurve(kbps, pixels int) int {
+	if kbps <= 0 || pixels <= 0 {
+		return 0
+	}
+	density := kbps * 1_000_000 / pixels
+	switch {
+	case density < 1000:
+		// Ultra-low density: source is extremely compressed.
+		return 6
+	case density < 1500:
+		return 4
+	case density < 2500:
+		return 2
+	case density < 3500:
+		return 1
+	case density > 8000:
+		return -1
+	default:
+		return 0
+	}
 }
 
 // Quality clamp ranges from the legacy script. Exported for reuse by the

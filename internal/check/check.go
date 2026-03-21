@@ -211,7 +211,10 @@ func testAudioEncoder(encoder string) bool {
 // getFirstRenderDevice returns the first available /dev/dri/renderD* path,
 // or empty string if none exist.
 func getFirstRenderDevice() string {
-	matches, _ := filepath.Glob("/dev/dri/renderD*")
+	matches, err := filepath.Glob("/dev/dri/renderD*")
+	if err != nil {
+		return ""
+	}
 	for _, m := range matches {
 		if _, err := os.Stat(m); err == nil {
 			return m

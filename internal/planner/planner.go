@@ -20,7 +20,6 @@ import (
 func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 	plan := &FilePlan{
 		MuxQueueSize:  4096,
-		TimestampFix:  cfg.CleanTimestamps,
 		IncludeSubs:   cfg.KeepSubtitles,
 		IncludeAttach: cfg.KeepAttachments,
 	}
@@ -39,12 +38,86 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		plan.Action = ActionEncode
 	}
 
+	// Remux targets are already edge-safe HEVC from clean sources — PTS
+	// regeneration (+genpts) adds unnecessary container overhead. Only
+	// enable timestamp repair for encodes; the retry engine can still
+	// activate it for remuxes if ffmpeg fails with a timestamp error.
+	if plan.Action == ActionRemux {
+		plan.TimestampFix = false
+	} else {
+		plan.TimestampFix = cfg.CleanTimestamps
+	}
+
 	// --- 2. Smart quality ---
 	q := SmartQuality(cfg, pr)
 	plan.VaapiQP = q.VaapiQP
 	plan.CpuCRF = q.CpuCRF
 	if plan.QualityNote == "" {
 		plan.QualityNote = q.Note
+	}
+
+	// --- 2b. Optimal bitrate selection ---
+	// Compute an optimal target output bitrate based on the input's codec,
+	// resolution, and density. This drives both the VAAPI QP selection and
+	// the CPU maxrate ceiling, avoiding wasteful first-pass encodes that
+	// produce output larger than the input.
+	if plan.Action == ActionEncode && cfg.ActiveQualityOverride == "" && cfg.SmartQuality {
+		optKbps := OptimalBitrate(pr)
+		plan.OptimalBitrateKbps = optKbps
+
+		if optKbps > 0 {
+			if cfg.EncoderMode == config.EncoderVAAPI {
+				// Find the QP that targets the optimal bitrate. Take the
+				// higher of (smart-quality QP, target QP) — we never want
+				// the target to override density/resolution protections
+				// that raised QP for low-quality sources.
+				targetQP := QPForTargetBitrate(cfg, pr, optKbps)
+				if targetQP > plan.VaapiQP {
+					plan.VaapiQP = targetQP
+				}
+			} else {
+				// CPU: find the CRF that targets optimal bitrate. Same
+				// "take the higher" logic as VAAPI.
+				targetCRF := CRFForTargetBitrate(cfg, pr, optKbps)
+				if targetCRF > plan.CpuCRF {
+					plan.CpuCRF = targetCRF
+				}
+			}
+		}
+
+		// Safety-net preflight: if the estimate exceeds 100% of input after
+		// optimal targeting, bump further. This catches edge cases where the
+		// estimation model under-predicts. Target 100% ensures we never start
+		// an encode when the model predicts overshoot.
+		adjQP, adjCRF, bumps := PreflightAdjust(cfg, pr, plan.VaapiQP, plan.CpuCRF, 100)
+		if bumps > 0 {
+			plan.VaapiQP = adjQP
+			plan.CpuCRF = adjCRF
+			plan.PreflightBumps = bumps
+		}
+		plan.Estimate = EstimateBitrate(cfg, pr, plan.VaapiQP, plan.CpuCRF)
+	}
+
+	// --- 2c. Bitrate ceiling (CPU only) ---
+	// Set -maxrate to the optimal bitrate with headroom so the encoder's
+	// CRF can target quality but never produce output larger than what we
+	// expect. VAAPI constant-QP mode does not support -maxrate; the QP
+	// targeting above handles VAAPI instead.
+	if plan.Action == ActionEncode && cfg.EncoderMode == config.EncoderCPU {
+		inputKbps := int(pr.VideoBitRate() / 1000)
+		if inputKbps > 0 {
+			// Use optimal bitrate + 15% headroom as ceiling, capped at
+			// input bitrate (never exceed the source).
+			ceiling := inputKbps
+			if plan.OptimalBitrateKbps > 0 {
+				ceiling = plan.OptimalBitrateKbps * 115 / 100
+				if ceiling > inputKbps {
+					ceiling = inputKbps
+				}
+			}
+			plan.MaxRateKbps = ceiling
+			plan.BufSizeKbps = ceiling * 2
+		}
 	}
 
 	// --- 3. Video codec and filters ---
