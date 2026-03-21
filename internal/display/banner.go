@@ -1,5 +1,4 @@
-// Package display provides user-facing output: the startup banner and
-// human-readable byte/bitrate formatting.
+// banner.go renders the rainbow ASCII art startup logo.
 package display
 
 import (

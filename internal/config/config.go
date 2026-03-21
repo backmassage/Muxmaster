@@ -1,5 +1,4 @@
-// Package config holds runtime configuration: defaults, CLI flag parsing, and
-// validation. All defaults match the legacy shell script (v1.7.0) for parity.
+// config.go defines the Config struct, DefaultConfig, Validate, and ValidatePaths.
 package config
 
 import (

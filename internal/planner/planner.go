@@ -1,3 +1,4 @@
+// BuildPlan entry point: wires quality, filters, audio, and subtitle sub-plans.
 package planner
 
 import (
@@ -66,30 +67,33 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		plan.OptimalBitrateKbps = optKbps
 
 		if optKbps > 0 {
+			const maxOptimalOverride = 3
 			if cfg.EncoderMode == config.EncoderVAAPI {
-				// Find the QP that targets the optimal bitrate. Take the
-				// higher of (smart-quality QP, target QP) — we never want
-				// the target to override density/resolution protections
-				// that raised QP for low-quality sources.
 				targetQP := QPForTargetBitrate(cfg, pr, optKbps)
 				if targetQP > plan.VaapiQP {
+					ceiling := plan.VaapiQP + maxOptimalOverride
+					if targetQP > ceiling {
+						targetQP = ceiling
+					}
 					plan.VaapiQP = targetQP
 				}
 			} else {
-				// CPU: find the CRF that targets optimal bitrate. Same
-				// "take the higher" logic as VAAPI.
 				targetCRF := CRFForTargetBitrate(cfg, pr, optKbps)
 				if targetCRF > plan.CpuCRF {
+					ceiling := plan.CpuCRF + maxOptimalOverride
+					if targetCRF > ceiling {
+						targetCRF = ceiling
+					}
 					plan.CpuCRF = targetCRF
 				}
 			}
 		}
 
-		// Safety-net preflight: if the estimate exceeds 100% of input after
-		// optimal targeting, bump further. This catches edge cases where the
-		// estimation model under-predicts. Target 100% ensures we never start
-		// an encode when the model predicts overshoot.
-		adjQP, adjCRF, bumps := PreflightAdjust(cfg, pr, plan.VaapiQP, plan.CpuCRF, 100)
+		// Safety-net preflight: if the estimate exceeds 105% of input after
+		// optimal targeting, bump further. The 5% headroom avoids chasing
+		// marginal overshoot at the cost of quality — the post-encode
+		// escalation loop handles genuine size blowups.
+		adjQP, adjCRF, bumps := PreflightAdjust(cfg, pr, plan.VaapiQP, plan.CpuCRF, 105)
 		if bumps > 0 {
 			plan.VaapiQP = adjQP
 			plan.CpuCRF = adjCRF

@@ -1,3 +1,4 @@
+// rules.go defines ParseRule entries with priority ordering.
 package naming
 
 import (

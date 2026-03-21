@@ -14,7 +14,7 @@ Package dependency map and design overview for the Muxmaster Go project.
 
 - **One ffprobe call per file** — JSON with `-show_format` and `-show_streams`; all logic uses typed structs.
 - **Unified retry** — Single state machine for both encode and remux (attachment → subtitle → mux queue → timestamp); up to 4 attempts per file.
-- **15 naming rules** — Ordered regex-based parser for TV/movie and specials; Jellyfin-style output paths; collision resolution and TV year harmonization.
+- **14 naming rules** — Ordered regex-based parser for TV/movie and specials; Jellyfin-style output paths; collision resolution and TV year harmonization.
 - **Quality** — Smart per-file QP/CRF with configurable bias; optional fixed override via `--quality` or `--vaapi-qp`/`--cpu-crf`.
 - **No subcommands in MVP** — Single invocation `muxmaster [options] <input_dir> <output_dir>`. Subcommands and config file are post-MVP.
 

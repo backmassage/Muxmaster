@@ -1,3 +1,4 @@
+// Video filter chain: deinterlace, HDR tonemap, VAAPI hwupload.
 package planner
 
 import (

@@ -1,6 +1,4 @@
-// Package logging provides a leveled logger with optional file sink.
-// ANSI colors are managed by [term.Configure]; the logger reads them
-// from the [term] package at write time.
+// logger.go implements the leveled Logger with stdout/stderr and optional file sink.
 package logging
 
 import (

@@ -1,5 +1,4 @@
-// Package pipeline orchestrates file discovery, per-file processing, and
-// batch summary reporting.
+// runner.go implements per-file processing, quality escalation, and batch orchestration.
 package pipeline
 
 import (
@@ -222,8 +221,8 @@ func processFile(
 }
 
 const (
-	maxQualityBumps = 3
-	qualityBumpStep = 2
+	maxQualityBumps = 2
+	qualityBumpStep = 1
 )
 
 // executeWithRetry runs ffmpeg with the error-retry inner loop, then checks

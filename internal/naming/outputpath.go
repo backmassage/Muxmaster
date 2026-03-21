@@ -1,3 +1,4 @@
+// outputpath.go generates Jellyfin-style output directories and file paths.
 package naming
 
 import (

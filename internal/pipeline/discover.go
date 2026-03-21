@@ -1,3 +1,4 @@
+// Recursive media file discovery with extras directory pruning.
 package pipeline
 
 import (

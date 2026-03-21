@@ -1,3 +1,4 @@
+// retry.go implements the retry state machine for recoverable ffmpeg failures.
 package ffmpeg
 
 import "github.com/backmassage/muxmaster/internal/planner"

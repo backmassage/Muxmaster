@@ -1,3 +1,4 @@
+// ProbeResult, VideoStream, AudioStream, SubtitleStream, FormatInfo types.
 package probe
 
 import "strconv"

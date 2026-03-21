@@ -9,6 +9,7 @@ All documentation for the Muxmaster project. Start with [architecture.md](archit
 | Document | Purpose |
 |----------|---------|
 | [architecture.md](architecture.md) | Design goals, package dependency map, per-file processing flow |
+| [design/quality-system.md](design/quality-system.md) | Smart quality pipeline stages, estimation model, constants reference |
 | [design/foundation-plan.md](design/foundation-plan.md) | Full implementation reference: types, phases, behavioral gotchas |
 | [design/product-spec.md](design/product-spec.md) | Product-level requirements and feature spec |
 

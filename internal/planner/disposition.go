@@ -1,3 +1,4 @@
+// Stream disposition flags for default video and first audio.
 package planner
 
 import (

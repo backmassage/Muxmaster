@@ -23,6 +23,7 @@ coverage.html
 .idea/
 .vscode/
 .cursor/
+!.cursor/rules/
 *.swp
 *.swo
 *~
@@ -45,5 +46,3 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
-.cursor/
-.cursor/

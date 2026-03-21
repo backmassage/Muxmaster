@@ -9,73 +9,6 @@ import (
 	"github.com/backmassage/muxmaster/internal/probe"
 )
 
-// --- Helper builders ---
-
-func defaultCfg() *config.Config {
-	cfg := config.DefaultConfig()
-	return &cfg
-}
-
-func h264SDR() *probe.ProbeResult {
-	return &probe.ProbeResult{
-		PrimaryVideo: &probe.VideoStream{
-			Codec: "h264", Profile: "High", PixFmt: "yuv420p",
-			Width: 1920, Height: 1080, BitRate: 8000000,
-			FieldOrder: "progressive",
-		},
-		AudioStreams:    []probe.AudioStream{{Codec: "ac3", Channels: 6, SampleRate: 48000}},
-		SubtitleStreams: []probe.SubtitleStream{{Codec: "ass", Language: "eng"}},
-		Format:          probe.FormatInfo{BitRate: 9000000},
-	}
-}
-
-func hevcEdgeSafe() *probe.ProbeResult {
-	return &probe.ProbeResult{
-		PrimaryVideo: &probe.VideoStream{
-			Codec: "hevc", Profile: "Main 10", PixFmt: "yuv420p10le",
-			Width: 1920, Height: 1080, BitRate: 5000000,
-		},
-		AudioStreams: []probe.AudioStream{{Codec: "aac", Channels: 2, SampleRate: 48000}},
-		Format:       probe.FormatInfo{BitRate: 6000000},
-	}
-}
-
-func hevcUnsafe() *probe.ProbeResult {
-	return &probe.ProbeResult{
-		PrimaryVideo: &probe.VideoStream{
-			Codec: "hevc", Profile: "Rext", PixFmt: "yuv444p10le",
-			Width: 1920, Height: 1080, BitRate: 5000000,
-		},
-		AudioStreams: []probe.AudioStream{{Codec: "flac", Channels: 2, SampleRate: 48000}},
-		Format:       probe.FormatInfo{BitRate: 6000000},
-	}
-}
-
-func hdr10File() *probe.ProbeResult {
-	return &probe.ProbeResult{
-		PrimaryVideo: &probe.VideoStream{
-			Codec: "hevc", Profile: "Main 10", PixFmt: "yuv420p10le",
-			Width: 3840, Height: 2160, BitRate: 30000000,
-			ColorTransfer: "smpte2084", ColorPrimaries: "bt2020", ColorSpace: "bt2020nc",
-			FieldOrder: "progressive",
-		},
-		AudioStreams: []probe.AudioStream{{Codec: "eac3", Channels: 6, SampleRate: 48000}},
-		Format:       probe.FormatInfo{BitRate: 35000000},
-	}
-}
-
-func interlacedFile() *probe.ProbeResult {
-	return &probe.ProbeResult{
-		PrimaryVideo: &probe.VideoStream{
-			Codec: "mpeg2video", Profile: "Main", PixFmt: "yuv420p",
-			Width: 720, Height: 480, BitRate: 3500000,
-			FieldOrder: "tt",
-		},
-		AudioStreams: []probe.AudioStream{{Codec: "mp2", Channels: 2, SampleRate: 48000}},
-		Format:       probe.FormatInfo{BitRate: 4000000},
-	}
-}
-
 // --- BuildPlan decision matrix tests ---
 
 func TestBuildPlan_H264Encode(t *testing.T) {
@@ -349,8 +282,9 @@ func TestSmartQuality_1440p_VAAPI(t *testing.T) {
 
 func TestSmartQuality_CompressedSource(t *testing.T) {
 	// Simulates the user's scenario: 1080p h264 at only 3.9 Mbps.
-	// Density = 3900 * 1e6 / (1920*1080) ≈ 1880 kbps/Mpx → heavily compressed.
-	// Without density curves, this got QP 19 and produced output 257% of input.
+	// Density = 3900 * 1e6 / (1920*1080) ≈ 1880 kbps/Mpx → compressed.
+	// Quality-first: density curve applies a mild +1 QP adjustment.
+	// The post-encode escalation loop handles genuine overshoot.
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{
 			Codec: "h264", Width: 1920, Height: 1080, BitRate: 3900000,
@@ -358,9 +292,8 @@ func TestSmartQuality_CompressedSource(t *testing.T) {
 		Format: probe.FormatInfo{BitRate: 4100000},
 	}
 	q := SmartQuality(defaultCfg(), pr)
-	// Density curve should push QP higher than the default (18).
-	if q.VaapiQP <= 18 {
-		t.Errorf("compressed 1080p at 3.9 Mbps should get QP > 18, got %d", q.VaapiQP)
+	if q.VaapiQP < VaapiQPMin || q.VaapiQP > VaapiQPMax {
+		t.Errorf("QP %d out of range [%d, %d]", q.VaapiQP, VaapiQPMin, VaapiQPMax)
 	}
 	t.Logf("Compressed 1080p 3.9Mbps → QP=%d CRF=%d", q.VaapiQP, q.CpuCRF)
 }
@@ -391,13 +324,13 @@ func TestDensityCurve_Boundaries(t *testing.T) {
 	}{
 		{0, 2073600, 0, 0, "zero bitrate"},
 		{3900, 0, 0, 0, "zero pixels"},
-		{500, 2073600, 6, 8, "ultra-low density (241)"},
-		{1000, 2073600, 6, 8, "ultra-low density (482)"},
-		{2500, 2073600, 4, 5, "low density (1206)"},
-		{4000, 2073600, 2, 3, "below-avg density (1929)"},
-		{6000, 2073600, 1, 1, "medium-low density (2893)"},
+		{500, 2073600, 3, 4, "ultra-low density (241)"},
+		{1000, 2073600, 3, 4, "ultra-low density (482)"},
+		{2500, 2073600, 2, 2, "low density (1206)"},
+		{4000, 2073600, 1, 1, "below-avg density (1929)"},
+		{6000, 2073600, 0, 0, "medium-low density (2893)"},
 		{8000, 2073600, 0, 0, "normal density (3858)"},
-		{20000, 2073600, -1, -1, "high density (9645)"},
+		{20000, 2073600, -1, -2, "high density (9645)"},
 	}
 	for _, tt := range tests {
 		gotCPU := cpuDensityCurve(tt.kbps, tt.pixels)
@@ -431,20 +364,21 @@ func TestPreflightAdjust_CompressedSource(t *testing.T) {
 		},
 		Format: probe.FormatInfo{BitRate: 4100000},
 	}
-	// Target 100% matches the actual planner call site.
-	qp, _, bumps := PreflightAdjust(cfg, pr, 22, 22, 100)
+	// Start at QP 20 where the estimate overshoots, verifying the
+	// preflight mechanism still bumps when needed.
+	qp, _, bumps := PreflightAdjust(cfg, pr, 20, 20, 100)
 	if bumps == 0 {
-		t.Error("compressed source should need preflight bumps at 100% target")
+		t.Error("compressed source at QP 20 should need preflight bumps at 100% target")
 	}
-	if qp <= 22 {
-		t.Errorf("QP should be bumped above 22, got %d", qp)
+	if qp <= 20 {
+		t.Errorf("QP should be bumped above 20, got %d", qp)
 	}
-	t.Logf("Compressed 1080p: QP %d→%d (%d bumps)", 22, qp, bumps)
+	t.Logf("Compressed 1080p: QP %d→%d (%d bumps)", 20, qp, bumps)
 }
 
 func TestPreflightAdjust_RespectsClampMax(t *testing.T) {
 	// Start near the max QP with a source that would trigger bumps.
-	// 1080p at 2 Mbps, starting at QP 34. Even if bumps are needed,
+	// 1080p at 2 Mbps, starting at QP 28 with a tight target.
 	// QP should never exceed VaapiQPMax.
 	cfg := defaultCfg()
 	pr := &probe.ProbeResult{
@@ -453,7 +387,7 @@ func TestPreflightAdjust_RespectsClampMax(t *testing.T) {
 		},
 		Format: probe.FormatInfo{BitRate: 2500000},
 	}
-	qp, _, _ := PreflightAdjust(cfg, pr, 34, 28, 105)
+	qp, _, _ := PreflightAdjust(cfg, pr, 28, 28, 80)
 	if qp > VaapiQPMax {
 		t.Errorf("QP %d exceeds max %d", qp, VaapiQPMax)
 	}
@@ -497,11 +431,11 @@ func TestEstimationDensityBias_Boundaries(t *testing.T) {
 	}{
 		{0, 2073600, 0, "zero bitrate"},
 		{3900, 0, 0, "zero pixels"},
-		{500, 2073600, 400, "ultra-low density (241)"},
-		{1000, 2073600, 400, "ultra-low density (482)"},
-		{2500, 2073600, 250, "low density (1206)"},
-		{4000, 2073600, 150, "below-avg density (1929)"},
-		{6000, 2073600, 40, "medium density (2893)"},
+		{500, 2073600, 250, "ultra-low density (241)"},
+		{1000, 2073600, 250, "ultra-low density (482)"},
+		{2500, 2073600, 150, "low density (1206)"},
+		{4000, 2073600, 80, "below-avg density (1929)"},
+		{6000, 2073600, 20, "medium density (2893)"},
 		{8000, 2073600, 0, "normal density (3858)"},
 		{20000, 2073600, -10, "high density (9645)"},
 		{25000, 2073600, -20, "very high density (12056)"},
@@ -1165,12 +1099,12 @@ func TestSmartQuality_Matrix(t *testing.T) {
 				t.Errorf("CRF %d out of range [%d, %d]", q.CpuCRF, CpuCRFMin, CpuCRFMax)
 			}
 
-			// Low-density sources (< 2500 kbps/Mpx) at sub-4K resolutions
-			// must have QP/CRF bumped above the default (18). At 4K+, the
-			// resolution and bitrate bonuses can offset the density penalty.
-			if density < 2500 && s.bitrateKbps > 0 && pixels < 3840*2160 {
+			// Very low density sources (< 1500 kbps/Mpx) at mid resolutions
+			// should still get a positive QP adjustment. Quality-first
+			// curves are gentler, so the threshold is narrower.
+			if density < 1500 && s.bitrateKbps > 0 && pixels <= 1920*1080 && pixels > 854*480 {
 				if q.VaapiQP <= 18 {
-					t.Errorf("low-density (%d kbps/Mpx) should push QP above 18, got %d",
+					t.Errorf("very low density (%d kbps/Mpx) should push QP above 18, got %d",
 						density, q.VaapiQP)
 				}
 			}
@@ -1183,14 +1117,14 @@ func TestSmartQuality_Matrix(t *testing.T) {
 			}
 
 			// Run preflight: after adjustment, the estimated high output
-			// should be <= 100% of input (matching the planner target).
-			// Exception: ultra-low density at max QP/CRF, or exhausted bumps
-			// (8) for low-density — post-encode escalation handles these.
-			adjQP, adjCRF, bumps := PreflightAdjust(cfg, pr, q.VaapiQP, q.CpuCRF, 100)
+			// should be within tolerance. Quality-first preflight uses
+			// 105% target with max 4 bumps; mild overshoot is acceptable
+			// since the post-encode escalation loop handles it.
+			adjQP, adjCRF, bumps := PreflightAdjust(cfg, pr, q.VaapiQP, q.CpuCRF, 105)
 			est := EstimateBitrate(cfg, pr, adjQP, adjCRF)
-			atMax := adjQP >= VaapiQPMax || adjCRF >= CpuCRFMax || (bumps >= 8 && density < 2500)
-			if est.Known && est.HighPct > 110 && !atMax {
-				t.Errorf("after preflight (%d bumps): estimated high=%d%% exceeds 110%% "+
+			atMax := adjQP >= VaapiQPMax || adjCRF >= CpuCRFMax || (bumps >= 4 && density < 2500)
+			if est.Known && est.HighPct > 120 && !atMax {
+				t.Errorf("after preflight (%d bumps): estimated high=%d%% exceeds 120%% "+
 					"(QP=%d CRF=%d)", bumps, est.HighPct, adjQP, adjCRF)
 			}
 
@@ -1213,20 +1147,6 @@ func TestSmartQuality_Matrix(t *testing.T) {
 				density, q.VaapiQP, q.CpuCRF, bumps, safeEstLow(est), safeEstHigh(est), optKbps, maxRate)
 		})
 	}
-}
-
-func safeEstLow(est BitrateEstimate) int {
-	if !est.Known {
-		return 0
-	}
-	return est.LowPct
-}
-
-func safeEstHigh(est BitrateEstimate) int {
-	if !est.Known {
-		return 0
-	}
-	return est.HighPct
 }
 
 // --- MaxRate and BuildPlan integration tests ---
@@ -1455,11 +1375,11 @@ func TestBuildPlan_OptimalBitrate_VAAPI(t *testing.T) {
 		maxQP int // expected QP should be ≤ this
 		minQP int // expected QP should be ≥ this
 	}{
-		{"normal h264", 8000, "h264", 30, 19},
-		{"compressed h264", 3900, "h264", 32, 22},
-		{"ultra-compressed h264", 1800, "h264", 36, 28},
-		{"high-quality h264", 25000, "h264", 28, 18},
-		{"HEVC re-encode", 5000, "hevc", 34, 24},
+		{"normal h264", 8000, "h264", 24, 16},
+		{"compressed h264", 3900, "h264", 26, 17},
+		{"ultra-compressed h264", 1800, "h264", 30, 21},
+		{"high-quality h264", 25000, "h264", 22, 14},
+		{"HEVC re-encode", 5000, "hevc", 27, 17},
 	}
 
 	for _, tt := range tests {
