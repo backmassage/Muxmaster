@@ -1,3 +1,4 @@
+// builder.go constructs ffmpeg argument lists from FilePlan and RetryState.
 package ffmpeg
 
 import (

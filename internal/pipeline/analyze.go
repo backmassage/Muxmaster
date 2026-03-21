@@ -1,3 +1,4 @@
+// Probe-only analysis mode with tabular codec/bitrate report and outlier detection.
 package pipeline
 
 import (

@@ -1,3 +1,4 @@
+// errors.go classifies ffmpeg stderr output using regex-based patterns.
 package ffmpeg
 
 import "regexp"

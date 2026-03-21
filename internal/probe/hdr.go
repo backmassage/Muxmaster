@@ -1,3 +1,4 @@
+// HDR detection from color transfer, primaries, and space metadata.
 package probe
 
 import "strings"

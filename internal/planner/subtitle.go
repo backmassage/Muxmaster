@@ -1,3 +1,4 @@
+// Subtitle and attachment plan building for MKV and MP4 containers.
 package planner
 
 import (
