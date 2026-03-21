@@ -6,7 +6,7 @@
 //   - planner.go:     BuildPlan entry point — wires all sub-plans into a FilePlan
 //   - quality.go:     SmartQuality — per-file QP/CRF from resolution/bitrate curves
 //   - estimation.go:  EstimateBitrate — ratio tables with codec/resolution/bitrate biases
-//   - filter.go:      BuildVideoFilter, BuildColorOpts — deinterlace, HDR tonemap, VAAPI hwupload
+//   - filter.go:      BuildVideoFilter, BuildColorOpts — deinterlace, HDR tonemap, VAAPI hw/sw decode paths
 //   - audio.go:       BuildAudioPlan — per-stream strategy with MATCH_AUDIO_LAYOUT filters
 //   - subtitle.go:    BuildSubtitlePlan, BuildAttachmentPlan
 //   - disposition.go: BuildDispositions — default video + first audio stream flags

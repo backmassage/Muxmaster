@@ -6,6 +6,7 @@ package config
 // Negated flags (e.g. --no-skip-hevc) are applied after Parse so Config defaults hold unless set.
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -13,10 +14,14 @@ import (
 	"strings"
 )
 
-// ParseFlags parses os.Args into cfg. On --help or --version it prints and exits.
+// ErrExitClean is returned by ParseFlags when --help or --version was
+// requested. The caller should exit with code 0 without printing anything.
+var ErrExitClean = errors.New("clean exit requested")
+
+// ParseFlags parses os.Args into cfg. Returns [ErrExitClean] for --help/--version.
 // On error it returns non-nil (e.g. unknown flag, missing positional args).
-// The version parameter is passed from main so the help text reflects the build-time version.
-func ParseFlags(cfg *Config, version string) error {
+// The version and commit parameters are passed from main so the output reflects build-time values.
+func ParseFlags(cfg *Config, version, commit string) error {
 	fs := flag.NewFlagSet("muxmaster", flag.ContinueOnError)
 	fs.Usage = func() { printUsage(fs, version) }
 
@@ -38,11 +43,11 @@ func ParseFlags(cfg *Config, version string) error {
 
 	if negated.showHelp {
 		printUsage(fs, version)
-		os.Exit(0)
+		return ErrExitClean
 	}
 	if negated.showVersion {
-		fmt.Fprintln(os.Stdout, "muxmaster v"+version)
-		os.Exit(0)
+		fmt.Fprintf(os.Stdout, "muxmaster v%s (%s)\n", version, commit)
+		return ErrExitClean
 	}
 
 	if err := parsePositionalArgs(fs, cfg); err != nil {
@@ -190,7 +195,7 @@ func parsePositionalArgs(fs *flag.FlagSet, cfg *Config) error {
 		return nil
 	}
 	if len(args) != 2 {
-		return fmt.Errorf("need exactly input_dir and output_dir")
+		return fmt.Errorf("need exactly input_dir and output_dir (see --help)")
 	}
 	cfg.InputDir = NormalizeDirArg(args[0])
 	cfg.OutputDir = NormalizeDirArg(args[1])

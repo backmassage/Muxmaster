@@ -50,7 +50,7 @@ func BuildAudioPlan(cfg *config.Config, pr *probe.ProbeResult) AudioPlan {
 
 		if cfg.MatchAudioLayout {
 			asp.NeedsFilter = true
-			asp.FilterStr = buildAudioFilter(asp.Channels)
+			asp.FilterStr = buildAudioFilterWithRate(asp.Channels, cfg.AudioSampleRate)
 			asp.Layout = layoutForChannels(asp.Channels)
 		}
 
@@ -69,12 +69,10 @@ func clampChannels(source, max int) int {
 	return source
 }
 
-// buildAudioFilter constructs the aresample+aformat chain used when
-// MATCH_AUDIO_LAYOUT is enabled. This matches the legacy filter string:
-//
-//	aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000:channel_layouts=stereo
-func buildAudioFilter(channels int) string {
-	base := "aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=48000"
+// buildAudioFilterWithRate constructs the aresample+aformat chain used when
+// MATCH_AUDIO_LAYOUT is enabled, using the configured sample rate.
+func buildAudioFilterWithRate(channels, sampleRate int) string {
+	base := fmt.Sprintf("aresample=async=1:first_pts=0:min_hard_comp=0.100,aformat=sample_rates=%d", sampleRate)
 	layout := layoutForChannels(channels)
 	if layout != "" {
 		return fmt.Sprintf("%s:channel_layouts=%s", base, layout)

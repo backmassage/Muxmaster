@@ -1,5 +1,5 @@
 BINARY  := muxmaster
-VERSION := 2.2.0
+VERSION := 2.3.0
 COMMIT  := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
@@ -44,7 +44,7 @@ docs-naming:
 				echo "  expected lowercase kebab-case (example: foundation-plan.md)"; \
 				errors=1; \
 			fi; \
-		done < <(rg --files -g "*.md"); \
+		done < <(rg --no-ignore --files -g "*.md"); \
 		if [ "$$errors" -ne 0 ]; then \
 			echo; \
 			echo "markdown naming check failed"; \

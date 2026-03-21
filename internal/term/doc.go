@@ -3,5 +3,5 @@
 // once by Configure and read at log-write time by the logging package.
 //
 // Files:
-//   - term.go:        Configure, IsTTY, color variable exports
+//   - term.go:        Configure, IsTerminal, color variable exports
 package term

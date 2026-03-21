@@ -67,11 +67,10 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		plan.OptimalBitrateKbps = optKbps
 
 		if optKbps > 0 {
-			const maxOptimalOverride = 3
 			if cfg.EncoderMode == config.EncoderVAAPI {
 				targetQP := QPForTargetBitrate(cfg, pr, optKbps)
 				if targetQP > plan.VaapiQP {
-					ceiling := plan.VaapiQP + maxOptimalOverride
+					ceiling := plan.VaapiQP + MaxOptimalOverride
 					if targetQP > ceiling {
 						targetQP = ceiling
 					}
@@ -80,7 +79,7 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 			} else {
 				targetCRF := CRFForTargetBitrate(cfg, pr, optKbps)
 				if targetCRF > plan.CpuCRF {
-					ceiling := plan.CpuCRF + maxOptimalOverride
+					ceiling := plan.CpuCRF + MaxOptimalOverride
 					if targetCRF > ceiling {
 						targetCRF = ceiling
 					}
@@ -114,7 +113,7 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 			// input bitrate (never exceed the source).
 			ceiling := inputKbps
 			if plan.OptimalBitrateKbps > 0 {
-				ceiling = plan.OptimalBitrateKbps * 115 / 100
+				ceiling = plan.OptimalBitrateKbps * cpuMaxrateHeadroomPct / 100
 				if ceiling > inputKbps {
 					ceiling = inputKbps
 				}
@@ -135,7 +134,13 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		case config.EncoderCPU:
 			plan.VideoCodec = "libx265"
 		}
-		plan.VideoFilters = BuildVideoFilter(cfg, pr)
+
+		needsHDRTonemap := pr.HDRType() == "hdr10" && cfg.HandleHDR == config.HDRTonemap
+		if cfg.EncoderMode == config.EncoderVAAPI && !needsHDRTonemap {
+			plan.HWDecode = true
+		}
+
+		plan.VideoFilters = BuildVideoFilter(cfg, pr, plan.HWDecode)
 		plan.ColorOpts = BuildColorOpts(cfg, pr)
 	}
 

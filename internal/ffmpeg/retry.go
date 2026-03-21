@@ -16,7 +16,6 @@ const (
 
 const (
 	maxAttempts      = 4
-	muxQueueDefault  = 4096
 	muxQueueEscalate = 16384
 )
 

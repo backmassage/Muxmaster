@@ -51,8 +51,15 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	if plan.Action == planner.ActionEncode && cfg.EncoderMode == config.EncoderVAAPI {
 		args = append(args,
 			"-init_hw_device", "vaapi=va:"+cfg.VaapiDevice,
-			"-filter_hw_device", "va",
 		)
+		if plan.HWDecode {
+			args = append(args,
+				"-hwaccel", "vaapi",
+				"-hwaccel_device", "va",
+				"-hwaccel_output_format", "vaapi",
+			)
+		}
+		args = append(args, "-filter_hw_device", "va")
 	}
 
 	// --- Input ---

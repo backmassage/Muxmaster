@@ -122,3 +122,13 @@ func (l *Logger) Debug(verbose bool, format string, args ...interface{}) {
 	}
 	l.line("DEBUG", term.Cyan, fmt.Sprintf(format, args...))
 }
+
+// Blank writes a blank line to stdout and the log file for visual spacing.
+func (l *Logger) Blank() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, _ = io.WriteString(os.Stdout, "\n")
+	if l.file != nil {
+		_, _ = io.WriteString(l.file, "\n")
+	}
+}

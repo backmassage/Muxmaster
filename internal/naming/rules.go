@@ -15,7 +15,7 @@ type ParseRule struct {
 	Extract func(base string, matches []string, parent string) ParsedName
 }
 
-func atoi(s string) int {
+func parseIntOr0(s string) int {
 	n, _ := strconv.Atoi(strings.TrimSpace(s))
 	return n
 }
@@ -147,8 +147,8 @@ func extractSxxExx(base string, matches []string, parent string) ParsedName {
 	return ParsedName{
 		MediaType: MediaTV,
 		ShowName:  show,
-		Season:    atoi(matches[2]),
-		Episode:   atoi(matches[3]),
+		Season:    parseIntOr0(matches[2]),
+		Episode:   parseIntOr0(matches[3]),
 	}
 }
 
@@ -160,16 +160,16 @@ func extract1x01(base string, matches []string, parent string) ParsedName {
 	return ParsedName{
 		MediaType: MediaTV,
 		ShowName:  show,
-		Season:    atoi(matches[2]),
-		Episode:   atoi(matches[3]),
+		Season:    parseIntOr0(matches[2]),
+		Episode:   parseIntOr0(matches[3]),
 	}
 }
 
 func extractSeasonOPED(_ string, matches []string, parent string) ParsedName {
-	season := atoi(matches[2])
+	season := parseIntOr0(matches[2])
 	num := 1
 	if matches[5] != "" {
-		num = atoi(matches[5])
+		num = parseIntOr0(matches[5])
 	}
 	kind := strings.ToUpper(matches[4])
 	ep := 100 + num
@@ -191,7 +191,7 @@ func extractSeasonOPED(_ string, matches []string, parent string) ParsedName {
 
 func extractCreditless(_ string, matches []string, _ string) ParsedName {
 	show := cleanName(matches[2])
-	num := atoi(matches[3])
+	num := parseIntOr0(matches[3])
 	kind := strings.ToLower(matches[4])
 	ep := 100 + num
 	if strings.Contains(kind, "ending") {
@@ -207,14 +207,14 @@ func extractCreditless(_ string, matches []string, _ string) ParsedName {
 
 func extractEpisodeKeyword(_ string, matches []string, _ string) ParsedName {
 	show := cleanName(matches[2])
-	major := atoi(matches[3])
+	major := parseIntOr0(matches[3])
 	minor := matches[5]
 
 	season := 1
 	ep := major
 	if minor != "" {
 		season = 0
-		ep = atoi(matches[3] + minor)
+		ep = parseIntOr0(matches[3] + minor)
 	}
 	return ParsedName{
 		MediaType: MediaTV,
@@ -228,7 +228,7 @@ func extractNamedSpecialIdx(_ string, matches []string, _ string) ParsedName {
 	show := cleanName(matches[1])
 	show = strings.ReplaceAll(show, " - ", " ")
 	kind := strings.ToUpper(matches[2])
-	num := atoi(matches[3])
+	num := parseIntOr0(matches[3])
 
 	var offset int
 	switch kind {
@@ -291,11 +291,11 @@ func extractMoviePart(_ string, matches []string, _ string) ParsedName {
 
 func extractAnimeDash(_ string, matches []string, _ string) ParsedName {
 	show := strings.TrimSpace(matches[2])
-	ep := atoi(matches[3])
+	ep := parseIntOr0(matches[3])
 
 	if m := reGreedyRecovery.FindStringSubmatch(show); m != nil {
 		show = strings.TrimSpace(m[1])
-		ep = atoi(m[2])
+		ep = parseIntOr0(m[2])
 	}
 	return ParsedName{
 		MediaType: MediaTV,
@@ -311,7 +311,7 @@ func extractEpisodicTitle(_ string, matches []string, _ string) ParsedName {
 		MediaType: MediaTV,
 		ShowName:  strings.TrimSpace(show),
 		Season:    1,
-		Episode:   atoi(matches[3]),
+		Episode:   parseIntOr0(matches[3]),
 	}
 }
 
@@ -321,7 +321,7 @@ func extractBareNumberDash(_ string, matches []string, parent string) ParsedName
 		MediaType: MediaTV,
 		ShowName:  strings.TrimSpace(show),
 		Season:    1,
-		Episode:   atoi(matches[1]),
+		Episode:   parseIntOr0(matches[1]),
 	}
 }
 
@@ -334,7 +334,7 @@ func extractGroupRelease(_ string, matches []string, parent string) ParsedName {
 		MediaType: MediaTV,
 		ShowName:  show,
 		Season:    1,
-		Episode:   atoi(matches[3]),
+		Episode:   parseIntOr0(matches[3]),
 	}
 }
 
@@ -344,7 +344,7 @@ func extractUnderscoreAnime(_ string, matches []string, _ string) ParsedName {
 		MediaType: MediaTV,
 		ShowName:  strings.TrimSpace(show),
 		Season:    1,
-		Episode:   atoi(matches[3]),
+		Episode:   parseIntOr0(matches[3]),
 	}
 }
 

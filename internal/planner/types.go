@@ -23,6 +23,7 @@ type FilePlan struct {
 	VideoCodec   string   // "hevc_vaapi", "libx265", or "copy"
 	VideoFilters string   // comma-joined filter chain (may be empty)
 	ColorOpts    []string // -color_trc, -color_primaries, -colorspace pairs
+	HWDecode     bool     // Use VAAPI hardware decode (frames stay on GPU)
 
 	// Quality (resolved per-file by smart quality).
 	VaapiQP            int

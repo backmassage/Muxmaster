@@ -452,7 +452,7 @@ func TestEstimationDensityBias_Boundaries(t *testing.T) {
 
 func TestBuildVideoFilter_VaapiDefault(t *testing.T) {
 	cfg := defaultCfg()
-	f := BuildVideoFilter(cfg, h264SDR())
+	f := BuildVideoFilter(cfg, h264SDR(), false)
 	if !strings.Contains(f, "format=p010") || !strings.Contains(f, "hwupload") {
 		t.Errorf("VAAPI filter should have format+hwupload, got %q", f)
 	}
@@ -464,7 +464,7 @@ func TestBuildVideoFilter_VaapiDefault(t *testing.T) {
 func TestBuildVideoFilter_CPUNoFilter(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.EncoderMode = config.EncoderCPU
-	f := BuildVideoFilter(cfg, h264SDR())
+	f := BuildVideoFilter(cfg, h264SDR(), false)
 	if f != "" {
 		t.Errorf("CPU + progressive + SDR should have no filter, got %q", f)
 	}
@@ -473,7 +473,7 @@ func TestBuildVideoFilter_CPUNoFilter(t *testing.T) {
 func TestBuildVideoFilter_Deinterlace(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.EncoderMode = config.EncoderCPU
-	f := BuildVideoFilter(cfg, interlacedFile())
+	f := BuildVideoFilter(cfg, interlacedFile(), false)
 	if !strings.Contains(f, "yadif=mode=send_frame:parity=auto:deint=interlaced") {
 		t.Errorf("interlaced should have full yadif, got %q", f)
 	}
@@ -483,7 +483,7 @@ func TestBuildVideoFilter_DeinterlaceDisabled(t *testing.T) {
 	cfg := defaultCfg()
 	cfg.DeinterlaceAuto = false
 	cfg.EncoderMode = config.EncoderCPU
-	f := BuildVideoFilter(cfg, interlacedFile())
+	f := BuildVideoFilter(cfg, interlacedFile(), false)
 	if strings.Contains(f, "yadif") {
 		t.Errorf("DeinterlaceAuto=false should not produce yadif, got %q", f)
 	}
@@ -494,7 +494,7 @@ func TestBuildVideoFilter_HDRTonemap(t *testing.T) {
 	cfg.HandleHDR = config.HDRTonemap
 	cfg.EncoderMode = config.EncoderCPU
 	cfg.SkipHEVC = false
-	f := BuildVideoFilter(cfg, hdr10File())
+	f := BuildVideoFilter(cfg, hdr10File(), false)
 	if !strings.Contains(f, "tonemap") || !strings.Contains(f, "hable") {
 		t.Errorf("HDR tonemap should have tonemap filter, got %q", f)
 	}
@@ -505,9 +505,35 @@ func TestBuildVideoFilter_HDRPreserve(t *testing.T) {
 	cfg.HandleHDR = config.HDRPreserve
 	cfg.EncoderMode = config.EncoderCPU
 	cfg.SkipHEVC = false
-	f := BuildVideoFilter(cfg, hdr10File())
+	f := BuildVideoFilter(cfg, hdr10File(), false)
 	if strings.Contains(f, "tonemap") {
 		t.Errorf("HDR preserve should NOT have tonemap, got %q", f)
+	}
+}
+
+// --- Hardware decode filter tests ---
+
+func TestBuildVideoFilter_HWDecode_NoFilters(t *testing.T) {
+	cfg := defaultCfg()
+	f := BuildVideoFilter(cfg, h264SDR(), true)
+	if f != "" {
+		t.Errorf("HW decode + progressive + SDR should have no filter, got %q", f)
+	}
+}
+
+func TestBuildVideoFilter_HWDecode_Deinterlace(t *testing.T) {
+	cfg := defaultCfg()
+	f := BuildVideoFilter(cfg, interlacedFile(), true)
+	if f != "deinterlace_vaapi" {
+		t.Errorf("HW decode + interlaced should use deinterlace_vaapi, got %q", f)
+	}
+}
+
+func TestBuildVideoFilter_HWDecode_NoHwupload(t *testing.T) {
+	cfg := defaultCfg()
+	f := BuildVideoFilter(cfg, h264SDR(), true)
+	if strings.Contains(f, "hwupload") || strings.Contains(f, "format=") {
+		t.Errorf("HW decode should not have hwupload or format conversion, got %q", f)
 	}
 }
 
@@ -926,8 +952,8 @@ func TestFullPlan_TypicalAnime(t *testing.T) {
 	if plan.VideoCodec != "hevc_vaapi" {
 		t.Errorf("codec: %s", plan.VideoCodec)
 	}
-	if !strings.Contains(plan.VideoFilters, "hwupload") {
-		t.Error("should have hwupload filter")
+	if !plan.HWDecode {
+		t.Error("VAAPI SDR should enable HW decode")
 	}
 	if plan.Audio.NoAudio || plan.Audio.CopyAll {
 		t.Error("mixed audio: should be per-stream")
@@ -962,8 +988,11 @@ func TestFullPlan_HDRPreserve(t *testing.T) {
 	if len(plan.ColorOpts) == 0 {
 		t.Error("HDR preserve should have color opts")
 	}
-	if !strings.Contains(plan.VideoFilters, "hwupload") {
-		t.Error("VAAPI should have hwupload")
+	if !plan.HWDecode {
+		t.Error("HDR preserve (no tonemap) should enable HW decode")
+	}
+	if plan.VideoFilters != "" {
+		t.Errorf("HW decode + progressive + HDR preserve should have no filters, got %q", plan.VideoFilters)
 	}
 	if strings.Contains(plan.VideoFilters, "tonemap") {
 		t.Error("HDR preserve should NOT tonemap")
@@ -972,17 +1001,28 @@ func TestFullPlan_HDRPreserve(t *testing.T) {
 
 func TestFullPlan_InterlacedVAAPI(t *testing.T) {
 	plan := BuildPlan(defaultCfg(), interlacedFile())
-	if !strings.Contains(plan.VideoFilters, "yadif") {
-		t.Error("interlaced should have yadif")
+	if !plan.HWDecode {
+		t.Error("interlaced VAAPI should enable HW decode")
+	}
+	if plan.VideoFilters != "deinterlace_vaapi" {
+		t.Errorf("interlaced VAAPI with HW decode should use deinterlace_vaapi, got %q", plan.VideoFilters)
+	}
+}
+
+func TestFullPlan_HDRTonemap_SoftwareDecode(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.HandleHDR = config.HDRTonemap
+	cfg.SkipHEVC = false
+	plan := BuildPlan(cfg, hdr10File())
+
+	if plan.HWDecode {
+		t.Error("HDR tonemap should disable HW decode (zscale/tonemap are CPU-only)")
+	}
+	if !strings.Contains(plan.VideoFilters, "tonemap") {
+		t.Error("HDR tonemap should have tonemap filter")
 	}
 	if !strings.Contains(plan.VideoFilters, "hwupload") {
-		t.Error("VAAPI should have hwupload after yadif")
-	}
-	// Verify order: yadif before hwupload.
-	yIdx := strings.Index(plan.VideoFilters, "yadif")
-	hIdx := strings.Index(plan.VideoFilters, "hwupload")
-	if yIdx > hIdx {
-		t.Error("yadif should come before hwupload")
+		t.Error("software decode VAAPI should have hwupload")
 	}
 }
 
@@ -1580,7 +1620,7 @@ func TestFullPipeline_DebugMatrix(t *testing.T) {
 				}
 
 				pixels := s.width * s.height
-				density := s.kbps * 1_000_000 / pixels
+				density := Density(s.kbps, pixels)
 				t.Logf("density=%d QP=%d CRF=%d optimal=%dk maxrate=%dk bumps=%d est=%d-%d%%",
 					density, plan.VaapiQP, plan.CpuCRF, plan.OptimalBitrateKbps,
 					plan.MaxRateKbps, plan.PreflightBumps,

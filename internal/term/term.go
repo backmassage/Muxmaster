@@ -1,4 +1,4 @@
-// term.go implements Configure, IsTTY, and exports color variables as
+// term.go implements Configure, IsTerminal, and exports color variables as
 // package-level strings (set once, read by logging and display).
 package term
 

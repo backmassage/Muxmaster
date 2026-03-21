@@ -1,4 +1,4 @@
-// Video filter chain: deinterlace, HDR tonemap, VAAPI hwupload.
+// Video filter chain: deinterlace, HDR tonemap, VAAPI hw/sw decode paths.
 package planner
 
 import (
@@ -9,25 +9,39 @@ import (
 )
 
 // BuildVideoFilter constructs the comma-joined ffmpeg video filter chain
-// for the encode path. It handles deinterlacing, HDR tonemapping, and the
-// VAAPI format+hwupload suffix. This mirrors the legacy build_video_filter
-// function.
+// for the encode path. When hwDecode is true, frames are already on the
+// GPU as VAAPI surfaces so no format conversion or hwupload is needed;
+// deinterlace uses the VAAPI-native filter instead of CPU yadif.
 //
-// Returns an empty string when no filters are needed (CPU mode, progressive,
-// SDR or HDR-preserve).
-func BuildVideoFilter(cfg *config.Config, pr *probe.ProbeResult) string {
+// Returns an empty string when no filters are needed.
+func BuildVideoFilter(cfg *config.Config, pr *probe.ProbeResult, hwDecode bool) string {
+	if hwDecode {
+		return buildVAAPIHWDecodeFilters(cfg, pr)
+	}
+	return buildSoftwareDecodeFilters(cfg, pr)
+}
+
+// buildVAAPIHWDecodeFilters builds the filter chain when VAAPI hardware
+// decode is active. Frames arrive as VAAPI surfaces — no format conversion
+// or hwupload is needed. Deinterlace uses the GPU-native deinterlace_vaapi.
+func buildVAAPIHWDecodeFilters(cfg *config.Config, pr *probe.ProbeResult) string {
+	if cfg.DeinterlaceAuto && pr.IsInterlaced() {
+		return "deinterlace_vaapi"
+	}
+	return ""
+}
+
+// buildSoftwareDecodeFilters builds the filter chain for the software-decode
+// path (CPU decode, optional CPU filters, then hwupload for VAAPI encode).
+func buildSoftwareDecodeFilters(cfg *config.Config, pr *probe.ProbeResult) string {
 	var filters []string
 
-	// Deinterlace with full yadif parameters matching legacy behavior.
 	if cfg.DeinterlaceAuto && pr.IsInterlaced() {
 		filters = append(filters, "yadif=mode=send_frame:parity=auto:deint=interlaced")
 	}
 
-	// HDR tonemap to SDR.
 	if pr.HDRType() == "hdr10" && cfg.HandleHDR == config.HDRTonemap {
 		if cfg.EncoderMode == config.EncoderVAAPI {
-			// VAAPI path: tonemap to SDR, output in the VAAPI sw format
-			// (p010 or nv12) so the subsequent hwupload works directly.
 			swFormat := cfg.VaapiSwFormat
 			if swFormat == "" {
 				swFormat = "nv12"
@@ -38,9 +52,6 @@ func BuildVideoFilter(cfg *config.Config, pr *probe.ProbeResult) string {
 		}
 	}
 
-	// VAAPI requires format conversion and hwupload. When a tonemap chain
-	// was already added above, it already outputs the correct sw format,
-	// so we only need the hwupload step.
 	if cfg.EncoderMode == config.EncoderVAAPI {
 		tonemapped := pr.HDRType() == "hdr10" && cfg.HandleHDR == config.HDRTonemap
 		if !tonemapped {
