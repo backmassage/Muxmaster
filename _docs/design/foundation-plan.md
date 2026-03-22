@@ -9,7 +9,7 @@
 
 ## 1. About
 
-Muxmaster (v2.3.0) is a Go CLI application that replaces a 2,666-line Bash script with typed domain objects, structured logging, and a reliable ffmpeg retry engine. It targets a single static binary for Arch Linux.
+Muxmaster (v2.4.0) is a Go CLI application that replaces a 2,666-line Bash script with typed domain objects, structured logging, and a reliable ffmpeg retry engine. It targets a single static binary for Arch Linux.
 
 This document is the canonical reference for architecture, types, behavioral contracts, and technical decisions. For package layout and file navigation, see [structure.md](structure.md). For the aspirational v2.0 roadmap (subcommands, StateStore, etc.), see [product-spec.md](product-spec.md).
 
@@ -920,7 +920,7 @@ Script that runs both implementations with `--dry-run` on the same directory and
 
 ```makefile
 BINARY  := muxmaster
-VERSION := 2.3.0
+VERSION := 2.4.0
 COMMIT  := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
@@ -963,7 +963,7 @@ install: build
 // cmd/main.go
 
 var (
-    version = "2.3.0"
+    version = "2.4.0"
     commit  = "unknown"
 )
 ```

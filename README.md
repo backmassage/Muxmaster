@@ -2,7 +2,7 @@
 
 Jellyfin-optimized media encoder: batch HEVC/AAC encoding and remuxing with smart per-file quality, automatic retry, and deterministic Jellyfin-friendly output naming.
 
-**Version:** 2.3.0
+**Version:** 2.4.0
 
 ---
 

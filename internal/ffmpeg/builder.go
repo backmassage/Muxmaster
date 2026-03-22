@@ -24,14 +24,14 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	args = append(args, "ffmpeg", "-hide_banner", "-nostdin", "-y")
 
 	// Loglevel: info when verbose, otherwise error.
-	if cfg.Verbose {
+	if cfg.Display.Verbose {
 		args = append(args, "-loglevel", "info")
 	} else {
 		args = append(args, "-loglevel", "error")
 	}
 
 	// Stats for FPS display.
-	if cfg.Verbose || cfg.ShowFfmpegFPS {
+	if cfg.Display.Verbose || cfg.Display.FfmpegFPS {
 		args = append(args, "-stats", "-stats_period", "1")
 	}
 
@@ -48,9 +48,9 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	}
 
 	// --- VAAPI hardware device (encode path only) ---
-	if plan.Action == planner.ActionEncode && cfg.EncoderMode == config.EncoderVAAPI {
+	if plan.Action == planner.ActionEncode && cfg.Encoder.Mode == config.EncoderVAAPI {
 		args = append(args,
-			"-init_hw_device", "vaapi=va:"+cfg.VaapiDevice,
+			"-init_hw_device", "vaapi=va:"+cfg.Encoder.VaapiDevice,
 		)
 		if plan.HWDecode {
 			args = append(args,
@@ -118,23 +118,30 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 		args = append(args, "-c:v", "copy")
 
 	case planner.ActionEncode:
-		switch cfg.EncoderMode {
+		switch cfg.Encoder.Mode {
 		case config.EncoderVAAPI:
 			args = append(args,
 				"-c:v", "hevc_vaapi",
 				"-qp", strconv.Itoa(rs.VaapiQP),
-				"-profile:v", cfg.VaapiProfile,
-				"-g", strconv.Itoa(cfg.KeyframeInterval),
+				"-profile:v", cfg.Encoder.VaapiProfile,
+				"-g", strconv.Itoa(cfg.Encoder.KeyframeInterval),
 			)
 		case config.EncoderCPU:
+			x265Params := "log-level=error:open-gop=0"
+			if plan.MasterDisplay != "" {
+				x265Params += ":master-display=" + plan.MasterDisplay
+			}
+			if plan.MaxCLL != "" {
+				x265Params += ":max-cll=" + plan.MaxCLL
+			}
 			args = append(args,
 				"-c:v", "libx265",
 				"-crf", strconv.Itoa(rs.CpuCRF),
-				"-preset", cfg.CpuPreset,
-				"-profile:v", cfg.CpuProfile,
-				"-pix_fmt", cfg.CpuPixFmt,
-				"-g", strconv.Itoa(cfg.KeyframeInterval),
-				"-x265-params", "log-level=error:open-gop=0",
+				"-preset", cfg.Encoder.CpuPreset,
+				"-profile:v", cfg.Encoder.CpuProfile,
+				"-pix_fmt", cfg.Encoder.CpuPixFmt,
+				"-g", strconv.Itoa(cfg.Encoder.KeyframeInterval),
+				"-x265-params", x265Params,
 			)
 			// VBV-constrained CRF: cap output at the input video bitrate
 			// so the encoder never produces output larger than the source.
@@ -170,7 +177,7 @@ func appendAudioMaps(args []string, cfg *config.Config, plan *planner.FilePlan, 
 		}
 
 		args = append(args,
-			fmt.Sprintf("-c:a:%d", s.StreamIndex), cfg.AudioEncoder,
+			fmt.Sprintf("-c:a:%d", s.StreamIndex), cfg.Audio.Encoder,
 			fmt.Sprintf("-ac:a:%d", s.StreamIndex), strconv.Itoa(s.Channels),
 			fmt.Sprintf("-ar:a:%d", s.StreamIndex), strconv.Itoa(s.SampleRate),
 			fmt.Sprintf("-b:a:%d", s.StreamIndex), s.Bitrate,

@@ -53,6 +53,27 @@ func hdr10File() *probe.ProbeResult {
 			Width: 3840, Height: 2160, BitRate: 30000000,
 			ColorTransfer: "smpte2084", ColorPrimaries: "bt2020", ColorSpace: "bt2020nc",
 			FieldOrder: "progressive",
+			MasteringDisplay: &probe.MasteringDisplay{
+				RedX: 34000, RedY: 16000,
+				GreenX: 13250, GreenY: 34500,
+				BlueX: 7500, BlueY: 3000,
+				WhiteX: 15635, WhiteY: 16450,
+				MinLuminance: 50, MaxLuminance: 10000000,
+			},
+			ContentLightLevel: &probe.ContentLightLevel{MaxCLL: 1000, MaxFALL: 400},
+		},
+		AudioStreams: []probe.AudioStream{{Codec: "eac3", Channels: 6, SampleRate: 48000}},
+		Format:       probe.FormatInfo{BitRate: 35000000},
+	}
+}
+
+func hdr10NoMeta() *probe.ProbeResult {
+	return &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "hevc", Profile: "Main 10", PixFmt: "yuv420p10le",
+			Width: 3840, Height: 2160, BitRate: 30000000,
+			ColorTransfer: "smpte2084", ColorPrimaries: "bt2020", ColorSpace: "bt2020nc",
+			FieldOrder: "progressive",
 		},
 		AudioStreams: []probe.AudioStream{{Codec: "eac3", Channels: 6, SampleRate: 48000}},
 		Format:       probe.FormatInfo{BitRate: 35000000},

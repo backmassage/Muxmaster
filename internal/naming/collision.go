@@ -5,14 +5,12 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // CollisionResolver tracks output paths claimed by input files and resolves
-// duplicates by appending " - dupN" suffixes. It is safe for sequential use
-// within a single pipeline run. All methods are goroutine-safe.
+// duplicates by appending " - dupN" suffixes. It is used sequentially within
+// a single pipeline run — one file at a time, no concurrency.
 type CollisionResolver struct {
-	mu       sync.Mutex
 	owners   map[string]string // output path → input path that owns it
 	counters map[string]int    // base output path → next dup counter
 }
@@ -29,9 +27,6 @@ func NewCollisionResolver() *CollisionResolver {
 // If requestedOutput is unclaimed (or already owned by input), it is returned
 // as-is. Otherwise a " - dupN" variant is generated.
 func (cr *CollisionResolver) Resolve(input, requestedOutput string) string {
-	cr.mu.Lock()
-	defer cr.mu.Unlock()
-
 	owner, exists := cr.owners[requestedOutput]
 	if !exists || owner == input {
 		cr.owners[requestedOutput] = input

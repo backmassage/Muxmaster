@@ -41,20 +41,20 @@ func TestNormalizeAudioBitrate(t *testing.T) {
 
 func TestValidateNormalizesAudioBitrate(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.AudioBitrate = "192"
+	cfg.Audio.Bitrate = "192"
 	cfg.CheckOnly = true
 
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate() returned error: %v", err)
 	}
-	if cfg.AudioBitrate != "192k" {
-		t.Fatalf("Validate() did not normalize bitrate, got %q", cfg.AudioBitrate)
+	if cfg.Audio.Bitrate != "192k" {
+		t.Fatalf("Validate() did not normalize bitrate, got %q", cfg.Audio.Bitrate)
 	}
 }
 
 func TestDefaultConfigAudioEncoder(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.AudioEncoder != "libfdk_aac" {
-		t.Fatalf("AudioEncoder = %q, want libfdk_aac", cfg.AudioEncoder)
+	if cfg.Audio.Encoder != "libfdk_aac" {
+		t.Fatalf("Audio.Encoder = %q, want libfdk_aac", cfg.Audio.Encoder)
 	}
 }

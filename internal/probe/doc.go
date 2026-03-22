@@ -5,6 +5,6 @@
 // Files:
 //   - types.go:            ProbeResult, VideoStream, AudioStream, SubtitleStream, FormatInfo
 //   - prober.go:           Probe — single ffprobe JSON call, stream classification
-//   - hdr.go:              HDR detection (smpte2084, arib-std-b67, bt2020 primaries)
+//   - hdr.go:              HDR detection, HDR10 static metadata formatting (mastering display, MaxCLL)
 //   - interlace.go:        Interlace detection from field_order
 package probe

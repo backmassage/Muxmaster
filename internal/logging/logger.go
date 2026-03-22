@@ -26,18 +26,18 @@ type Logger struct {
 }
 
 // NewLogger initializes terminal colors via [term.Configure] and opens a
-// log file if cfg.LogFile is set. The caller must call [Logger.Close] when
+// log file if cfg.Display.LogFile is set. The caller must call [Logger.Close] when
 // finished.
 func NewLogger(cfg *config.Config) (*Logger, error) {
-	term.Configure(cfg.ColorMode)
+	term.Configure(cfg.Display.ColorMode)
 
 	l := &Logger{}
-	if cfg.LogFile != "" {
-		dir := filepath.Dir(cfg.LogFile)
+	if cfg.Display.LogFile != "" {
+		dir := filepath.Dir(cfg.Display.LogFile)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("create log directory: %w", err)
 		}
-		f, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+		f, err := os.OpenFile(cfg.Display.LogFile, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 		if err != nil {
 			return nil, fmt.Errorf("open log file: %w", err)
 		}

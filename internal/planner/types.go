@@ -25,6 +25,10 @@ type FilePlan struct {
 	ColorOpts    []string // -color_trc, -color_primaries, -colorspace pairs
 	HWDecode     bool     // Use VAAPI hardware decode (frames stay on GPU)
 
+	// HDR10 static metadata (empty when not present or not preserving HDR).
+	MasterDisplay string // ffmpeg format: G(gx,gy)B(bx,by)R(rx,ry)WP(wpx,wpy)L(maxL,minL)
+	MaxCLL        string // ffmpeg format: MaxCLL,MaxFALL
+
 	// Quality (resolved per-file by smart quality).
 	VaapiQP            int
 	CpuCRF             int

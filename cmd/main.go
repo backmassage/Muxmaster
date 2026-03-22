@@ -23,7 +23,7 @@ import (
 // When built with plain "go build" (no make), these retain their defaults.
 // The Makefile is the authoritative source for VERSION; see the Makefile for ldflags details.
 var (
-	version = "2.3.0"
+	version = "2.4.0"
 	commit  = "unknown"
 )
 

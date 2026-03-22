@@ -30,6 +30,27 @@ type VideoStream struct {
 	ColorSpace     string
 	IsAttachedPic  bool
 	AvgFrameRate   string
+
+	MasteringDisplay  *MasteringDisplay
+	ContentLightLevel *ContentLightLevel
+}
+
+// MasteringDisplay holds SMPTE ST.2086 mastering display color volume metadata.
+// Chromaticity values are CIE 1931 xy coordinates scaled by 50000.
+// Luminance values are in units of 1/10000 cd/m².
+type MasteringDisplay struct {
+	RedX, RedY     int
+	GreenX, GreenY int
+	BlueX, BlueY   int
+	WhiteX, WhiteY int
+	MinLuminance   int
+	MaxLuminance   int
+}
+
+// ContentLightLevel holds MaxCLL and MaxFALL in nits.
+type ContentLightLevel struct {
+	MaxCLL  int
+	MaxFALL int
 }
 
 // AudioStream holds the parsed properties of a single audio stream.

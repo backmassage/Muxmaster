@@ -30,7 +30,7 @@ func Execute(ctx context.Context, cfg *config.Config, plan *planner.FilePlan, rs
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
 
 	var stderrBuf bytes.Buffer
-	if cfg.Verbose || cfg.ShowFfmpegFPS {
+	if cfg.Display.Verbose || cfg.Display.FfmpegFPS {
 		cmd.Stderr = io.MultiWriter(&stderrBuf, os.Stderr)
 	} else {
 		cmd.Stderr = &stderrBuf

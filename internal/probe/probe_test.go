@@ -36,7 +36,27 @@ const sampleHDR = `{
       "color_space": "bt2020nc",
       "avg_frame_rate": "24000/1001",
       "disposition": { "default": 1, "attached_pic": 0 },
-      "tags": {}
+      "tags": {},
+      "side_data_list": [
+        {
+          "side_data_type": "Mastering display metadata",
+          "red_x": "34000/50000",
+          "red_y": "16000/50000",
+          "green_x": "13250/50000",
+          "green_y": "34500/50000",
+          "blue_x": "7500/50000",
+          "blue_y": "3000/50000",
+          "white_point_x": "15635/50000",
+          "white_point_y": "16450/50000",
+          "min_luminance": "50/10000",
+          "max_luminance": "10000000/10000"
+        },
+        {
+          "side_data_type": "Content light level metadata",
+          "max_content": 1000,
+          "max_average": 400
+        }
+      ]
     },
     {
       "index": 2,
@@ -209,6 +229,34 @@ func TestParseJSON_HDRFile(t *testing.T) {
 	}
 	if pr.PrimaryVideo.IsAttachedPic {
 		t.Error("primary video should not be attached_pic")
+	}
+
+	// HDR10 static metadata
+	if pr.PrimaryVideo.MasteringDisplay == nil {
+		t.Fatal("MasteringDisplay should be parsed from side_data_list")
+	}
+	md := pr.PrimaryVideo.MasteringDisplay
+	if md.RedX != 34000 || md.RedY != 16000 {
+		t.Errorf("red: got %d,%d want 34000,16000", md.RedX, md.RedY)
+	}
+	if md.GreenX != 13250 || md.GreenY != 34500 {
+		t.Errorf("green: got %d,%d want 13250,34500", md.GreenX, md.GreenY)
+	}
+	if md.BlueX != 7500 || md.BlueY != 3000 {
+		t.Errorf("blue: got %d,%d want 7500,3000", md.BlueX, md.BlueY)
+	}
+	if md.WhiteX != 15635 || md.WhiteY != 16450 {
+		t.Errorf("white: got %d,%d want 15635,16450", md.WhiteX, md.WhiteY)
+	}
+	if md.MinLuminance != 50 || md.MaxLuminance != 10000000 {
+		t.Errorf("luminance: got min=%d max=%d want 50,10000000", md.MinLuminance, md.MaxLuminance)
+	}
+	if pr.PrimaryVideo.ContentLightLevel == nil {
+		t.Fatal("ContentLightLevel should be parsed from side_data_list")
+	}
+	cll := pr.PrimaryVideo.ContentLightLevel
+	if cll.MaxCLL != 1000 || cll.MaxFALL != 400 {
+		t.Errorf("CLL: got %d,%d want 1000,400", cll.MaxCLL, cll.MaxFALL)
 	}
 
 	// Audio
@@ -528,6 +576,40 @@ func TestBitmapSubCodecs(t *testing.T) {
 				t.Errorf("%q should NOT be bitmap", c)
 			}
 		})
+	}
+}
+
+func TestMasteringDisplay_FFmpegFormat(t *testing.T) {
+	md := &MasteringDisplay{
+		RedX: 34000, RedY: 16000,
+		GreenX: 13250, GreenY: 34500,
+		BlueX: 7500, BlueY: 3000,
+		WhiteX: 15635, WhiteY: 16450,
+		MinLuminance: 50, MaxLuminance: 10000000,
+	}
+	want := "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50)"
+	if got := md.FFmpegMasterDisplay(); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestContentLightLevel_FFmpegFormat(t *testing.T) {
+	cll := &ContentLightLevel{MaxCLL: 1000, MaxFALL: 400}
+	if got := cll.FFmpegMaxCLL(); got != "1000,400" {
+		t.Errorf("got %q, want 1000,400", got)
+	}
+}
+
+func TestNoSideData_NilMetadata(t *testing.T) {
+	pr, err := ParseJSON([]byte(sampleMinimal))
+	if err != nil {
+		t.Fatalf("ParseJSON: %v", err)
+	}
+	if pr.PrimaryVideo.MasteringDisplay != nil {
+		t.Error("SDR file should have nil MasteringDisplay")
+	}
+	if pr.PrimaryVideo.ContentLightLevel != nil {
+		t.Error("SDR file should have nil ContentLightLevel")
 	}
 }
 
