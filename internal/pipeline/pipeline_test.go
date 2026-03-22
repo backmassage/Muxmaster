@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/backmassage/muxmaster/internal/config"
+	"github.com/backmassage/muxmaster/internal/ffmpeg"
 	"github.com/backmassage/muxmaster/internal/logging"
 )
 
@@ -233,7 +234,12 @@ func TestDryRunPipeline(t *testing.T) {
 	}
 	defer log.Close()
 
-	stats := Run(context.Background(), &cfg, log)
+	noExec := ffmpeg.RunFunc(func(_ context.Context, args []string) ffmpeg.ExecResult {
+		t.Fatalf("unexpected ffmpeg execution in dry run: %v", args)
+		return ffmpeg.ExecResult{}
+	})
+
+	stats := Run(context.Background(), &cfg, log, noExec)
 
 	t.Logf("Total=%d Encoded=%d Skipped=%d Failed=%d",
 		stats.Total, stats.Encoded, stats.Skipped, stats.Failed)

@@ -9,7 +9,6 @@ import (
 
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/display"
-	"github.com/backmassage/muxmaster/internal/logging"
 	"github.com/backmassage/muxmaster/internal/planner"
 	"github.com/backmassage/muxmaster/internal/probe"
 	"github.com/backmassage/muxmaster/internal/term"
@@ -17,7 +16,7 @@ import (
 
 const maxStderrLines = 20
 
-func logStderr(log *logging.Logger, stderr string) {
+func logStderr(log Logger, stderr string) {
 	if stderr == "" {
 		return
 	}
@@ -32,7 +31,7 @@ func logStderr(log *logging.Logger, stderr string) {
 	}
 }
 
-func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
+func logBatchHeader(cfg *config.Config, log Logger, stats *RunStats) {
 	log.Info("Found %d files", stats.Total)
 
 	profileLabel := cfg.Encoder.CpuProfile
@@ -91,7 +90,7 @@ func logBatchHeader(cfg *config.Config, log *logging.Logger, stats *RunStats) {
 	log.Blank()
 }
 
-func logInputMeta(log *logging.Logger, pr *probe.ProbeResult) {
+func logInputMeta(log Logger, pr *probe.ProbeResult) {
 	v := pr.PrimaryVideo
 	if v == nil {
 		return
@@ -118,7 +117,7 @@ func logInputMeta(log *logging.Logger, pr *probe.ProbeResult) {
 	}
 }
 
-func logFileStats(log *logging.Logger, plan *planner.FilePlan) {
+func logFileStats(log Logger, plan *planner.FilePlan) {
 	if plan.Action == planner.ActionSkip {
 		return
 	}
@@ -175,7 +174,7 @@ var bitrateTiers = []bitrateTier{
 	{3840 * 2160, 10000, 45000, "<=2160p"},
 }
 
-func logBitrateOutlier(log *logging.Logger, pr *probe.ProbeResult) {
+func logBitrateOutlier(log Logger, pr *probe.ProbeResult) {
 	v := pr.PrimaryVideo
 	if v == nil || v.Width <= 0 || v.Height <= 0 {
 		return
@@ -208,7 +207,7 @@ func logBitrateOutlier(log *logging.Logger, pr *probe.ProbeResult) {
 	}
 }
 
-func logAudioBitrates(log *logging.Logger, pr *probe.ProbeResult, plan *planner.FilePlan) {
+func logAudioBitrates(log Logger, pr *probe.ProbeResult, plan *planner.FilePlan) {
 	ap := plan.Audio
 	if ap.NoAudio || len(pr.AudioStreams) == 0 {
 		return
@@ -237,7 +236,7 @@ func logAudioBitrates(log *logging.Logger, pr *probe.ProbeResult, plan *planner.
 	}
 }
 
-func logSummary(cfg *config.Config, log *logging.Logger, stats *RunStats) {
+func logSummary(cfg *config.Config, log Logger, stats *RunStats) {
 	log.Info("==============================")
 	log.Info("Done: %d encoded, %d skipped, %d failed", stats.Encoded, stats.Skipped, stats.Failed)
 	log.Info("Summary report:")
