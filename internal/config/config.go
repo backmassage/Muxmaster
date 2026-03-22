@@ -1,4 +1,4 @@
-// config.go defines the Config struct, DefaultConfig, Validate, and ValidatePaths.
+// config.go defines the Config struct, sub-structs, DefaultConfig, Validate, and ValidatePaths.
 package config
 
 import (
@@ -44,17 +44,10 @@ const (
 	ColorNever  ColorMode = "never"  // Disable colors entirely.
 )
 
-// Config holds all runtime settings. It is populated by [DefaultConfig] and
-// then mutated by [ParseFlags] before being passed (by pointer) to packages
-// that need it. Fields are grouped by concern with inline documentation of
-// defaults and fixed values.
-type Config struct {
-	// Paths (set from positional args).
-	InputDir  string
-	OutputDir string
-
-	// Encoder settings.
-	EncoderMode      EncoderMode
+// EncoderConfig groups video encoder settings: codec selection, VAAPI/CPU
+// parameters, quality curves, HDR handling, and quality overrides.
+type EncoderConfig struct {
+	Mode             EncoderMode
 	VaapiDevice      string // Default: "/dev/dri/renderD128".
 	VaapiQP          int    // Default: 18. Overridden by --vaapi-qp or --quality.
 	VaapiProfile     string // Derived at runtime: "main10" or "main".
@@ -64,46 +57,64 @@ type Config struct {
 	CpuProfile       string // Fixed: "main10".
 	CpuPixFmt        string // Fixed: "yuv420p10le".
 	KeyframeInterval int    // Fixed: 48 frames.
+	HandleHDR        HDRMode
+	DeinterlaceAuto  bool
 
-	// Output format.
-	OutputContainer Container // Default: "mkv".
-
-	// Audio encoding.
-	AudioChannels   int    // Default: 2 (stereo).
-	AudioBitrate    string // Default: "320k".
-	AudioSampleRate int    // Fixed: 48000 Hz.
-	AudioEncoder    string // Fixed default: "libfdk_aac".
-
-	// Behavior flags.
-	DryRun           bool
-	SkipExisting     bool    // Default: true. Cleared by --force.
-	SkipHEVC         bool    // Default: true. Cleared by --no-skip-hevc.
-	StrictMode       bool    // Disable retry fallbacks.
-	SmartQuality     bool    // Default: true. Per-file quality adaptation.
-	CleanTimestamps  bool    // Default: true. Regenerate timestamps.
-	MatchAudioLayout bool    // Default: true. Normalize audio channel layout.
-	KeepSubtitles    bool    // Default: true.
-	KeepAttachments  bool    // Default: true.
-	HandleHDR        HDRMode // Default: "preserve".
-	DeinterlaceAuto  bool    // Default: true.
-
-	// Quality tuning.
-	SmartQualityBias int // Default: -2 (favor higher quality / lower QP).
-
-	// Display and logging.
-	Verbose       bool
-	ShowFileStats bool      // Default: true.
-	ShowFfmpegFPS bool      // Default: true.
-	ColorMode     ColorMode // Default: "auto".
-	LogFile       string    // Optional log file path.
-	CheckOnly     bool      // Run --check diagnostics and exit.
-	AnalyzeOnly   bool      // Probe all files and print a codec/bitrate table.
+	// Smart quality adaptation.
+	SmartQuality     bool // Default: true. Per-file quality adaptation.
+	SmartQualityBias int  // Default: -2 (favor higher quality / lower QP).
 
 	// Quality overrides (populated during flag parsing).
 	QualityOverride       string // --quality value (applies to active mode).
 	CpuCRFFixedOverride   string // --cpu-crf value.
 	VaapiQPFixedOverride  string // --vaapi-qp value.
 	ActiveQualityOverride string // Derived: the override that applies to the active encoder mode.
+}
+
+// AudioConfig groups audio encoding parameters.
+type AudioConfig struct {
+	Channels    int    // Default: 2 (stereo).
+	Bitrate     string // Default: "320k".
+	SampleRate  int    // Fixed: 48000 Hz.
+	Encoder     string // Fixed default: "libfdk_aac".
+	MatchLayout bool   // Default: true. Normalize audio channel layout.
+}
+
+// DisplayConfig groups logging and visual output settings.
+type DisplayConfig struct {
+	Verbose   bool
+	FileStats bool      // Default: true.
+	FfmpegFPS bool      // Default: true.
+	ColorMode ColorMode // Default: "auto".
+	LogFile   string    // Optional log file path.
+}
+
+// Config holds all runtime settings. It is populated by [DefaultConfig] and
+// then mutated by [ParseFlags] before being passed (by pointer) to packages
+// that need it.
+type Config struct {
+	// Paths (set from positional args).
+	InputDir  string
+	OutputDir string
+
+	// Sub-configs grouped by concern.
+	Encoder EncoderConfig
+	Audio   AudioConfig
+	Display DisplayConfig
+
+	// Output format.
+	OutputContainer Container // Default: "mkv".
+
+	// Behavior flags.
+	DryRun          bool
+	SkipExisting    bool // Default: true. Cleared by --force.
+	SkipHEVC        bool // Default: true. Cleared by --no-skip-hevc.
+	StrictMode      bool // Disable retry fallbacks.
+	CleanTimestamps bool // Default: true. Regenerate timestamps.
+	KeepSubtitles   bool // Default: true.
+	KeepAttachments bool // Default: true.
+	CheckOnly       bool // Run --check diagnostics and exit.
+	AnalyzeOnly     bool // Probe all files and print a codec/bitrate table.
 
 	// ffmpeg probe constants (not user-configurable).
 	FFmpegProbesize       string
@@ -114,35 +125,41 @@ type Config struct {
 // v1.7.0 behavior. Used as the base before [ParseFlags] applies CLI overrides.
 func DefaultConfig() Config {
 	return Config{
-		EncoderMode:           EncoderVAAPI,
-		VaapiDevice:           "/dev/dri/renderD128",
-		VaapiQP:               18,
-		CpuCRF:                18,
-		CpuPreset:             "slow",
-		CpuProfile:            "main10",
-		CpuPixFmt:             "yuv420p10le",
-		KeyframeInterval:      48,
+		Encoder: EncoderConfig{
+			Mode:             EncoderVAAPI,
+			VaapiDevice:      "/dev/dri/renderD128",
+			VaapiQP:          18,
+			CpuCRF:           18,
+			CpuPreset:        "slow",
+			CpuProfile:       "main10",
+			CpuPixFmt:        "yuv420p10le",
+			KeyframeInterval: 48,
+			HandleHDR:        HDRPreserve,
+			DeinterlaceAuto:  true,
+			SmartQuality:     true,
+			SmartQualityBias: -2,
+		},
+		Audio: AudioConfig{
+			Channels:    2,
+			Bitrate:     "320k",
+			SampleRate:  48000,
+			Encoder:     "libfdk_aac",
+			MatchLayout: true,
+		},
+		Display: DisplayConfig{
+			Verbose:   false,
+			FileStats: true,
+			FfmpegFPS: true,
+			ColorMode: ColorAuto,
+		},
 		OutputContainer:       ContainerMKV,
-		AudioChannels:         2,
-		AudioBitrate:          "320k",
-		AudioSampleRate:       48000,
-		AudioEncoder:          "libfdk_aac",
 		DryRun:                false,
 		SkipExisting:          true,
 		SkipHEVC:              true,
 		StrictMode:            false,
-		SmartQuality:          true,
 		CleanTimestamps:       true,
-		MatchAudioLayout:      true,
 		KeepSubtitles:         true,
 		KeepAttachments:       true,
-		HandleHDR:             HDRPreserve,
-		DeinterlaceAuto:       true,
-		SmartQualityBias:      -2,
-		Verbose:               false,
-		ShowFileStats:         true,
-		ShowFfmpegFPS:         true,
-		ColorMode:             ColorAuto,
 		CheckOnly:             false,
 		FFmpegProbesize:       "100M",
 		FFmpegAnalyzeDuration: "100M",
@@ -168,7 +185,7 @@ func NormalizeDirArg(path string) string {
 // When not in CheckOnly mode, it also requires that both input and output
 // directory paths are non-empty.
 func (c *Config) Validate() error {
-	switch c.EncoderMode {
+	switch c.Encoder.Mode {
 	case EncoderVAAPI, EncoderCPU:
 		// valid
 	default:
@@ -182,17 +199,17 @@ func (c *Config) Validate() error {
 		return errors.New("invalid container (use 'mkv' or 'mp4')")
 	}
 
-	switch c.HandleHDR {
+	switch c.Encoder.HandleHDR {
 	case HDRPreserve, HDRTonemap:
 		// valid
 	default:
 		return errors.New("invalid HDR mode (use 'preserve' or 'tonemap')")
 	}
-	normalizedBitrate, err := normalizeAudioBitrate(c.AudioBitrate)
+	normalizedBitrate, err := normalizeAudioBitrate(c.Audio.Bitrate)
 	if err != nil {
 		return err
 	}
-	c.AudioBitrate = normalizedBitrate
+	c.Audio.Bitrate = normalizedBitrate
 
 	if c.CheckOnly {
 		return nil

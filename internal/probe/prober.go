@@ -76,6 +76,29 @@ type ffprobeStream struct {
 	SampleRate     string            `json:"sample_rate"`
 	Disposition    map[string]int    `json:"disposition"`
 	Tags           map[string]string `json:"tags"`
+	SideDataList   []ffprobeSideData `json:"side_data_list"`
+}
+
+// ffprobeSideData is a union type covering both mastering display and
+// content light level entries in a stream's side_data_list.
+type ffprobeSideData struct {
+	Type string `json:"side_data_type"`
+
+	// Mastering display metadata (rational strings, e.g. "34000/50000").
+	RedX         string `json:"red_x"`
+	RedY         string `json:"red_y"`
+	GreenX       string `json:"green_x"`
+	GreenY       string `json:"green_y"`
+	BlueX        string `json:"blue_x"`
+	BlueY        string `json:"blue_y"`
+	WhitePointX  string `json:"white_point_x"`
+	WhitePointY  string `json:"white_point_y"`
+	MinLuminance string `json:"min_luminance"`
+	MaxLuminance string `json:"max_luminance"`
+
+	// Content light level metadata (integer nits).
+	MaxContent int `json:"max_content"`
+	MaxAverage int `json:"max_average"`
 }
 
 // --- Conversion from wire types to domain types ---
@@ -120,7 +143,7 @@ func convertFormat(f *ffprobeFormat) FormatInfo {
 }
 
 func convertVideo(s *ffprobeStream) VideoStream {
-	return VideoStream{
+	vs := VideoStream{
 		Index:          s.Index,
 		Codec:          s.CodecName,
 		Profile:        s.Profile,
@@ -135,6 +158,28 @@ func convertVideo(s *ffprobeStream) VideoStream {
 		IsAttachedPic:  s.Disposition["attached_pic"] == 1,
 		AvgFrameRate:   s.AvgFrameRate,
 	}
+
+	for i := range s.SideDataList {
+		sd := &s.SideDataList[i]
+		switch sd.Type {
+		case "Mastering display metadata":
+			vs.MasteringDisplay = &MasteringDisplay{
+				RedX: parseRationalNum(sd.RedX), RedY: parseRationalNum(sd.RedY),
+				GreenX: parseRationalNum(sd.GreenX), GreenY: parseRationalNum(sd.GreenY),
+				BlueX: parseRationalNum(sd.BlueX), BlueY: parseRationalNum(sd.BlueY),
+				WhiteX: parseRationalNum(sd.WhitePointX), WhiteY: parseRationalNum(sd.WhitePointY),
+				MinLuminance: parseRationalNum(sd.MinLuminance),
+				MaxLuminance: parseRationalNum(sd.MaxLuminance),
+			}
+		case "Content light level metadata":
+			vs.ContentLightLevel = &ContentLightLevel{
+				MaxCLL:  sd.MaxContent,
+				MaxFALL: sd.MaxAverage,
+			}
+		}
+	}
+
+	return vs
 }
 
 func convertAudio(s *ffprobeStream) AudioStream {
@@ -186,6 +231,17 @@ func convertSubtitle(s *ffprobeStream) SubtitleStream {
 }
 
 // --- Numeric parsing helpers (ffprobe returns numbers as strings) ---
+
+// parseRationalNum extracts the numerator from a rational string like
+// "34000/50000". Returns 0 for empty or malformed input.
+func parseRationalNum(s string) int {
+	s = strings.TrimSpace(s)
+	if idx := strings.IndexByte(s, '/'); idx >= 0 {
+		s = s[:idx]
+	}
+	n, _ := strconv.Atoi(s)
+	return n
+}
 
 func parseInt64(s string) int64 {
 	s = strings.TrimSpace(s)

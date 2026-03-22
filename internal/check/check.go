@@ -52,7 +52,7 @@ func RunCheck(cfg *config.Config, log Logger) bool {
 	if !checkCPUx265(log) {
 		ok = false
 	}
-	if !checkAudioEncoder(log, cfg.AudioEncoder) {
+	if !checkAudioEncoder(log, cfg.Audio.Encoder) {
 		ok = false
 	}
 	return ok
@@ -167,11 +167,11 @@ func CheckDeps(cfg *config.Config) error {
 	if _, err := exec.LookPath("ffprobe"); err != nil {
 		return ErrFfprobeNotFound
 	}
-	if !testAudioEncoder(cfg.AudioEncoder) {
-		return fmt.Errorf("%w: %s", ErrAudioEncodeFailed, cfg.AudioEncoder)
+	if !testAudioEncoder(cfg.Audio.Encoder) {
+		return fmt.Errorf("%w: %s", ErrAudioEncodeFailed, cfg.Audio.Encoder)
 	}
 
-	if cfg.EncoderMode == config.EncoderCPU {
+	if cfg.Encoder.Mode == config.EncoderCPU {
 		if !runSilent("ffmpeg", cpuTestArgs()...) {
 			return ErrCPUEncodeFailed
 		}
@@ -185,13 +185,13 @@ func CheckDeps(cfg *config.Config) error {
 		return ErrNoVAAPIDevice
 	}
 	if testVAAPI(dev, "p010", "main10") {
-		cfg.VaapiProfile = "main10"
-		cfg.VaapiSwFormat = "p010"
+		cfg.Encoder.VaapiProfile = "main10"
+		cfg.Encoder.VaapiSwFormat = "p010"
 		return nil
 	}
 	if testVAAPI(dev, "nv12", "main") {
-		cfg.VaapiProfile = "main"
-		cfg.VaapiSwFormat = "nv12"
+		cfg.Encoder.VaapiProfile = "main"
+		cfg.Encoder.VaapiSwFormat = "nv12"
 		return nil
 	}
 	return ErrVAAPITestFailed

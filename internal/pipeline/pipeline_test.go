@@ -225,7 +225,7 @@ func TestDryRunPipeline(t *testing.T) {
 	cfg.InputDir = inputDir
 	cfg.OutputDir = outputDir
 	cfg.DryRun = true
-	cfg.ColorMode = config.ColorNever
+	cfg.Display.ColorMode = config.ColorNever
 
 	log, err := logging.NewLogger(&cfg)
 	if err != nil {

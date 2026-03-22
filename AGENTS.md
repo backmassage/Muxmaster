@@ -87,8 +87,10 @@ than destroying quality. The post-encode loop handles genuine blowups.
 
 ## Key conventions
 
+- Config struct uses sub-structs: `cfg.Encoder.*` (video encoder), `cfg.Audio.*` (audio), `cfg.Display.*` (logging/output). Pipeline behavior flags remain at the top level.
 - VAAPI constant-QP encoding; CPU uses CRF with maxrate ceiling.
 - VAAPI hardware decode enabled by default (full GPU pipeline); falls back to software decode for HDR tonemap.
+- HDR10 static metadata (mastering display + MaxCLL/MaxFALL) parsed from ffprobe `side_data_list`. CPU mode injects via `-x265-params`; VAAPI relies on frame side-data passthrough.
 - VaapiQPMax = 30 — QP above this produces severe visible artifacts.
 - AAC audio is always passthrough (never re-encoded lossy-to-lossy).
 - Remux path skips timestamp fix (+genpts); retry engine handles failures.

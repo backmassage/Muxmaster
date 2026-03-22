@@ -37,9 +37,9 @@ func BuildAudioPlan(cfg *config.Config, pr *probe.ProbeResult) AudioPlan {
 	for i, a := range pr.AudioStreams {
 		asp := AudioStreamPlan{
 			StreamIndex: i,
-			Channels:    clampChannels(a.Channels, cfg.AudioChannels),
-			Bitrate:     cfg.AudioBitrate,
-			SampleRate:  cfg.AudioSampleRate,
+			Channels:    clampChannels(a.Channels, cfg.Audio.Channels),
+			Bitrate:     cfg.Audio.Bitrate,
+			SampleRate:  cfg.Audio.SampleRate,
 		}
 
 		if strings.EqualFold(a.Codec, "aac") {
@@ -48,9 +48,9 @@ func BuildAudioPlan(cfg *config.Config, pr *probe.ProbeResult) AudioPlan {
 			continue
 		}
 
-		if cfg.MatchAudioLayout {
+		if cfg.Audio.MatchLayout {
 			asp.NeedsFilter = true
-			asp.FilterStr = buildAudioFilterWithRate(asp.Channels, cfg.AudioSampleRate)
+			asp.FilterStr = buildAudioFilterWithRate(asp.Channels, cfg.Audio.SampleRate)
 			asp.Layout = layoutForChannels(asp.Channels)
 		}
 

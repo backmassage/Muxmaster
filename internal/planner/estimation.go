@@ -29,13 +29,13 @@ func EstimateBitrate(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF 
 	inputKbps := int((inputBps + 500) / 1000)
 
 	var qualityValue int
-	if cfg.EncoderMode == config.EncoderVAAPI {
+	if cfg.Encoder.Mode == config.EncoderVAAPI {
 		qualityValue = vaapiQP
 	} else {
 		qualityValue = cpuCRF
 	}
 
-	ratio := qualityRatioPerMille(cfg.EncoderMode, qualityValue)
+	ratio := qualityRatioPerMille(cfg.Encoder.Mode, qualityValue)
 
 	// Source codec bias: modern codecs leave less room for compression.
 	v := pr.PrimaryVideo
@@ -91,7 +91,7 @@ func PreflightAdjust(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF,
 			return adjQP, adjCRF, i
 		}
 
-		if cfg.EncoderMode == config.EncoderVAAPI {
+		if cfg.Encoder.Mode == config.EncoderVAAPI {
 			if adjQP >= VaapiQPMax {
 				return adjQP, adjCRF, i
 			}
@@ -115,139 +115,26 @@ func qualityRatioPerMille(mode config.EncoderMode, q int) int {
 	return cpuRatio(q)
 }
 
-// vaapiRatio maps QP to an estimated output-to-input percentage (permille).
 func vaapiRatio(qp int) int {
-	switch {
-	case qp <= 14:
-		return 930
-	case qp == 15:
-		return 900
-	case qp == 16:
-		return 860
-	case qp == 17:
-		return 820
-	case qp == 18:
-		return 770
-	case qp == 19:
-		return 730
-	case qp == 20:
-		return 680
-	case qp == 21:
-		return 640
-	case qp == 22:
-		return 590
-	case qp == 23:
-		return 550
-	case qp == 24:
-		return 510
-	case qp == 25:
-		return 470
-	case qp == 26:
-		return 430
-	case qp == 27:
-		return 395
-	case qp == 28:
-		return 360
-	case qp == 29:
-		return 330
-	case qp == 30:
-		return 300
-	case qp == 31:
-		return 275
-	case qp == 32:
-		return 250
-	case qp == 33:
-		return 230
-	case qp == 34:
-		return 210
-	case qp == 35:
-		return 195
-	default: // 36+
-		return 180
-	}
+	i := Clamp(qp-vaapiRatioBase, 0, len(vaapiRatios)-1)
+	return vaapiRatios[i]
 }
 
-// cpuRatio covers CRF 16–30 (the full CpuCRFMin–CpuCRFMax range).
 func cpuRatio(crf int) int {
-	switch {
-	case crf <= 16:
-		return 900
-	case crf == 17:
-		return 820
-	case crf == 18:
-		return 740
-	case crf == 19:
-		return 660
-	case crf == 20:
-		return 590
-	case crf == 21:
-		return 520
-	case crf == 22:
-		return 460
-	case crf == 23:
-		return 410
-	case crf == 24:
-		return 360
-	case crf == 25:
-		return 320
-	case crf == 26:
-		return 290
-	case crf == 27:
-		return 260
-	case crf == 28:
-		return 235
-	case crf == 29:
-		return 215
-	default: // 30+
-		return 200
-	}
+	i := Clamp(crf-cpuRatioBase, 0, len(cpuRatios)-1)
+	return cpuRatios[i]
 }
 
 func codecBias(codec string) int {
-	switch strings.ToLower(codec) {
-	case "hevc", "h265":
-		// HEVC→HEVC re-encoding gains almost nothing from the codec change;
-		// output is very close to or larger than input. Much higher bias
-		// than h264 sources which benefit from the h264→HEVC generation jump.
-		return 180
-	case "vp9", "av1":
-		// Already modern/efficient codecs — limited compression gain.
-		return 150
-	case "h264", "avc", "avc1":
-		return 100
-	case "mpeg2video", "mpeg4", "wmv3", "vc1":
-		return -60
-	default:
-		return 0
-	}
+	return codecBiases[strings.ToLower(codec)]
 }
 
 func resolutionBias(pixels int) int {
-	switch {
-	case pixels <= 854*480:
-		return 80
-	case pixels <= 1280*720:
-		return 40
-	case pixels >= 3840*2160:
-		return -40
-	default:
-		return 0
-	}
+	return tierLookup(resBiasTiers, pixels, -40)
 }
 
 func bitrateBias(kbps int) int {
-	switch {
-	case kbps < 1500:
-		return 120
-	case kbps < 3000:
-		return 70
-	case kbps > 30000:
-		return -50
-	case kbps > 15000:
-		return -20
-	default:
-		return 0
-	}
+	return tierLookup(bitrateBiasTiers, kbps, -50)
 }
 
 // OptimalBitrate computes a target output video bitrate (in kbps) based on
@@ -274,35 +161,14 @@ func OptimalBitrate(pr *probe.ProbeResult) int {
 		return inputKbps
 	}
 
-	// Base ratio: expected output/input percentage based on codec generation
-	// gain. h264→HEVC typically achieves 50-70% of input; legacy codecs
-	// compress much further; modern codecs offer minimal gain.
-	baseRatio := 68 // h264→HEVC default (higher = favor quality)
-	switch strings.ToLower(v.Codec) {
-	case "hevc", "h265":
-		baseRatio = 95 // HEVC→HEVC: almost no codec gain
-	case "vp9", "av1":
-		baseRatio = 90 // already efficient modern codecs
-	case "mpeg2video", "mpeg4", "wmv3", "vc1":
-		baseRatio = 45 // large generation gain from legacy codecs
+	baseRatio := 68 // h264→HEVC default
+	if r, ok := optimalCodecRatio[strings.ToLower(v.Codec)]; ok {
+		baseRatio = r
 	}
 
-	// Density adjustment: low-density (already compressed) sources can't be
-	// compressed as aggressively. High-density sources have more room.
 	pixels := v.Width * v.Height
 	density := Density(inputKbps, pixels)
-	switch {
-	case density < DensityUltraLow:
-		baseRatio += 30
-	case density < DensityLow:
-		baseRatio += 25
-	case density < DensityBelowAvg:
-		baseRatio += 12
-	case density > DensityVeryHigh:
-		baseRatio -= 8
-	case density > DensityHigh:
-		baseRatio -= 5
-	}
+	baseRatio += tierLookup(optDensityTiers, density, -8)
 
 	// Clamp ratio to sane range.
 	if baseRatio > 100 {
@@ -331,14 +197,14 @@ func OptimalBitrate(pr *probe.ProbeResult) int {
 // QP whose estimated midpoint output is closest to the target.
 func QPForTargetBitrate(cfg *config.Config, pr *probe.ProbeResult, targetKbps int) int {
 	if pr.VideoBitRate() <= 0 || targetKbps <= 0 {
-		return cfg.VaapiQP
+		return cfg.Encoder.VaapiQP
 	}
 
-	bestQP := cfg.VaapiQP
+	bestQP := cfg.Encoder.VaapiQP
 	bestDist := 1<<31 - 1
 
 	for qp := VaapiQPMin; qp <= VaapiQPMax; qp++ {
-		est := EstimateBitrate(cfg, pr, qp, cfg.CpuCRF)
+		est := EstimateBitrate(cfg, pr, qp, cfg.Encoder.CpuCRF)
 		if !est.Known {
 			continue
 		}
@@ -360,14 +226,14 @@ func QPForTargetBitrate(cfg *config.Config, pr *probe.ProbeResult, targetKbps in
 // biases. Analogous to QPForTargetBitrate for the CPU encoder.
 func CRFForTargetBitrate(cfg *config.Config, pr *probe.ProbeResult, targetKbps int) int {
 	if pr.VideoBitRate() <= 0 || targetKbps <= 0 {
-		return cfg.CpuCRF
+		return cfg.Encoder.CpuCRF
 	}
 
-	bestCRF := cfg.CpuCRF
+	bestCRF := cfg.Encoder.CpuCRF
 	bestDist := 1<<31 - 1
 
 	for crf := CpuCRFMin; crf <= CpuCRFMax; crf++ {
-		est := EstimateBitrate(cfg, pr, cfg.VaapiQP, crf)
+		est := EstimateBitrate(cfg, pr, cfg.Encoder.VaapiQP, crf)
 		if !est.Known {
 			continue
 		}
@@ -384,40 +250,9 @@ func CRFForTargetBitrate(cfg *config.Config, pr *probe.ProbeResult, targetKbps i
 	return bestCRF
 }
 
-// estimationDensityBias adjusts the ratio prediction for sources where the
-// bitrate is unusually low or high for the resolution. Low-density sources
-// (already compressed) produce higher output ratios because the encoder
-// can't compress already-degraded content further.
-//
-// VAAPI constant-QP output is determined by content complexity, not by
-// input bitrate. The ratio-based estimation model (output = input × ratio)
-// works well for high-bitrate sources with room to compress, but badly
-// underestimates output for low-density sources where the encoder produces
-// a similar absolute bitrate regardless of input.
-//
-// These biases correct the ratio prediction so the preflight check can
-// bump QP before encoding. They are intentionally aggressive for
-// density < 2500 kbps/Mpx because that's the range where VAAPI QP output
-// routinely meets or exceeds the input bitrate.
 func estimationDensityBias(kbps, pixels int) int {
 	if kbps <= 0 || pixels <= 0 {
 		return 0
 	}
-	density := Density(kbps, pixels)
-	switch {
-	case density < DensityUltraLow:
-		return 250
-	case density < DensityLow:
-		return 150
-	case density < DensityBelowAvg:
-		return 80
-	case density < DensityMedium:
-		return 20
-	case density > DensityVeryHigh:
-		return -20
-	case density > DensityHigh:
-		return -10
-	default:
-		return 0
-	}
+	return tierLookup(estDensityTiers, Density(kbps, pixels), -20)
 }

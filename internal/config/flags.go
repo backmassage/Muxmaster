@@ -77,21 +77,21 @@ type negatedFlags struct {
 
 // defineEncodingFlags registers -m/--mode, -q/--quality, --cpu-crf, --vaapi-qp, -p/--preset, --audio-bitrate.
 func defineEncodingFlags(fs *flag.FlagSet, cfg *Config) {
-	fs.Var(&encoderModeValue{&cfg.EncoderMode}, "mode", "Encoder mode: vaapi | cpu")
-	fs.Var(&encoderModeValue{&cfg.EncoderMode}, "m", "Same as --mode")
-	fs.StringVar(&cfg.QualityOverride, "quality", "", "Fixed quality for active mode (QP or CRF)")
-	fs.StringVar(&cfg.QualityOverride, "q", "", "Same as --quality")
-	fs.StringVar(&cfg.CpuCRFFixedOverride, "cpu-crf", "", "Fixed CPU CRF (overrides --quality in CPU mode)")
-	fs.StringVar(&cfg.VaapiQPFixedOverride, "vaapi-qp", "", "Fixed VAAPI QP (overrides --quality in VAAPI mode)")
-	fs.StringVar(&cfg.CpuPreset, "preset", cfg.CpuPreset, "x265 preset (e.g. slow, medium)")
-	fs.StringVar(&cfg.CpuPreset, "p", cfg.CpuPreset, "Same as --preset")
-	fs.StringVar(&cfg.AudioBitrate, "audio-bitrate", cfg.AudioBitrate, "Audio bitrate in Kbps (e.g. 128k, 320k)")
+	fs.Var(&encoderModeValue{&cfg.Encoder.Mode}, "mode", "Encoder mode: vaapi | cpu")
+	fs.Var(&encoderModeValue{&cfg.Encoder.Mode}, "m", "Same as --mode")
+	fs.StringVar(&cfg.Encoder.QualityOverride, "quality", "", "Fixed quality for active mode (QP or CRF)")
+	fs.StringVar(&cfg.Encoder.QualityOverride, "q", "", "Same as --quality")
+	fs.StringVar(&cfg.Encoder.CpuCRFFixedOverride, "cpu-crf", "", "Fixed CPU CRF (overrides --quality in CPU mode)")
+	fs.StringVar(&cfg.Encoder.VaapiQPFixedOverride, "vaapi-qp", "", "Fixed VAAPI QP (overrides --quality in VAAPI mode)")
+	fs.StringVar(&cfg.Encoder.CpuPreset, "preset", cfg.Encoder.CpuPreset, "x265 preset (e.g. slow, medium)")
+	fs.StringVar(&cfg.Encoder.CpuPreset, "p", cfg.Encoder.CpuPreset, "Same as --preset")
+	fs.StringVar(&cfg.Audio.Bitrate, "audio-bitrate", cfg.Audio.Bitrate, "Audio bitrate in Kbps (e.g. 128k, 320k)")
 }
 
 // defineContainerAndHDRFlags registers --container, --hdr, --no-deinterlace.
 func defineContainerAndHDRFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 	fs.Var(&containerValue{&cfg.OutputContainer}, "container", "Output container: mkv | mp4")
-	fs.Var(&hdrModeValue{&cfg.HandleHDR}, "hdr", "HDR handling: preserve | tonemap")
+	fs.Var(&hdrModeValue{&cfg.Encoder.HandleHDR}, "hdr", "HDR handling: preserve | tonemap")
 	fs.BoolVar(&n.noDeinterlace, "no-deinterlace", false, "Disable automatic deinterlace")
 }
 
@@ -100,9 +100,9 @@ func defineBehaviorFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "Preview only; do not encode or remux")
 	fs.BoolVar(&cfg.DryRun, "d", false, "Same as --dry-run")
 	fs.BoolVar(&n.noSkipHEVC, "no-skip-hevc", false, "Re-encode HEVC instead of remuxing")
-	fs.BoolVar(&cfg.SmartQuality, "smart-quality", cfg.SmartQuality, "Per-file quality adaptation")
+	fs.BoolVar(&cfg.Encoder.SmartQuality, "smart-quality", cfg.Encoder.SmartQuality, "Per-file quality adaptation")
 	fs.BoolVar(&cfg.CleanTimestamps, "clean-timestamps", cfg.CleanTimestamps, "Regenerate timestamps")
-	fs.BoolVar(&cfg.MatchAudioLayout, "match-audio-layout", cfg.MatchAudioLayout, "Normalize audio channel layout")
+	fs.BoolVar(&cfg.Audio.MatchLayout, "match-audio-layout", cfg.Audio.MatchLayout, "Normalize audio channel layout")
 	fs.BoolVar(&n.noFps, "no-fps", false, "Do not show live ffmpeg FPS")
 	fs.BoolVar(&n.noStats, "no-stats", false, "Hide per-file source stats")
 	fs.BoolVar(&n.noSubs, "no-subs", false, "Do not process subtitle streams")
@@ -122,15 +122,15 @@ func defineBehaviorFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 func defineDisplayFlags(fs *flag.FlagSet, cfg *Config, n *negatedFlags) {
 	fs.BoolVar(&n.forceColor, "color", false, "Force colored logs")
 	fs.BoolVar(&n.noColor, "no-color", false, "Disable colored logs")
-	fs.BoolVar(&cfg.ShowFfmpegFPS, "show-fps", cfg.ShowFfmpegFPS, "Show live ffmpeg FPS")
-	fs.BoolVar(&cfg.Verbose, "verbose", false, "Verbose output")
-	fs.BoolVar(&cfg.Verbose, "v", false, "Same as --verbose")
+	fs.BoolVar(&cfg.Display.FfmpegFPS, "show-fps", cfg.Display.FfmpegFPS, "Show live ffmpeg FPS")
+	fs.BoolVar(&cfg.Display.Verbose, "verbose", false, "Verbose output")
+	fs.BoolVar(&cfg.Display.Verbose, "v", false, "Same as --verbose")
 	fs.BoolVar(&cfg.CheckOnly, "check", false, "Run system diagnostics and exit")
 	fs.BoolVar(&cfg.CheckOnly, "c", false, "Same as --check")
 	fs.BoolVar(&cfg.AnalyzeOnly, "analyze", false, "Probe all files and print codec/bitrate table")
 	fs.BoolVar(&cfg.AnalyzeOnly, "a", false, "Same as --analyze")
-	fs.StringVar(&cfg.LogFile, "log", "", "Append logs to file")
-	fs.StringVar(&cfg.LogFile, "l", "", "Same as --log")
+	fs.StringVar(&cfg.Display.LogFile, "log", "", "Append logs to file")
+	fs.StringVar(&cfg.Display.LogFile, "l", "", "Same as --log")
 }
 
 // defineUtilityFlags registers --version and --help (both cause exit after printing).
@@ -142,19 +142,19 @@ func defineUtilityFlags(fs *flag.FlagSet, _ *Config, n *negatedFlags) {
 	fs.BoolVar(&n.showHelp, "h", false, "Same as --help")
 }
 
-// applyNegatedFlags copies negated and override flag values into cfg (e.g. noFps -> ShowFfmpegFPS=false).
+// applyNegatedFlags copies negated and override flag values into cfg (e.g. noFps -> Display.FfmpegFPS=false).
 func applyNegatedFlags(cfg *Config, n *negatedFlags) {
 	if n.noDeinterlace {
-		cfg.DeinterlaceAuto = false
+		cfg.Encoder.DeinterlaceAuto = false
 	}
 	if n.noSkipHEVC {
 		cfg.SkipHEVC = false
 	}
 	if n.noFps {
-		cfg.ShowFfmpegFPS = false
+		cfg.Display.FfmpegFPS = false
 	}
 	if n.noStats {
-		cfg.ShowFileStats = false
+		cfg.Display.FileStats = false
 	}
 	if n.noSubs {
 		cfg.KeepSubtitles = false
@@ -163,21 +163,21 @@ func applyNegatedFlags(cfg *Config, n *negatedFlags) {
 		cfg.KeepAttachments = false
 	}
 	if n.noSmartQuality {
-		cfg.SmartQuality = false
+		cfg.Encoder.SmartQuality = false
 	}
 	if n.noCleanTimestamps {
 		cfg.CleanTimestamps = false
 	}
 	if n.noMatchLayout {
-		cfg.MatchAudioLayout = false
+		cfg.Audio.MatchLayout = false
 	}
 	if n.force {
 		cfg.SkipExisting = false
 	}
 	if n.noColor {
-		cfg.ColorMode = ColorNever
+		cfg.Display.ColorMode = ColorNever
 	} else if n.forceColor {
-		cfg.ColorMode = ColorAlways
+		cfg.Display.ColorMode = ColorAlways
 	}
 }
 
@@ -202,42 +202,42 @@ func parsePositionalArgs(fs *flag.FlagSet, cfg *Config) error {
 	return nil
 }
 
-// applyQualityPrecedence sets VaapiQP/CpuCRF and ActiveQualityOverride.
+// applyQualityPrecedence sets Encoder.VaapiQP/CpuCRF and Encoder.ActiveQualityOverride.
 // Precedence: mode-specific override (--vaapi-qp / --cpu-crf) > --quality > defaults.
 func applyQualityPrecedence(cfg *Config) error {
-	cfg.ActiveQualityOverride = ""
-	if cfg.EncoderMode == EncoderVAAPI {
-		if cfg.VaapiQPFixedOverride != "" {
-			q, err := parseInt(cfg.VaapiQPFixedOverride, "VAAPI QP")
+	cfg.Encoder.ActiveQualityOverride = ""
+	if cfg.Encoder.Mode == EncoderVAAPI {
+		if cfg.Encoder.VaapiQPFixedOverride != "" {
+			q, err := parseInt(cfg.Encoder.VaapiQPFixedOverride, "VAAPI QP")
 			if err != nil {
 				return err
 			}
-			cfg.VaapiQP = q
-			cfg.ActiveQualityOverride = cfg.VaapiQPFixedOverride
-		} else if cfg.QualityOverride != "" {
-			q, err := parseInt(cfg.QualityOverride, "quality")
+			cfg.Encoder.VaapiQP = q
+			cfg.Encoder.ActiveQualityOverride = cfg.Encoder.VaapiQPFixedOverride
+		} else if cfg.Encoder.QualityOverride != "" {
+			q, err := parseInt(cfg.Encoder.QualityOverride, "quality")
 			if err != nil {
 				return err
 			}
-			cfg.VaapiQP = q
-			cfg.ActiveQualityOverride = cfg.QualityOverride
+			cfg.Encoder.VaapiQP = q
+			cfg.Encoder.ActiveQualityOverride = cfg.Encoder.QualityOverride
 		}
 		return nil
 	}
-	if cfg.CpuCRFFixedOverride != "" {
-		q, err := parseInt(cfg.CpuCRFFixedOverride, "CPU CRF")
+	if cfg.Encoder.CpuCRFFixedOverride != "" {
+		q, err := parseInt(cfg.Encoder.CpuCRFFixedOverride, "CPU CRF")
 		if err != nil {
 			return err
 		}
-		cfg.CpuCRF = q
-		cfg.ActiveQualityOverride = cfg.CpuCRFFixedOverride
-	} else if cfg.QualityOverride != "" {
-		q, err := parseInt(cfg.QualityOverride, "quality")
+		cfg.Encoder.CpuCRF = q
+		cfg.Encoder.ActiveQualityOverride = cfg.Encoder.CpuCRFFixedOverride
+	} else if cfg.Encoder.QualityOverride != "" {
+		q, err := parseInt(cfg.Encoder.QualityOverride, "quality")
 		if err != nil {
 			return err
 		}
-		cfg.CpuCRF = q
-		cfg.ActiveQualityOverride = cfg.QualityOverride
+		cfg.Encoder.CpuCRF = q
+		cfg.Encoder.ActiveQualityOverride = cfg.Encoder.QualityOverride
 	}
 	return nil
 }

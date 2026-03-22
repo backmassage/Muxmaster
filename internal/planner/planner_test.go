@@ -52,7 +52,7 @@ func TestBuildPlan_SkipHEVCDisabled(t *testing.T) {
 
 func TestBuildPlan_CPUMode(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.Mode = config.EncoderCPU
 	plan := BuildPlan(cfg, h264SDR())
 	if plan.VideoCodec != "libx265" {
 		t.Errorf("codec: got %q, want libx265", plan.VideoCodec)
@@ -110,8 +110,8 @@ func TestBuildPlan_EncodeRespectsCleanTimestamps(t *testing.T) {
 
 func TestSmartQuality_ManualOverride(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.ActiveQualityOverride = "22"
-	cfg.VaapiQP = 22
+	cfg.Encoder.ActiveQualityOverride = "22"
+	cfg.Encoder.VaapiQP = 22
 	q := SmartQuality(cfg, h264SDR())
 	if q.VaapiQP != 22 {
 		t.Errorf("VaapiQP: got %d, want 22", q.VaapiQP)
@@ -123,9 +123,9 @@ func TestSmartQuality_ManualOverride(t *testing.T) {
 
 func TestSmartQuality_Disabled(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.SmartQuality = false
+	cfg.Encoder.SmartQuality = false
 	q := SmartQuality(cfg, h264SDR())
-	if q.VaapiQP != cfg.VaapiQP || q.CpuCRF != cfg.CpuCRF {
+	if q.VaapiQP != cfg.Encoder.VaapiQP || q.CpuCRF != cfg.Encoder.CpuCRF {
 		t.Errorf("disabled: want config defaults, got QP=%d CRF=%d", q.VaapiQP, q.CpuCRF)
 	}
 }
@@ -159,14 +159,14 @@ func TestSmartQuality_4K(t *testing.T) {
 
 func TestSmartQuality_BiasApplied(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.SmartQualityBias = -1
+	cfg.Encoder.SmartQualityBias = -1
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Width: 1920, Height: 1080, BitRate: 8000000},
 		Format:       probe.FormatInfo{BitRate: 9000000},
 	}
 	q1 := SmartQuality(cfg, pr)
 
-	cfg.SmartQualityBias = 0
+	cfg.Encoder.SmartQualityBias = 0
 	q2 := SmartQuality(cfg, pr)
 
 	// Bias=-1 should produce lower values than bias=0.
@@ -463,7 +463,7 @@ func TestBuildVideoFilter_VaapiDefault(t *testing.T) {
 
 func TestBuildVideoFilter_CPUNoFilter(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.Mode = config.EncoderCPU
 	f := BuildVideoFilter(cfg, h264SDR(), false)
 	if f != "" {
 		t.Errorf("CPU + progressive + SDR should have no filter, got %q", f)
@@ -472,7 +472,7 @@ func TestBuildVideoFilter_CPUNoFilter(t *testing.T) {
 
 func TestBuildVideoFilter_Deinterlace(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.Mode = config.EncoderCPU
 	f := BuildVideoFilter(cfg, interlacedFile(), false)
 	if !strings.Contains(f, "yadif=mode=send_frame:parity=auto:deint=interlaced") {
 		t.Errorf("interlaced should have full yadif, got %q", f)
@@ -481,8 +481,8 @@ func TestBuildVideoFilter_Deinterlace(t *testing.T) {
 
 func TestBuildVideoFilter_DeinterlaceDisabled(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.DeinterlaceAuto = false
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.DeinterlaceAuto = false
+	cfg.Encoder.Mode = config.EncoderCPU
 	f := BuildVideoFilter(cfg, interlacedFile(), false)
 	if strings.Contains(f, "yadif") {
 		t.Errorf("DeinterlaceAuto=false should not produce yadif, got %q", f)
@@ -491,8 +491,8 @@ func TestBuildVideoFilter_DeinterlaceDisabled(t *testing.T) {
 
 func TestBuildVideoFilter_HDRTonemap(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.HandleHDR = config.HDRTonemap
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.HandleHDR = config.HDRTonemap
+	cfg.Encoder.Mode = config.EncoderCPU
 	cfg.SkipHEVC = false
 	f := BuildVideoFilter(cfg, hdr10File(), false)
 	if !strings.Contains(f, "tonemap") || !strings.Contains(f, "hable") {
@@ -502,8 +502,8 @@ func TestBuildVideoFilter_HDRTonemap(t *testing.T) {
 
 func TestBuildVideoFilter_HDRPreserve(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.HandleHDR = config.HDRPreserve
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.HandleHDR = config.HDRPreserve
+	cfg.Encoder.Mode = config.EncoderCPU
 	cfg.SkipHEVC = false
 	f := BuildVideoFilter(cfg, hdr10File(), false)
 	if strings.Contains(f, "tonemap") {
@@ -513,33 +513,45 @@ func TestBuildVideoFilter_HDRPreserve(t *testing.T) {
 
 // --- Hardware decode filter tests ---
 
-func TestBuildVideoFilter_HWDecode_NoFilters(t *testing.T) {
+func TestBuildVideoFilter_HWDecode_FormatConversion(t *testing.T) {
 	cfg := defaultCfg()
 	f := BuildVideoFilter(cfg, h264SDR(), true)
-	if f != "" {
-		t.Errorf("HW decode + progressive + SDR should have no filter, got %q", f)
+	want := "scale_vaapi=format=p010"
+	if f != want {
+		t.Errorf("HW decode + progressive + SDR should have %q, got %q", want, f)
 	}
 }
 
 func TestBuildVideoFilter_HWDecode_Deinterlace(t *testing.T) {
 	cfg := defaultCfg()
 	f := BuildVideoFilter(cfg, interlacedFile(), true)
-	if f != "deinterlace_vaapi" {
-		t.Errorf("HW decode + interlaced should use deinterlace_vaapi, got %q", f)
+	want := "deinterlace_vaapi,scale_vaapi=format=p010"
+	if f != want {
+		t.Errorf("HW decode + interlaced: want %q, got %q", want, f)
 	}
 }
 
 func TestBuildVideoFilter_HWDecode_NoHwupload(t *testing.T) {
 	cfg := defaultCfg()
 	f := BuildVideoFilter(cfg, h264SDR(), true)
-	if strings.Contains(f, "hwupload") || strings.Contains(f, "format=") {
-		t.Errorf("HW decode should not have hwupload or format conversion, got %q", f)
+	if strings.Contains(f, "hwupload") {
+		t.Errorf("HW decode should not have hwupload, got %q", f)
+	}
+}
+
+func TestBuildVideoFilter_HWDecode_8bitProfile(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.VaapiSwFormat = "nv12"
+	f := BuildVideoFilter(cfg, h264SDR(), true)
+	want := "scale_vaapi=format=nv12"
+	if f != want {
+		t.Errorf("HW decode + main profile: want %q, got %q", want, f)
 	}
 }
 
 func TestBuildColorOpts_HDRPreserve(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.HandleHDR = config.HDRPreserve
+	cfg.Encoder.HandleHDR = config.HDRPreserve
 	opts := BuildColorOpts(cfg, hdr10File())
 	if len(opts) != 6 {
 		t.Fatalf("expected 6 color opts (3 pairs), got %d: %v", len(opts), opts)
@@ -549,6 +561,53 @@ func TestBuildColorOpts_HDRPreserve(t *testing.T) {
 	}
 	if opts[3] != "bt2020" {
 		t.Errorf("color_primaries: got %q", opts[3])
+	}
+}
+
+func TestBuildHDR10Meta_Preserve(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.HandleHDR = config.HDRPreserve
+	plan := &FilePlan{}
+	BuildHDR10Meta(cfg, hdr10File(), plan)
+	wantMD := "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50)"
+	if plan.MasterDisplay != wantMD {
+		t.Errorf("MasterDisplay: got %q, want %q", plan.MasterDisplay, wantMD)
+	}
+	if plan.MaxCLL != "1000,400" {
+		t.Errorf("MaxCLL: got %q, want 1000,400", plan.MaxCLL)
+	}
+}
+
+func TestBuildHDR10Meta_NoMetadata(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.HandleHDR = config.HDRPreserve
+	plan := &FilePlan{}
+	BuildHDR10Meta(cfg, hdr10NoMeta(), plan)
+	if plan.MasterDisplay != "" {
+		t.Errorf("MasterDisplay should be empty without side data, got %q", plan.MasterDisplay)
+	}
+	if plan.MaxCLL != "" {
+		t.Errorf("MaxCLL should be empty without side data, got %q", plan.MaxCLL)
+	}
+}
+
+func TestBuildHDR10Meta_Tonemap(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.HandleHDR = config.HDRTonemap
+	plan := &FilePlan{}
+	BuildHDR10Meta(cfg, hdr10File(), plan)
+	if plan.MasterDisplay != "" || plan.MaxCLL != "" {
+		t.Error("HDR tonemap should not populate HDR10 metadata")
+	}
+}
+
+func TestBuildHDR10Meta_SDR(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.HandleHDR = config.HDRPreserve
+	plan := &FilePlan{}
+	BuildHDR10Meta(cfg, h264SDR(), plan)
+	if plan.MasterDisplay != "" || plan.MaxCLL != "" {
+		t.Error("SDR content should not populate HDR10 metadata")
 	}
 }
 
@@ -699,7 +758,7 @@ func TestBuildAudioPlan_MixedAACHighBitrateAndNonAAC(t *testing.T) {
 
 func TestBuildAudioPlan_ChannelClamp(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.AudioChannels = 2
+	cfg.Audio.Channels = 2
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
 		AudioStreams: []probe.AudioStream{{Codec: "dts", Channels: 8, SampleRate: 48000}},
@@ -712,7 +771,7 @@ func TestBuildAudioPlan_ChannelClamp(t *testing.T) {
 
 func TestBuildAudioPlan_LayoutFilter(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.MatchAudioLayout = true
+	cfg.Audio.MatchLayout = true
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
 		AudioStreams: []probe.AudioStream{{Codec: "ac3", Channels: 2, SampleRate: 48000}},
@@ -732,8 +791,8 @@ func TestBuildAudioPlan_LayoutFilter(t *testing.T) {
 
 func TestBuildAudioPlan_LayoutFilterMono(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.MatchAudioLayout = true
-	cfg.AudioChannels = 1
+	cfg.Audio.MatchLayout = true
+	cfg.Audio.Channels = 1
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
 		AudioStreams: []probe.AudioStream{{Codec: "ac3", Channels: 1, SampleRate: 48000}},
@@ -746,7 +805,7 @@ func TestBuildAudioPlan_LayoutFilterMono(t *testing.T) {
 
 func TestBuildAudioPlan_NoLayoutFilter(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.MatchAudioLayout = false
+	cfg.Audio.MatchLayout = false
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
 		AudioStreams: []probe.AudioStream{{Codec: "ac3", Channels: 2, SampleRate: 48000}},
@@ -759,8 +818,8 @@ func TestBuildAudioPlan_NoLayoutFilter(t *testing.T) {
 
 func TestBuildAudioPlan_HighChannelNoLayout(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.MatchAudioLayout = true
-	cfg.AudioChannels = 6
+	cfg.Audio.MatchLayout = true
+	cfg.Audio.Channels = 6
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
 		AudioStreams: []probe.AudioStream{{Codec: "dts", Channels: 6, SampleRate: 48000}},
@@ -991,11 +1050,17 @@ func TestFullPlan_HDRPreserve(t *testing.T) {
 	if !plan.HWDecode {
 		t.Error("HDR preserve (no tonemap) should enable HW decode")
 	}
-	if plan.VideoFilters != "" {
-		t.Errorf("HW decode + progressive + HDR preserve should have no filters, got %q", plan.VideoFilters)
+	if !strings.Contains(plan.VideoFilters, "scale_vaapi=format=") {
+		t.Errorf("HW decode should have scale_vaapi format conversion, got %q", plan.VideoFilters)
 	}
 	if strings.Contains(plan.VideoFilters, "tonemap") {
 		t.Error("HDR preserve should NOT tonemap")
+	}
+	if plan.MasterDisplay == "" {
+		t.Error("HDR preserve should populate MasterDisplay from probe side_data")
+	}
+	if plan.MaxCLL == "" {
+		t.Error("HDR preserve should populate MaxCLL from probe side_data")
 	}
 }
 
@@ -1004,14 +1069,17 @@ func TestFullPlan_InterlacedVAAPI(t *testing.T) {
 	if !plan.HWDecode {
 		t.Error("interlaced VAAPI should enable HW decode")
 	}
-	if plan.VideoFilters != "deinterlace_vaapi" {
-		t.Errorf("interlaced VAAPI with HW decode should use deinterlace_vaapi, got %q", plan.VideoFilters)
+	if !strings.Contains(plan.VideoFilters, "deinterlace_vaapi") {
+		t.Errorf("interlaced VAAPI should include deinterlace_vaapi, got %q", plan.VideoFilters)
+	}
+	if !strings.Contains(plan.VideoFilters, "scale_vaapi=format=") {
+		t.Errorf("interlaced VAAPI should include scale_vaapi format, got %q", plan.VideoFilters)
 	}
 }
 
 func TestFullPlan_HDRTonemap_SoftwareDecode(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.HandleHDR = config.HDRTonemap
+	cfg.Encoder.HandleHDR = config.HDRTonemap
 	cfg.SkipHEVC = false
 	plan := BuildPlan(cfg, hdr10File())
 
@@ -1193,7 +1261,7 @@ func TestSmartQuality_Matrix(t *testing.T) {
 
 func TestBuildPlan_CPUMaxRate(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.Mode = config.EncoderCPU
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{
 			Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000,
@@ -1220,7 +1288,7 @@ func TestBuildPlan_CPUMaxRate(t *testing.T) {
 
 func TestBuildPlan_VaapiNoMaxRate(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.EncoderMode = config.EncoderVAAPI
+	cfg.Encoder.Mode = config.EncoderVAAPI
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{
 			Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000,
@@ -1235,7 +1303,7 @@ func TestBuildPlan_VaapiNoMaxRate(t *testing.T) {
 
 func TestBuildPlan_RemuxNoMaxRate(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.Mode = config.EncoderCPU
 	cfg.SkipHEVC = true
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{
@@ -1367,7 +1435,7 @@ func TestQPForTargetBitrate_Correctness(t *testing.T) {
 	}
 
 	// Verify the estimate at this QP is close to target.
-	est := EstimateBitrate(cfg, pr, qp, cfg.CpuCRF)
+	est := EstimateBitrate(cfg, pr, qp, cfg.Encoder.CpuCRF)
 	if est.Known {
 		mid := (est.LowKbps + est.HighKbps) / 2
 		tolerance := 2000 // within 2 Mbps
@@ -1387,7 +1455,7 @@ func TestQPForTargetBitrate_Correctness(t *testing.T) {
 
 func TestCRFForTargetBitrate_Correctness(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.Mode = config.EncoderCPU
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{Codec: "h264", Width: 1920, Height: 1080, BitRate: 8000000},
 		Format:       probe.FormatInfo{BitRate: 9000000},
@@ -1406,7 +1474,7 @@ func TestCRFForTargetBitrate_Correctness(t *testing.T) {
 
 func TestBuildPlan_OptimalBitrate_VAAPI(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.EncoderMode = config.EncoderVAAPI
+	cfg.Encoder.Mode = config.EncoderVAAPI
 
 	tests := []struct {
 		label string
@@ -1447,7 +1515,7 @@ func TestBuildPlan_OptimalBitrate_VAAPI(t *testing.T) {
 
 func TestBuildPlan_OptimalBitrate_CPU(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.EncoderMode = config.EncoderCPU
+	cfg.Encoder.Mode = config.EncoderCPU
 
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{
@@ -1470,9 +1538,9 @@ func TestBuildPlan_OptimalBitrate_CPU(t *testing.T) {
 
 func TestBuildPlan_ManualOverride_SkipsOptimal(t *testing.T) {
 	cfg := defaultCfg()
-	cfg.ActiveQualityOverride = "20"
-	cfg.VaapiQP = 20
-	cfg.CpuCRF = 20
+	cfg.Encoder.ActiveQualityOverride = "20"
+	cfg.Encoder.VaapiQP = 20
+	cfg.Encoder.CpuCRF = 20
 
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{
@@ -1583,7 +1651,7 @@ func TestFullPipeline_DebugMatrix(t *testing.T) {
 			name := fmt.Sprintf("%s/%s", mode, s.label)
 			t.Run(name, func(t *testing.T) {
 				cfg := defaultCfg()
-				cfg.EncoderMode = mode
+				cfg.Encoder.Mode = mode
 				pr := &probe.ProbeResult{
 					PrimaryVideo: &probe.VideoStream{
 						Codec: s.codec, Width: s.width, Height: s.height,

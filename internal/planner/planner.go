@@ -62,12 +62,12 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 	// resolution, and density. This drives both the VAAPI QP selection and
 	// the CPU maxrate ceiling, avoiding wasteful first-pass encodes that
 	// produce output larger than the input.
-	if plan.Action == ActionEncode && cfg.ActiveQualityOverride == "" && cfg.SmartQuality {
+	if plan.Action == ActionEncode && cfg.Encoder.ActiveQualityOverride == "" && cfg.Encoder.SmartQuality {
 		optKbps := OptimalBitrate(pr)
 		plan.OptimalBitrateKbps = optKbps
 
 		if optKbps > 0 {
-			if cfg.EncoderMode == config.EncoderVAAPI {
+			if cfg.Encoder.Mode == config.EncoderVAAPI {
 				targetQP := QPForTargetBitrate(cfg, pr, optKbps)
 				if targetQP > plan.VaapiQP {
 					ceiling := plan.VaapiQP + MaxOptimalOverride
@@ -106,7 +106,7 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 	// CRF can target quality but never produce output larger than what we
 	// expect. VAAPI constant-QP mode does not support -maxrate; the QP
 	// targeting above handles VAAPI instead.
-	if plan.Action == ActionEncode && cfg.EncoderMode == config.EncoderCPU {
+	if plan.Action == ActionEncode && cfg.Encoder.Mode == config.EncoderCPU {
 		inputKbps := int(pr.VideoBitRate() / 1000)
 		if inputKbps > 0 {
 			// Use optimal bitrate + 15% headroom as ceiling, capped at
@@ -128,20 +128,21 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 	case ActionRemux:
 		plan.VideoCodec = "copy"
 	case ActionEncode:
-		switch cfg.EncoderMode {
+		switch cfg.Encoder.Mode {
 		case config.EncoderVAAPI:
 			plan.VideoCodec = "hevc_vaapi"
 		case config.EncoderCPU:
 			plan.VideoCodec = "libx265"
 		}
 
-		needsHDRTonemap := pr.HDRType() == "hdr10" && cfg.HandleHDR == config.HDRTonemap
-		if cfg.EncoderMode == config.EncoderVAAPI && !needsHDRTonemap {
+		needsHDRTonemap := pr.HDRType() == "hdr10" && cfg.Encoder.HandleHDR == config.HDRTonemap
+		if cfg.Encoder.Mode == config.EncoderVAAPI && !needsHDRTonemap {
 			plan.HWDecode = true
 		}
 
 		plan.VideoFilters = BuildVideoFilter(cfg, pr, plan.HWDecode)
 		plan.ColorOpts = BuildColorOpts(cfg, pr)
+		BuildHDR10Meta(cfg, pr, plan)
 	}
 
 	// --- 4. Audio ---
