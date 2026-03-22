@@ -97,7 +97,7 @@ cmd/main.go
 
 | Package | Depends on | Role |
 |---|---|---|
-| `pipeline` | config, logging, probe, naming, planner, ffmpeg, display, term | Batch orchestration: discover → process → summarize |
+| `pipeline` | config, probe, naming, planner, ffmpeg, display, term | Batch orchestration: discover → process → summarize |
 | `planner` | config, probe | Per-file encode/remux/skip decisions + quality |
 | `ffmpeg` | config, planner | Command building, execution, error classification, retry |
 | `display` | term | Banner printing, byte/bitrate formatters |

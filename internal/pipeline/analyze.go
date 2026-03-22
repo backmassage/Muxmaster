@@ -12,7 +12,6 @@ import (
 
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/display"
-	"github.com/backmassage/muxmaster/internal/logging"
 	"github.com/backmassage/muxmaster/internal/probe"
 	"github.com/backmassage/muxmaster/internal/term"
 )
@@ -28,7 +27,7 @@ type fileRow struct {
 
 // Analyze discovers media files, probes each one, and prints a tabular
 // codec/bitrate report with statistical outlier highlighting.
-func Analyze(ctx context.Context, cfg *config.Config, log *logging.Logger) {
+func Analyze(ctx context.Context, cfg *config.Config, log Logger) {
 	files, err := Discover(cfg.InputDir)
 	if err != nil {
 		log.Error("File discovery failed: %v", err)
@@ -251,7 +250,7 @@ func printAnalysisTable(rows []fileRow, vStats iqrBounds) (outliers, extremes in
 	return outliers, extremes
 }
 
-func printAnalysisSummary(log *logging.Logger, probed, skipped, outliers, extremes int, vStats iqrBounds) {
+func printAnalysisSummary(log Logger, probed, skipped, outliers, extremes int, vStats iqrBounds) {
 	log.Info("Results: %d probed, %d skipped", probed, skipped)
 
 	if vStats.valid {

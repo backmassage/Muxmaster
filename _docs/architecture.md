@@ -38,6 +38,7 @@ cmd (CLI entrypoint)
   -> check
   -> display
   -> pipeline
+  -> ffmpeg
 
 term
   -> config
@@ -62,7 +63,6 @@ ffmpeg
 
 pipeline (orchestrator)
   -> config
-  -> logging
   -> probe
   -> naming
   -> planner

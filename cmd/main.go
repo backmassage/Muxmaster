@@ -15,6 +15,7 @@ import (
 	"github.com/backmassage/muxmaster/internal/check"
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/display"
+	"github.com/backmassage/muxmaster/internal/ffmpeg"
 	"github.com/backmassage/muxmaster/internal/logging"
 	"github.com/backmassage/muxmaster/internal/pipeline"
 )
@@ -125,7 +126,8 @@ func run() int {
 	ctx, cancel := signalContext(log)
 	defer cancel()
 
-	stats := pipeline.Run(ctx, &cfg, log)
+	run := ffmpeg.NewRunFunc(cfg.Display.Verbose || cfg.Display.FfmpegFPS)
+	stats := pipeline.Run(ctx, &cfg, log, run)
 
 	if ctx.Err() != nil {
 		return 1

@@ -11,7 +11,6 @@ import (
 
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/ffmpeg"
-	"github.com/backmassage/muxmaster/internal/logging"
 	"github.com/backmassage/muxmaster/internal/naming"
 	"github.com/backmassage/muxmaster/internal/planner"
 	"github.com/backmassage/muxmaster/internal/probe"
@@ -22,8 +21,9 @@ const minFileSize = 1000
 
 // Run is the top-level batch entry point. It discovers files, builds the
 // TV year-variant index, processes each file sequentially, and returns
-// aggregate stats.
-func Run(ctx context.Context, cfg *config.Config, log *logging.Logger) RunStats {
+// aggregate stats. The run parameter controls how ffmpeg subprocesses are
+// launched; production callers pass ffmpeg.NewRunFunc, tests pass a mock.
+func Run(ctx context.Context, cfg *config.Config, log Logger, run ffmpeg.RunFunc) RunStats {
 	var stats RunStats
 
 	files, err := Discover(cfg.InputDir)
@@ -46,7 +46,7 @@ func Run(ctx context.Context, cfg *config.Config, log *logging.Logger) RunStats 
 			break
 		}
 
-		processFile(ctx, cfg, log, path, &stats, yearIndex, resolver)
+		processFile(ctx, cfg, log, path, &stats, yearIndex, resolver, run)
 	}
 
 	logSummary(cfg, log, &stats)
@@ -57,11 +57,12 @@ func Run(ctx context.Context, cfg *config.Config, log *logging.Logger) RunStats 
 func processFile(
 	ctx context.Context,
 	cfg *config.Config,
-	log *logging.Logger,
+	log Logger,
 	path string,
 	stats *RunStats,
 	yearIndex naming.YearVariantIndex,
 	resolver *naming.CollisionResolver,
+	run ffmpeg.RunFunc,
 ) {
 	basename := filepath.Base(path)
 	log.Info("[%d/%d] %s%s%s", stats.Current, stats.Total, term.Cyan, basename, term.NC)
@@ -190,7 +191,7 @@ func processFile(
 	// --- Execute with retry ---
 	start := time.Now()
 	rs := ffmpeg.NewRetryState(plan)
-	ok := executeWithRetry(ctx, cfg, log, plan, rs)
+	ok := executeWithRetry(ctx, cfg, log, plan, rs, run)
 
 	if !ok {
 		if plan.Action == planner.ActionRemux {
@@ -241,15 +242,16 @@ const (
 func executeWithRetry(
 	ctx context.Context,
 	cfg *config.Config,
-	log *logging.Logger,
+	log Logger,
 	plan *planner.FilePlan,
 	rs *ffmpeg.RetryState,
+	run ffmpeg.RunFunc,
 ) bool {
 	if ctx.Err() != nil {
 		return false
 	}
 
-	if !attemptWithErrorRetry(ctx, cfg, log, plan, rs) {
+	if !attemptWithErrorRetry(ctx, cfg, log, plan, rs, run) {
 		return false
 	}
 
@@ -291,7 +293,7 @@ func executeWithRetry(
 		if ctx.Err() != nil {
 			return false
 		}
-		if !attemptWithErrorRetry(ctx, cfg, log, plan, rs) {
+		if !attemptWithErrorRetry(ctx, cfg, log, plan, rs, run) {
 			return false
 		}
 	}
@@ -325,9 +327,10 @@ func outputPct(plan *planner.FilePlan) (int, bool) {
 func attemptWithErrorRetry(
 	ctx context.Context,
 	cfg *config.Config,
-	log *logging.Logger,
+	log Logger,
 	plan *planner.FilePlan,
 	rs *ffmpeg.RetryState,
+	run ffmpeg.RunFunc,
 ) bool {
 	retryLabels := map[ffmpeg.RetryAction]string{
 		ffmpeg.RetryDropAttach:    "skip attachments",
@@ -337,7 +340,7 @@ func attemptWithErrorRetry(
 	}
 
 	for {
-		result := ffmpeg.Execute(ctx, cfg, plan, rs)
+		result := ffmpeg.Execute(ctx, cfg, plan, rs, run)
 		if result.Err == nil {
 			return true
 		}

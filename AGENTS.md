@@ -26,7 +26,7 @@ Plain `go build ./cmd` works but skips version/commit injection.
 Dependencies flow top-down. Never introduce upward or circular dependencies.
 
 ```
-cmd/main.go           → config, logging, check, display, pipeline
+cmd/main.go           → config, logging, check, display, pipeline, ffmpeg
 internal/config       → (nothing internal)
 internal/term         → config
 internal/logging      → config, term
@@ -36,7 +36,7 @@ internal/probe        → (nothing internal — pure logic + ffprobe)
 internal/naming       → (nothing internal — pure logic)
 internal/planner      → config, probe
 internal/ffmpeg       → config, planner
-internal/pipeline     → config, logging, probe, naming, planner, ffmpeg, display, term
+internal/pipeline     → config, probe, naming, planner, ffmpeg, display, term
 ```
 
 **Leaf packages** (`config`, `probe`, `naming`) must stay dependency-free. `term` is near-leaf (imports only `config`).
@@ -88,6 +88,7 @@ than destroying quality. The post-encode loop handles genuine blowups.
 ## Key conventions
 
 - Config struct uses sub-structs: `cfg.Encoder.*` (video encoder), `cfg.Audio.*` (audio), `cfg.Display.*` (logging/output). Pipeline behavior flags remain at the top level.
+- Testability seams: `pipeline.Logger` interface decouples runner/report from `*logging.Logger`; `ffmpeg.RunFunc` decouples `Execute` from real subprocesses. Both accept mocks in tests.
 - VAAPI constant-QP encoding; CPU uses CRF with maxrate ceiling.
 - VAAPI hardware decode enabled by default (full GPU pipeline); falls back to software decode for HDR tonemap.
 - HDR10 static metadata (mastering display + MaxCLL/MaxFALL) parsed from ffprobe `side_data_list`. CPU mode injects via `-x265-params`; VAAPI relies on frame side-data passthrough.
