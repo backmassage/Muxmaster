@@ -3,6 +3,7 @@ package planner
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/probe"
@@ -107,7 +108,7 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 	// expect. VAAPI constant-QP mode does not support -maxrate; the QP
 	// targeting above handles VAAPI instead.
 	if plan.Action == ActionEncode && cfg.Encoder.Mode == config.EncoderCPU {
-		inputKbps := int(pr.VideoBitRate() / 1000)
+		inputKbps := VideoBitrateKbps(pr)
 		if inputKbps > 0 {
 			// Use optimal bitrate + 15% headroom as ceiling, capped at
 			// input bitrate (never exceed the source).
@@ -136,7 +137,7 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		}
 
 		needsHDRTonemap := pr.HDRType() == "hdr10" && cfg.Encoder.HandleHDR == config.HDRTonemap
-		if cfg.Encoder.Mode == config.EncoderVAAPI && !needsHDRTonemap {
+		if cfg.Encoder.Mode == config.EncoderVAAPI && !needsHDRTonemap && vaapiHWDecodeViable(pr) {
 			plan.HWDecode = true
 		}
 
@@ -167,4 +168,28 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		plan.VideoStreamIdx = v.Index
 	}
 	return plan
+}
+
+// vaapiHWDecodeViable is false when VAAPI hardware decode is known to fail for
+// typical drivers while software decode + hwupload still works. Hi10p AVC
+// (H.264 + 10-bit pix_fmt) triggers "hwaccel initialisation returned error"
+// on many stacks; ffmpeg then feeds CPU frames into a scale_vaapi graph.
+func vaapiHWDecodeViable(pr *probe.ProbeResult) bool {
+	v := pr.PrimaryVideo
+	if v == nil {
+		return true
+	}
+	if isAVCCodec(v.Codec) && probe.PixFmtIs10Bit(v.PixFmt) {
+		return false
+	}
+	return true
+}
+
+func isAVCCodec(codec string) bool {
+	switch strings.ToLower(strings.TrimSpace(codec)) {
+	case "h264", "avc", "avc1":
+		return true
+	default:
+		return false
+	}
 }

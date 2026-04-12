@@ -15,9 +15,7 @@ var (
 			`Could not find tag for codec .* in stream .*subtitle|` +
 			`Error initializing output stream .*subtitle|` +
 			`Error while opening encoder for output stream .*subtitle|` +
-			`Subtitle encoding currently only possible from text to text or bitmap to bitmap|` +
-			`Unknown encoder|` +
-			`Codec .* is not supported`)
+			`Subtitle encoding currently only possible from text to text or bitmap to bitmap`)
 
 	reMuxQueueOverflow = regexp.MustCompile(
 		`Too many packets buffered for output stream`)

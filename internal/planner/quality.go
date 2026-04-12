@@ -47,7 +47,7 @@ func SmartQuality(cfg *config.Config, pr *probe.ProbeResult) QualityResult {
 		resLabel = fmt.Sprintf("%dx%d", v.Width, v.Height)
 	}
 
-	bitrateKbps := int(pr.VideoBitRate() / 1000)
+	bitrateKbps := VideoBitrateKbps(pr)
 	bitrateLabel := "unknown"
 	if bitrateKbps > 0 {
 		bitrateLabel = fmt.Sprintf("%dkb/s", bitrateKbps)
@@ -156,6 +156,13 @@ const (
 	// MinOptimalBitrateKbps is the floor for the optimal bitrate target.
 	MinOptimalBitrateKbps = 200
 )
+
+// VideoBitrateKbps converts the probe result's video bitrate from bps to kbps
+// with rounding to the nearest integer. All planner code should use this
+// instead of raw division to avoid inconsistent truncation vs rounding.
+func VideoBitrateKbps(pr *probe.ProbeResult) int {
+	return int((pr.VideoBitRate() + 500) / 1000)
+}
 
 // Density computes bitrate density in kbps per megapixel.
 func Density(kbps, pixels int) int {

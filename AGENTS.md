@@ -90,7 +90,7 @@ than destroying quality. The post-encode loop handles genuine blowups.
 - Config struct uses sub-structs: `cfg.Encoder.*` (video encoder), `cfg.Audio.*` (audio), `cfg.Display.*` (logging/output). Pipeline behavior flags remain at the top level.
 - Testability seams: `pipeline.Logger` interface decouples runner/report from `*logging.Logger`; `ffmpeg.RunFunc` decouples `Execute` from real subprocesses. Both accept mocks in tests.
 - VAAPI constant-QP encoding; CPU uses CRF with maxrate ceiling.
-- VAAPI hardware decode enabled by default (full GPU pipeline); falls back to software decode for HDR tonemap.
+- VAAPI hardware decode enabled by default (full GPU pipeline); falls back to software decode for HDR tonemap and H.264 10-bit (Hi10p) sources.
 - HDR10 static metadata (mastering display + MaxCLL/MaxFALL) parsed from ffprobe `side_data_list`. CPU mode injects via `-x265-params`; VAAPI relies on frame side-data passthrough.
 - VaapiQPMax = 30 — QP above this produces severe visible artifacts.
 - AAC audio is always passthrough (never re-encoded lossy-to-lossy).
@@ -107,3 +107,4 @@ than destroying quality. The post-encode loop handles genuine blowups.
 - Naming parser uses ordered regex rules — rule priority matters (first match wins).
 - The retry engine handles 4 error classes: attachment, subtitle, mux queue, timestamp.
 - Density = kbps × 1,000,000 / pixels (kbps per megapixel).
+- H.264 10-bit (Hi10p) sources disable VAAPI hardware decode — most drivers lack AVC 10-bit decode support. `vaapiHWDecodeViable` in `planner.go` gates this via `probe.PixFmtIs10Bit`.

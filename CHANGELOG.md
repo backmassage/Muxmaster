@@ -6,6 +6,49 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.5.0] — 2026-04-12
+
+### Added
+
+- **Hi10p AVC software decode fallback.** H.264 10-bit sources (`yuv420p10le` and similar) now bypass VAAPI hardware decode, which fails on most drivers with "hwaccel initialisation returned error." The planner detects AVC + 10-bit `pix_fmt` via `probe.PixFmtIs10Bit` and routes through the software decode + `hwupload` path instead.
+- **`probe.PixFmtIs10Bit` helper.** New function in `internal/probe/pixfmt.go` that identifies 10-bit pixel formats from ffprobe `pix_fmt` strings.
+- **`planner.VideoBitrateKbps` helper.** Shared bps-to-kbps conversion with rounding, replacing four inconsistent call sites across `estimation.go`, `quality.go`, and `planner.go`.
+- **Subtitle regex negative tests.** Verify that generic "Unknown encoder" and "Codec is not supported" messages for non-subtitle streams do not trigger subtitle retry.
+- **Timestamp retry tests.** Verify `MatchTimestampIssue` recognizes all documented ffmpeg timestamp error patterns.
+- **VAAPI + HDR tonemap filter test.** Unit test for the software-decode tonemap + hwupload chain in VAAPI mode.
+- **Interlaced + HDR preserve filter test.** Unit test for `deinterlace_vaapi` + `scale_vaapi` ordering under hardware decode.
+- **H.264 Hi10p full-plan integration test.** Verifies the complete plan uses software decode with hwupload for 10-bit AVC.
+
+### Changed
+
+- **Subtitle retry regex tightened.** Removed the over-broad `Unknown encoder` and `Codec .* is not supported` alternates from `reSubtitleIssue` in `errors.go`. These patterns matched non-subtitle encoder failures and could incorrectly trigger subtitle removal. The five remaining subtitle-specific patterns cover all known failure modes.
+- **Summary "total files processed" uses completed count.** `logSummary` now reports `Encoded + Skipped + Failed` instead of `stats.Current`, which overstated the count when a batch was interrupted mid-file.
+- **Consistent kbps rounding.** All planner code now uses `VideoBitrateKbps(pr)` (rounds to nearest) instead of a mix of truncating and rounding division. Eliminates 1-kbps drift between the estimation model, quality curves, and optimal bitrate targeting.
+- **Defensive `appendVideoCodec`.** Added `default` panic branches for unknown `Action` and unknown `EncoderMode` in the ffmpeg builder, catching invalid states during development instead of producing silent malformed commands.
+- **`RunCheck` comment corrected.** The `--check` flow requires all encoder tests (VAAPI, CPU x265, AAC) to pass; the comment now says so instead of the misleading "at least one working encoder."
+
+### Fixed
+
+- **`TestEstimateBitrate_CodecBias` silently passing.** Changed `t.Logf` to `t.Errorf` so the test actually fails when the codec bias invariant is violated.
+
+---
+
+## [2.4.0] — 2026-04-06
+
+### Added
+
+- **Scale-VAAPI format conversion for hardware decode.** `buildVAAPIHWDecodeFilters` always inserts `scale_vaapi=format=p010` (or `nv12` for 8-bit profiles), ensuring decoded surfaces match the encoder's expected pixel format. Without this, GPUs that cannot do implicit NV12-to-P010 promotion fail with "No usable encoding profile found."
+- **Bitrate estimation display.** Each file now logs the estimated output range (`Estimate: low-high kb/s (low-high% of input)`) and optimal target bitrate before encoding, giving visibility into the quality model's predictions.
+- **Optimal bitrate targeting.** `QPForTargetBitrate` / `CRFForTargetBitrate` search the QP/CRF range for the value closest to the computed optimal output bitrate, capped at `SmartQuality + MaxOptimalOverride` to prevent the model from overriding quality curves.
+- **CPU maxrate ceiling.** CPU encodes now set `-maxrate` to the optimal bitrate + 15% headroom (capped at input bitrate) via VBV-constrained CRF, preventing output larger than source.
+- **Preflight QP/CRF adjustment.** `PreflightAdjust` iteratively bumps QP/CRF (max 4 steps) until the estimated output is within 105% of input size, catching likely overshoots before the first encode attempt.
+
+### Changed
+
+- **`--version` includes commit hash.** Output now shows `muxmaster v2.4.0 (commit)`.
+
+---
+
 ## [2.3.0] — 2026-03-21
 
 ### Added
@@ -250,6 +293,8 @@ Complete rewrite from a 2,600-line Bash script to a single static Go binary with
 - Pipeline (discover → probe → plan → execute) is not yet implemented; the binary runs config, check, and path validation only.
 - Unit tests are planned for a later phase; test files were removed in favor of a skeleton-first approach.
 
+[2.5.0]: https://github.com/backmassage/muxmaster/compare/v2.4.0...v2.5.0
+[2.4.0]: https://github.com/backmassage/muxmaster/compare/v2.3.0...v2.4.0
 [2.3.0]: https://github.com/backmassage/muxmaster/compare/v2.2.0...v2.3.0
 [2.2.0]: https://github.com/backmassage/muxmaster/compare/v2.1.2...v2.2.0
 [2.1.2]: https://github.com/backmassage/muxmaster/compare/v2.1.1...v2.1.2

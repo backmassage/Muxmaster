@@ -233,7 +233,7 @@ func TestEstimateBitrate_CodecBias(t *testing.T) {
 	// Modern codec (h264) should have higher ratio (less compression gain)
 	// than legacy codec (mpeg2).
 	if est1.HighKbps <= est2.HighKbps {
-		t.Logf("h264 high=%d, mpeg2 high=%d — h264 should estimate higher", est1.HighKbps, est2.HighKbps)
+		t.Errorf("h264 high=%d, mpeg2 high=%d — h264 should estimate higher", est1.HighKbps, est2.HighKbps)
 	}
 }
 
@@ -546,6 +546,55 @@ func TestBuildVideoFilter_HWDecode_8bitProfile(t *testing.T) {
 	want := "scale_vaapi=format=nv12"
 	if f != want {
 		t.Errorf("HW decode + main profile: want %q, got %q", want, f)
+	}
+}
+
+func TestBuildVideoFilter_VAAPI_HDRTonemap(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.HandleHDR = config.HDRTonemap
+	cfg.Encoder.Mode = config.EncoderVAAPI
+	cfg.SkipHEVC = false
+	f := BuildVideoFilter(cfg, hdr10File(), false)
+	if !strings.Contains(f, "tonemap") || !strings.Contains(f, "hable") {
+		t.Errorf("VAAPI HDR tonemap should have tonemap+hable, got %q", f)
+	}
+	if !strings.Contains(f, "hwupload") {
+		t.Errorf("VAAPI HDR tonemap (SW decode) should have hwupload, got %q", f)
+	}
+	if strings.Contains(f, "scale_vaapi") {
+		t.Errorf("SW decode tonemap should not use scale_vaapi, got %q", f)
+	}
+}
+
+func TestBuildVideoFilter_HWDecode_InterlacedHDRPreserve(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.HandleHDR = config.HDRPreserve
+	cfg.SkipHEVC = false
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "hevc", Profile: "Main 10", PixFmt: "yuv420p10le",
+			Width: 1920, Height: 1080, BitRate: 10000000,
+			FieldOrder:     "tt",
+			ColorTransfer:  "smpte2084",
+			ColorPrimaries: "bt2020",
+			ColorSpace:     "bt2020nc",
+		},
+		AudioStreams: []probe.AudioStream{{Codec: "aac", Channels: 2, SampleRate: 48000}},
+		Format:       probe.FormatInfo{BitRate: 11000000},
+	}
+	f := BuildVideoFilter(cfg, pr, true)
+	if !strings.Contains(f, "deinterlace_vaapi") {
+		t.Errorf("interlaced HDR preserve HW decode should have deinterlace_vaapi, got %q", f)
+	}
+	if !strings.Contains(f, "scale_vaapi=format=") {
+		t.Errorf("HW decode should have scale_vaapi format conversion, got %q", f)
+	}
+	if strings.Contains(f, "tonemap") {
+		t.Errorf("HDR preserve should not tonemap, got %q", f)
+	}
+	parts := strings.Split(f, ",")
+	if len(parts) < 2 || parts[0] != "deinterlace_vaapi" {
+		t.Errorf("deinterlace_vaapi must come before scale_vaapi, got %q", f)
 	}
 }
 
@@ -1074,6 +1123,28 @@ func TestFullPlan_InterlacedVAAPI(t *testing.T) {
 	}
 	if !strings.Contains(plan.VideoFilters, "scale_vaapi=format=") {
 		t.Errorf("interlaced VAAPI should include scale_vaapi format, got %q", plan.VideoFilters)
+	}
+}
+
+func TestFullPlan_H264Hi10p_SoftwareDecode(t *testing.T) {
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Profile: "High 10", PixFmt: "yuv420p10le",
+			Width: 1920, Height: 1080, BitRate: 6400000,
+			FieldOrder: "progressive",
+		},
+		AudioStreams: []probe.AudioStream{{Codec: "opus", Channels: 2, SampleRate: 48000}},
+		Format:       probe.FormatInfo{BitRate: 7000000},
+	}
+	plan := BuildPlan(defaultCfg(), pr)
+	if plan.HWDecode {
+		t.Fatal("H.264 10-bit should disable VAAPI HW decode; drivers often lack Hi10p decode")
+	}
+	if !strings.Contains(plan.VideoFilters, "hwupload") {
+		t.Fatalf("expected hwupload for SW decode path, got %q", plan.VideoFilters)
+	}
+	if strings.Contains(plan.VideoFilters, "scale_vaapi") {
+		t.Fatalf("SW decode path must not use scale_vaapi, got %q", plan.VideoFilters)
 	}
 }
 
