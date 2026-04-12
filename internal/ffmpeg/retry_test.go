@@ -85,3 +85,62 @@ func TestAdvance_MuxQueueEscalation(t *testing.T) {
 		t.Errorf("MuxQueueSize: got %d, want %d", rs.MuxQueueSize, muxQueueEscalate)
 	}
 }
+
+func TestSubtitleIssue_DoesNotMatchGenericEncoder(t *testing.T) {
+	cases := []string{
+		"Unknown encoder 'hevc_vaapi'",
+		"Codec h264 is not supported in this configuration",
+		"[enc:hevc_vaapi] Could not open encoder before EOF",
+	}
+	for _, stderr := range cases {
+		if MatchSubtitleIssue(stderr) {
+			t.Errorf("MatchSubtitleIssue should not match non-subtitle error: %q", stderr)
+		}
+	}
+}
+
+func TestSubtitleIssue_MatchesSubtitleErrors(t *testing.T) {
+	cases := []string{
+		"Subtitle codec mov_text is not supported",
+		"Could not find tag for codec ass in stream #0:3 (subtitle)",
+		"Error initializing output stream #0:2 -- subtitle",
+		"Error while opening encoder for output stream #0:2 -- subtitle codec",
+		"Subtitle encoding currently only possible from text to text or bitmap to bitmap",
+	}
+	for _, stderr := range cases {
+		if !MatchSubtitleIssue(stderr) {
+			t.Errorf("MatchSubtitleIssue should match subtitle error: %q", stderr)
+		}
+	}
+}
+
+func TestTimestampIssue_Matches(t *testing.T) {
+	cases := []string{
+		"Non-monotonous DTS in output stream",
+		"non monotonically increasing dts in output",
+		"invalid, non monotonically increasing dts",
+		"DTS 12345 out of order",
+		"PTS 12345 out of order",
+		"pts has no value",
+		"missing PTS",
+		"Timestamps are unset",
+	}
+	for _, stderr := range cases {
+		if !MatchTimestampIssue(stderr) {
+			t.Errorf("MatchTimestampIssue should match: %q", stderr)
+		}
+	}
+}
+
+func TestAdvance_TimestampFix(t *testing.T) {
+	rs := NewRetryState(testPlan())
+	rs.IncludeAttach = false
+	rs.IncludeSubs = false
+	action := rs.Advance("Non-monotonous DTS in output stream")
+	if action != RetryFixTimestamps {
+		t.Errorf("expected RetryFixTimestamps, got %d", action)
+	}
+	if !rs.TimestampFix {
+		t.Error("TimestampFix should be true")
+	}
+}

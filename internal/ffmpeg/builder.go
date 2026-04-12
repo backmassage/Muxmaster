@@ -151,7 +151,12 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 					"-bufsize", strconv.Itoa(plan.BufSizeKbps)+"k",
 				)
 			}
+		default:
+			panic(fmt.Sprintf("appendVideoCodec: unknown encoder mode %q", cfg.Encoder.Mode))
 		}
+
+	default:
+		panic(fmt.Sprintf("appendVideoCodec: unknown action %d", plan.Action))
 	}
 	return args
 }

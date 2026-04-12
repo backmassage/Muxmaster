@@ -240,7 +240,7 @@ func logSummary(cfg *config.Config, log Logger, stats *RunStats) {
 	log.Info("==============================")
 	log.Info("Done: %d encoded, %d skipped, %d failed", stats.Encoded, stats.Skipped, stats.Failed)
 	log.Info("Summary report:")
-	log.Info("  Total files processed: %d", stats.Current)
+	log.Info("  Total files processed: %d", stats.Encoded+stats.Skipped+stats.Failed)
 
 	if cfg.DryRun {
 		log.Info("  Total space saved: n/a (dry run)")

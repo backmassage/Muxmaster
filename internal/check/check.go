@@ -36,8 +36,9 @@ type Logger interface {
 
 // RunCheck runs the interactive --check flow: prints availability of ffmpeg,
 // ffprobe, HEVC encoders, VAAPI device/test, CPU x265, and AAC encoder.
-// Returns true if all critical checks passed (ffmpeg, ffprobe, and at least
-// one working encoder), false if any critical check failed.
+// Returns true only if all checks passed (ffmpeg, ffprobe, VAAPI, CPU x265,
+// and AAC encoder). Unlike CheckDeps (which only tests the active encoder
+// mode), RunCheck is a comprehensive diagnostic that tests every path.
 func RunCheck(cfg *config.Config, log Logger) bool {
 	log.Info("=== System Check ===")
 

@@ -21,10 +21,10 @@ Root meta-files: `README.md`, `CHANGELOG.md`, `AGENTS.md`, `LICENSE`, `Makefile`
 | **logging** | Leveled logger, optional file sink | `logger.go` |
 | **display** | Banner, byte/bitrate formatting | `banner.go`, `format.go` |
 | **check**   | `--check` diagnostics and `CheckDeps` | `check.go` |
-| **probe**   | ffprobe JSON → typed structs, HDR/interlace/HEVC-safe detection | `types.go`, `prober.go`, `hdr.go`, `interlace.go`, `probe_test.go`, `probe_live_test.go` |
+| **probe**   | ffprobe JSON → typed structs, HDR/interlace/HEVC-safe detection, pixel format helpers | `types.go`, `prober.go`, `hdr.go`, `interlace.go`, `pixfmt.go`, `probe_test.go`, `pixfmt_test.go`, `probe_live_test.go` |
 | **naming**  | Filename parsing, output paths, collision, harmonization | `parser.go`, `rules.go`, `postprocess.go`, `outputpath.go`, `collision.go`, `harmonize.go`, `parser_test.go` |
 | **planner** | Encode vs remux vs skip, smart quality, estimation, audio/subtitle/filter plans | `types.go`, `planner.go`, `quality.go`, `estimation.go`, `filter.go`, `audio.go`, `subtitle.go`, `disposition.go`, `planner_test.go`, `helpers_test.go` |
-| **ffmpeg**  | Command building, execution, retry | `builder.go`, `executor.go`, `errors.go`, `retry.go`, `retry_test.go` |
+| **ffmpeg**  | Command building, execution, retry | `builder.go`, `executor.go`, `errors.go`, `retry.go`, `builder_test.go`, `retry_test.go` |
 | **pipeline**| File discovery, per-file processing, batch analysis, batch stats | `discover.go`, `runner.go`, `analyze.go`, `stats.go`, `pipeline_test.go` |
 
 For the full dependency map and rules, see [architecture.md](../architecture.md).

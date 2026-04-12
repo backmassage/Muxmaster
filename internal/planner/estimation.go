@@ -22,11 +22,10 @@ type BitrateEstimate struct {
 // estimate_transcode_video_output_range function, with adjustments for
 // source codec, resolution, bitrate, and density.
 func EstimateBitrate(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF int) BitrateEstimate {
-	inputBps := pr.VideoBitRate()
-	if inputBps <= 0 {
+	inputKbps := VideoBitrateKbps(pr)
+	if inputKbps <= 0 {
 		return BitrateEstimate{}
 	}
-	inputKbps := int((inputBps + 500) / 1000)
 
 	var qualityValue int
 	if cfg.Encoder.Mode == config.EncoderVAAPI {
@@ -151,7 +150,7 @@ func OptimalBitrate(pr *probe.ProbeResult) int {
 		return 0
 	}
 
-	inputKbps := int(pr.VideoBitRate() / 1000)
+	inputKbps := VideoBitrateKbps(pr)
 	if inputKbps <= 0 {
 		return 0
 	}
