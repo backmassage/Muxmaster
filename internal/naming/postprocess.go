@@ -91,7 +91,7 @@ func extractParentSeasonHint(parent string) int {
 // postProcess applies universal cleaning to a parsed name: strip release
 // tags, remove brackets, title-case, apply season hints, and set fallback
 // names. Called after the rule-specific extraction.
-func postProcess(p ParsedName, parent string) ParsedName {
+func postProcess(p ParsedName, seasonHintParent string) ParsedName {
 	p.ShowName = stripReleaseTags(p.ShowName)
 	p.ShowName = stripBrackets(p.ShowName)
 	p.ShowName = strings.TrimSpace(p.ShowName)
@@ -103,7 +103,7 @@ func postProcess(p ParsedName, parent string) ParsedName {
 	p.MovieName = titleCase(p.MovieName)
 
 	if p.MediaType == MediaTV && p.Season >= 1 {
-		hint := extractParentSeasonHint(parent)
+		hint := extractParentSeasonHint(seasonHintParent)
 		if hint > 1 && p.Season == 1 {
 			p.Season = hint
 		}

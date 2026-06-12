@@ -1,5 +1,5 @@
 BINARY  := muxmaster
-VERSION := 2.5.0
+VERSION := 2.6.0
 COMMIT  := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 

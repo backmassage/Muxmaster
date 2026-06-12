@@ -56,7 +56,7 @@ type EncoderConfig struct {
 	CpuPreset        string // Default: "slow".
 	CpuProfile       string // Fixed: "main10".
 	CpuPixFmt        string // Fixed: "yuv420p10le".
-	KeyframeInterval int    // Fixed: 48 frames.
+	KeyframeInterval int    // Fallback: 48 frames. Planner derives ~2s GOP from source fps per file.
 	HandleHDR        HDRMode
 	DeinterlaceAuto  bool
 
@@ -251,7 +251,11 @@ func normalizeAudioBitrate(raw string) (string, error) {
 // absolute, symlink-resolved paths.
 func (c *Config) ValidatePaths(inputAbs, outputAbs string) error {
 	sep := string(filepath.Separator)
-	if outputAbs == inputAbs || strings.HasPrefix(outputAbs+sep, inputAbs+sep) {
+	rel, err := filepath.Rel(inputAbs, outputAbs)
+	if err != nil {
+		return fmt.Errorf("compare input/output paths: %w", err)
+	}
+	if rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+sep)) {
 		return errors.New("output directory must not be inside input directory")
 	}
 	return nil

@@ -333,10 +333,11 @@ func attemptWithErrorRetry(
 	run ffmpeg.RunFunc,
 ) bool {
 	retryLabels := map[ffmpeg.RetryAction]string{
-		ffmpeg.RetryDropAttach:    "skip attachments",
-		ffmpeg.RetryDropSubs:      "skip subtitles",
-		ffmpeg.RetryIncreaseMux:   "increase mux queue",
-		ffmpeg.RetryFixTimestamps: "fix timestamps",
+		ffmpeg.RetryDropAttach:      "skip attachments",
+		ffmpeg.RetryDropSubs:        "skip subtitles",
+		ffmpeg.RetryIncreaseMux:     "increase mux queue",
+		ffmpeg.RetryFixTimestamps:   "fix timestamps",
+		ffmpeg.RetryDisableHWDecode: "disable hardware decode",
 	}
 
 	for {

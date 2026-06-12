@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -24,7 +25,7 @@ import (
 // When built with plain "go build" (no make), these retain their defaults.
 // The Makefile is the authoritative source for VERSION; see the Makefile for ldflags details.
 var (
-	version = "2.5.0"
+	version = "2.6.0"
 	commit  = "unknown"
 )
 
@@ -68,7 +69,7 @@ func run() int {
 	}
 
 	if cfg.AnalyzeOnly {
-		inputAbs, err := absPath(cfg.InputDir)
+		inputAbs, err := absExistingPath(cfg.InputDir)
 		if err != nil {
 			log.Error("Input path error: %v", err)
 			return 1
@@ -88,16 +89,12 @@ func run() int {
 
 	// Resolve and validate paths: input must exist, output is created if
 	// needed, and output must not be inside input (prevents recursive processing).
-	inputAbs, err := absPath(cfg.InputDir)
+	inputAbs, err := absExistingPath(cfg.InputDir)
 	if err != nil {
 		log.Error("Input path error: %v", err)
 		return 1
 	}
-	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
-		log.Error("Cannot create output directory: %v", err)
-		return 1
-	}
-	outputAbs, err := absPath(cfg.OutputDir)
+	outputAbs, err := absCreatablePath(cfg.OutputDir)
 	if err != nil {
 		log.Error("Cannot resolve output path: %v", err)
 		return 1
@@ -115,6 +112,13 @@ func run() int {
 		log.Warn("DRY RUN — no files will be written")
 	}
 	log.Info("")
+
+	if !cfg.DryRun {
+		if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
+			log.Error("Cannot create output directory: %v", err)
+			return 1
+		}
+	}
 
 	// Fail fast if ffmpeg/ffprobe or the chosen encoder are unavailable.
 	if err := check.CheckDeps(&cfg); err != nil {
@@ -155,12 +159,51 @@ func signalContext(log *logging.Logger) (context.Context, context.CancelFunc) {
 	return ctx, cancel
 }
 
-// absPath returns the absolute, symlink-resolved path for safe comparison
-// of input vs output directory hierarchies.
-func absPath(path string) (string, error) {
+// absExistingPath returns the absolute, symlink-resolved path for paths that
+// must already exist, such as the input library.
+func absExistingPath(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
 	}
 	return filepath.EvalSymlinks(abs)
+}
+
+// absCreatablePath returns an absolute path suitable for safety checks before
+// the output directory exists. Existing path components are symlink-resolved;
+// missing trailing components are appended without creating anything.
+func absCreatablePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	abs = filepath.Clean(abs)
+
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		return resolved, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+
+	var missing []string
+	cur := abs
+	for {
+		resolved, err := filepath.EvalSymlinks(cur)
+		if err == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return resolved, nil
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+
+		parent := filepath.Dir(cur)
+		if parent == cur {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(cur))
+		cur = parent
+	}
 }

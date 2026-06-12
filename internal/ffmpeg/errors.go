@@ -25,6 +25,16 @@ var (
 			`invalid, non monotonically increasing dts|` +
 			`DTS .*out of order|PTS .*out of order|` +
 			`pts has no value|missing PTS|Timestamps are unset`)
+
+	// Hardware decode failures: the driver can't decode this codec/profile
+	// (e.g. VC-1 or 4:2:2 H.264 on many stacks). When -hwaccel init fails,
+	// ffmpeg falls back to software frames, which then can't enter the
+	// VAAPI filter graph ("Impossible to convert between the formats").
+	reHWDecodeIssue = regexp.MustCompile(
+		`(?i)Failed setup for format vaapi|` +
+			`hwaccel initialisation returned error|` +
+			`Impossible to convert between the formats supported by the filter|` +
+			`No usable encoding profile found`)
 )
 
 // MatchAttachmentIssue reports whether stderr contains an attachment tag error.
@@ -45,4 +55,9 @@ func MatchMuxQueueOverflow(stderr string) bool {
 // MatchTimestampIssue reports whether stderr contains a timestamp discontinuity.
 func MatchTimestampIssue(stderr string) bool {
 	return reTimestampIssue.MatchString(stderr)
+}
+
+// MatchHWDecodeIssue reports whether stderr contains a hardware decode failure.
+func MatchHWDecodeIssue(stderr string) bool {
+	return reHWDecodeIssue.MatchString(stderr)
 }

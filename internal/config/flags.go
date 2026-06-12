@@ -188,8 +188,8 @@ func parsePositionalArgs(fs *flag.FlagSet, cfg *Config) error {
 		return nil
 	}
 	if cfg.AnalyzeOnly {
-		if len(args) < 1 {
-			return fmt.Errorf("--analyze requires an input directory")
+		if len(args) != 1 {
+			return fmt.Errorf("--analyze requires exactly one input directory")
 		}
 		cfg.InputDir = NormalizeDirArg(args[0])
 		return nil

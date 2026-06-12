@@ -8,7 +8,7 @@ Jellyfin-oriented batch media encoder. Go orchestration layer over ffmpeg/ffprob
 make build       # build with version/commit injection (git describe --always --dirty)
 make test        # all tests, verbose
 make ci          # vet + fmt + docs-naming + build + test
-make lint        # golangci-lint (16 linters)
+make lint        # golangci-lint (19 linters)
 make coverage    # HTML coverage report
 ```
 
@@ -105,6 +105,6 @@ than destroying quality. The post-encode loop handles genuine blowups.
 - `probe.ProbeResult.PrimaryVideo` can be nil (audio-only files) — always nil-check.
 - `VideoBitRate()` falls back to format bitrate minus audio when stream bitrate is zero.
 - Naming parser uses ordered regex rules — rule priority matters (first match wins).
-- The retry engine handles 4 error classes: attachment, subtitle, mux queue, timestamp.
+- The retry engine handles 5 error classes: attachment, subtitle, mux queue, timestamp, hardware decode (falls back to software decode + hwupload via `FilePlan.SWVideoFilters`).
 - Density = kbps × 1,000,000 / pixels (kbps per megapixel).
 - H.264 10-bit (Hi10p) sources disable VAAPI hardware decode — most drivers lack AVC 10-bit decode support. `vaapiHWDecodeViable` in `planner.go` gates this via `probe.PixFmtIs10Bit`.

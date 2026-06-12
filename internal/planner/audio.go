@@ -61,7 +61,9 @@ func BuildAudioPlan(cfg *config.Config, pr *probe.ProbeResult) AudioPlan {
 
 func clampChannels(source, max int) int {
 	if source < 1 {
-		return 1
+		// Unknown channel count: target the configured cap rather than
+		// forcing a destructive downmix to mono.
+		return max
 	}
 	if source > max {
 		return max

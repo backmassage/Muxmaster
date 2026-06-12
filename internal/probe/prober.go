@@ -4,8 +4,10 @@ package probe
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -13,9 +15,17 @@ import (
 // Probe runs a single ffprobe JSON call against path and returns the
 // parsed result. It replaces the ~10 separate ffprobe calls made by the
 // legacy shell script.
+//
+// The probesize/analyzeduration values match the constants the encode
+// command uses (Config.FFmpegProbesize/FFmpegAnalyzeDuration). With
+// ffprobe's defaults, streams that start late (e.g. PGS subtitles that
+// first appear minutes in) can be missed here while ffmpeg still maps
+// them, so probe and encode must analyze the same window.
 func Probe(ctx context.Context, path string) (*ProbeResult, error) {
 	cmd := exec.CommandContext(ctx, "ffprobe",
-		"-v", "quiet",
+		"-v", "error",
+		"-probesize", "100M",
+		"-analyzeduration", "100M",
 		"-print_format", "json",
 		"-show_format", "-show_streams",
 		path,
@@ -23,6 +33,11 @@ func Probe(ctx context.Context, path string) (*ProbeResult, error) {
 
 	out, err := cmd.Output()
 	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return nil, fmt.Errorf("ffprobe %q: %w: %s",
+				path, err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
 		return nil, fmt.Errorf("ffprobe %q: %w", path, err)
 	}
 
@@ -205,10 +220,23 @@ func streamBitRate(s *ffprobeStream) int64 {
 		return br
 	}
 	for k, v := range s.Tags {
-		if strings.EqualFold(k, "BPS") || (len(k) >= 4 && strings.EqualFold(k[:4], "BPS-")) {
+		if strings.EqualFold(k, "BPS") {
 			if br := parseInt64(v); br > 0 {
 				return br
 			}
+			break
+		}
+	}
+	var bpsKeys []string
+	for k := range s.Tags {
+		if len(k) >= 4 && strings.EqualFold(k[:4], "BPS-") {
+			bpsKeys = append(bpsKeys, k)
+		}
+	}
+	sort.Strings(bpsKeys)
+	for _, k := range bpsKeys {
+		if br := parseInt64(s.Tags[k]); br > 0 {
+			return br
 		}
 	}
 	return 0

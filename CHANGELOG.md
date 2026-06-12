@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [2.6.0] — 2026-06-11
+
+### Added
+
+- **Hardware-decode retry fallback.** A fifth retry class detects VAAPI hardware decode failures (`Failed setup for format vaapi`, `Impossible to convert between the formats`, `No usable encoding profile found`, etc.) and re-runs the encode with software decode + `hwupload`. Previously, sources the GPU driver can't decode (VC-1, 4:2:2 H.264, …) failed permanently even though the software path would have worked; only Hi10p AVC was special-cased at plan time.
+- **Frame-rate-aware keyframe interval.** The GOP length is now derived per file from the probed average frame rate (~2-second keyframe cadence, clamped to 24–300), instead of a fixed `-g 48` that only matched 24 fps sources. 48 remains the fallback when the frame rate is unknown.
+- **Complete HDR10 x265 signaling.** CPU HDR10 encodes now add `hdr10=1:hdr10-opt=1:repeat-headers=1` alongside `master-display`/`max-cll`, so the HDR10 SEI is repeated on every keyframe (required for playback from arbitrary seek points) and x265's PQ-aware rate-distortion tuning is enabled.
+
+### Fixed
+
+- **VAAPI device mismatch between check and encode.** `CheckDeps` tested the first `/dev/dri/renderD*` node but the encode command always used the configured default (`renderD128`). On hosts where these differ, the check passed while every encode targeted the wrong (or a nonexistent) device. The configured device is now tested when present, and the device that passed the test is written back to the config.
+- **Audio encoder fallback.** The default `libfdk_aac` encoder is a nonfree component missing from most ffmpeg builds; startup now falls back to the native `aac` encoder instead of refusing to run.
+- **Probe/encode analysis window mismatch.** `ffprobe` now uses the same `-probesize 100M -analyzeduration 100M` as the encode command. Late-starting streams (e.g. PGS subtitles appearing minutes in) could previously be missed at plan time and silently dropped from the output.
+- **Probe error detail.** ffprobe failures now include the captured stderr instead of `-v quiet` discarding the diagnostic.
+- **Unknown audio channel count.** Streams whose channel count ffprobe can't determine are no longer force-downmixed to mono; they now target the configured channel cap.
+- **Dry-run/output path safety.** Output paths are now symlink-resolved and validated before any directory creation. `--dry-run` no longer creates the top-level output directory, and invalid output paths inside the input tree are rejected without leaving a new directory behind.
+- **Root input path containment.** `ValidatePaths` now uses `filepath.Rel` containment checks, so an input directory of `/` correctly rejects every absolute output path as inside the input tree.
+- **Analyze argument validation.** `--analyze` now requires exactly one input directory instead of silently ignoring extra positional arguments.
+- **Season-folder naming context.** Bare-number episodes inside `Show/Season NN` now use `Show` as the show name while still applying the season hint from `Season NN`; this avoids output like `Season 03/Season 03 - S03E03.mkv`.
+- **Deterministic MKV bitrate tag fallback.** ffprobe stream bitrate fallback now prefers exact `BPS` tags before language-specific `BPS-*` tags, then reads `BPS-*` tags in stable key order.
+- **Documentation drift.** Updated the architecture reference for the current module path, parser rule count (14 regex rules plus fallback), season-folder context handling, and current lint count.
+
+---
+
 ## [2.5.0] — 2026-04-12
 
 ### Added

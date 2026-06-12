@@ -1,7 +1,10 @@
 // ProbeResult, VideoStream, AudioStream, SubtitleStream, FormatInfo types.
 package probe
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
 
 // FormatInfo holds container-level metadata from ffprobe's format section.
 type FormatInfo struct {
@@ -71,6 +74,26 @@ type SubtitleStream struct {
 	Codec    string
 	Language string
 	IsBitmap bool
+}
+
+// FrameRate returns the stream's average frame rate in frames per second,
+// parsed from ffprobe's rational avg_frame_rate (e.g. "24000/1001").
+// Returns 0 when the value is missing, malformed, or degenerate ("0/0").
+func (v *VideoStream) FrameRate() float64 {
+	s := v.AvgFrameRate
+	if idx := strings.IndexByte(s, '/'); idx >= 0 {
+		num, err1 := strconv.ParseFloat(s[:idx], 64)
+		den, err2 := strconv.ParseFloat(s[idx+1:], 64)
+		if err1 != nil || err2 != nil || den == 0 {
+			return 0
+		}
+		return num / den
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0
+	}
+	return f
 }
 
 // ProbeResult is the fully parsed output of a single ffprobe JSON call.

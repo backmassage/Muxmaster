@@ -7,11 +7,12 @@ import "github.com/backmassage/muxmaster/internal/planner"
 type RetryAction int
 
 const (
-	RetryNone          RetryAction = iota
-	RetryDropAttach                // Remove attachment streams.
-	RetryDropSubs                  // Remove subtitle streams.
-	RetryIncreaseMux               // Raise max_muxing_queue_size to 16384.
-	RetryFixTimestamps             // Enable +genpts+discardcorrupt.
+	RetryNone            RetryAction = iota
+	RetryDropAttach                  // Remove attachment streams.
+	RetryDropSubs                    // Remove subtitle streams.
+	RetryIncreaseMux                 // Raise max_muxing_queue_size to 16384.
+	RetryFixTimestamps               // Enable +genpts+discardcorrupt.
+	RetryDisableHWDecode             // Fall back to software decode + hwupload.
 )
 
 const (
@@ -30,6 +31,7 @@ type RetryState struct {
 	IncludeSubs   bool
 	MuxQueueSize  int
 	TimestampFix  bool
+	HWDecode      bool
 
 	VaapiQP int
 	CpuCRF  int
@@ -44,6 +46,7 @@ func NewRetryState(plan *planner.FilePlan) *RetryState {
 		IncludeSubs:   plan.IncludeSubs,
 		MuxQueueSize:  plan.MuxQueueSize,
 		TimestampFix:  plan.TimestampFix,
+		HWDecode:      plan.HWDecode,
 		VaapiQP:       plan.VaapiQP,
 		CpuCRF:        plan.CpuCRF,
 	}
@@ -54,7 +57,8 @@ func NewRetryState(plan *planner.FilePlan) *RetryState {
 // returns the action taken. Returns RetryNone when no fixable pattern matches
 // or the attempt limit is reached.
 //
-// Pattern evaluation order: attachment → subtitle → mux queue → timestamp.
+// Pattern evaluation order: attachment → subtitle → mux queue → timestamp →
+// hardware decode.
 // Only one fix is applied per call (one fix per retry attempt).
 func (s *RetryState) Advance(stderr string) RetryAction {
 	s.Attempt++
@@ -77,6 +81,10 @@ func (s *RetryState) Advance(stderr string) RetryAction {
 	if !s.TimestampFix && MatchTimestampIssue(stderr) {
 		s.TimestampFix = true
 		return RetryFixTimestamps
+	}
+	if s.HWDecode && MatchHWDecodeIssue(stderr) {
+		s.HWDecode = false
+		return RetryDisableHWDecode
 	}
 
 	return RetryNone

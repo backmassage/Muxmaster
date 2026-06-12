@@ -1768,3 +1768,58 @@ func TestFullPipeline_DebugMatrix(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildPlan_KeyframeIntervalFromFrameRate(t *testing.T) {
+	cases := []struct {
+		name string
+		fps  string
+		want int
+	}{
+		{"film 23.976", "24000/1001", 48},
+		{"pal 25", "25/1", 50},
+		{"ntsc 29.97", "30000/1001", 60},
+		{"hfr 59.94", "60000/1001", 120},
+		{"unknown falls back to config", "", 48},
+		{"degenerate rational falls back", "0/0", 48},
+		{"garbage metadata clamped", "1000/1", 300},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := h264SDR()
+			pr.PrimaryVideo.AvgFrameRate = tc.fps
+			plan := BuildPlan(defaultCfg(), pr)
+			if plan.KeyframeInterval != tc.want {
+				t.Errorf("KeyframeInterval: got %d, want %d", plan.KeyframeInterval, tc.want)
+			}
+		})
+	}
+}
+
+func TestBuildPlan_SWFallbackFilters(t *testing.T) {
+	cfg := defaultCfg()
+	plan := BuildPlan(cfg, h264SDR())
+	if !plan.HWDecode {
+		t.Fatal("h264 SDR should plan VAAPI hardware decode")
+	}
+	if plan.SWVideoFilters == "" {
+		t.Fatal("HW decode plans must carry a software fallback chain")
+	}
+	if !strings.Contains(plan.SWVideoFilters, "hwupload") {
+		t.Errorf("software fallback chain should hwupload, got %q", plan.SWVideoFilters)
+	}
+	if strings.Contains(plan.SWVideoFilters, "scale_vaapi") {
+		t.Errorf("software fallback chain should not use GPU-surface filters, got %q", plan.SWVideoFilters)
+	}
+}
+
+func TestClampChannels_UnknownSourceUsesCap(t *testing.T) {
+	if got := clampChannels(0, 2); got != 2 {
+		t.Errorf("unknown channel count should target the cap, got %d", got)
+	}
+	if got := clampChannels(6, 2); got != 2 {
+		t.Errorf("6ch source with cap 2: got %d", got)
+	}
+	if got := clampChannels(1, 2); got != 1 {
+		t.Errorf("mono source: got %d", got)
+	}
+}

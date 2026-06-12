@@ -125,6 +125,11 @@ func TestParseFilename(t *testing.T) {
 			parentDir: "/media/Show Name",
 			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 3,
 		},
+		{
+			name: "Bare number dash in season folder", basename: "03 - Episode Title.mkv",
+			parentDir: "/media/Cool Show/Season 03",
+			wantType:  MediaTV, wantShow: "Cool Show", wantSeason: 3, wantEpisode: 3,
+		},
 
 		// Rule 12: Group release
 		{
@@ -359,7 +364,7 @@ func TestSpecialsFolder(t *testing.T) {
 		{"/media/Show/NCOP", "Show"},
 		{"/media/Show/NCED01", "Show"},
 		{"/media/Show/Extras", "Show"},
-		{"/media/Show/Season 01", "Season 01"},
+		{"/media/Show/Season 01", "Show"},
 		{"JustDir", "JustDir"},
 	}
 	for _, tc := range cases {
@@ -509,11 +514,11 @@ func TestEdgeCases(t *testing.T) {
 			parentDir: "/media/Show Name/NCED01",
 			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 1,
 		},
-		// Non-specials folder stays as-is.
+		// Season folders use the grandparent for show context.
 		{
-			name: "Regular folder no grandparent", basename: "01 - Title.mkv",
+			name: "Season folder grandparent", basename: "01 - Title.mkv",
 			parentDir: "/media/Show Name/Season 01",
-			wantType:  MediaTV, wantShow: "Season 01", wantSeason: 1, wantEpisode: 1,
+			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 1,
 		},
 		// Episodic title with apostrophe.
 		{

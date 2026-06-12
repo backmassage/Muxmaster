@@ -9,7 +9,7 @@
 
 ## 1. About
 
-Muxmaster (v2.5.0) is a Go CLI application that replaces a 2,666-line Bash script with typed domain objects, structured logging, and a reliable ffmpeg retry engine. It targets a single static binary for Arch Linux.
+Muxmaster (v2.6.0) is a Go CLI application that replaces a 2,666-line Bash script with typed domain objects, structured logging, and a reliable ffmpeg retry engine. It targets a single static binary for Arch Linux.
 
 This document is the canonical reference for architecture, types, behavioral contracts, and technical decisions. For package layout and file navigation, see [structure.md](structure.md). For the aspirational v2.0 roadmap (subcommands, StateStore, etc.), see [product-spec.md](product-spec.md).
 
@@ -19,18 +19,18 @@ This document is the canonical reference for architecture, types, behavioral con
 
 | Decision | Resolution | Rationale |
 |---|---|---|
-| Module path | `github.com/<user>/muxmaster` | Standard Go convention; works locally too |
+| Module path | `github.com/backmassage/muxmaster` | Standard Go convention; works locally too |
 | Go version | 1.26+ minimum | Latest stable on Arch; gives `slog`, `slices`, range-over-int |
 | CLI framework | Standard `flag` | No external deps; migrate to `cobra` when subcommands arrive |
 | External deps | Zero for MVP | Entire standard library covers needs |
 | ffprobe strategy | Single JSON call per file | Replaces ~10 subprocess calls; biggest reliability win |
 | Primary container | MKV (MP4 rarely used) | MP4 support preserved for parity; lower testing priority |
-| Anime naming patterns | All 15 rules active | Parser test suite needs 60+ cases |
+| Anime naming patterns | 14 regex rules plus fallback active | Parser test suite needs 60+ cases |
 | Smart quality bias | Configurable constant (default `-2`, favors higher quality) | `SmartQualityBias` in Config |
 | Title-casing | Capitalize every word (match shell) | Simple parity; swap to proper title-case post-MVP if desired |
 | Logging | Custom leveled logger | Migrate to `log/slog` when JSON mode is added |
 | Retry logic | Single unified state machine | Replaces duplicated remux/encode retry loops in shell |
-| Formatting | `gofmt` + `go vet` | Standard Go toolchain; no custom lint rules |
+| Formatting | `gofmt` + `go vet` + optional `golangci-lint` | Standard Go toolchain plus curated lint target |
 | Exit code 2 (partial failure) | Deferred to post-MVP | Shell exits `0` on partial failure; change behavior alongside subcommand CLI |
 | Config file (YAML) | Deferred to post-MVP | Evaluate TOML (`BurntSushi/toml`) vs YAML at that time |
 
@@ -44,7 +44,7 @@ This document is the canonical reference for architecture, types, behavioral con
 - Sequential file processing (no concurrency)
 - `ffprobe` JSON probing with typed structs
 - Encode path (VAAPI + CPU) and remux path
-- Filename parsing and Jellyfin-compatible output naming (all 15 regex patterns)
+- Filename parsing and Jellyfin-compatible output naming (14 regex rules plus fallback)
 - Smart quality adaptation, bitrate estimation model, retry/fallback logic
 - Collision resolution for duplicate output paths
 - TV show year-variant harmonization (two-pass file discovery)
@@ -147,7 +147,7 @@ ParsedName
 
 RetryState
   ├── Attempt / MaxAttempts (4)
-  ├── IncludeAttach, IncludeSubs, MuxQueueSize, TimestampFix
+  ├── IncludeAttach, IncludeSubs, MuxQueueSize, TimestampFix, HWDecode
   ├── VaapiQP, CpuCRF
   └── Advance(stderr) → RetryAction
 
@@ -224,7 +224,7 @@ This is the step-by-step flow for processing a single file within the batch loop
 
 ### 4.4 Retry State Machine
 
-The retry engine handles ffmpeg failures by classifying stderr against 4 known error patterns and applying one fix per attempt.
+The retry engine handles ffmpeg failures by classifying stderr against 5 known error patterns and applying one fix per attempt.
 
 **Error patterns (checked in this order):**
 
@@ -234,6 +234,7 @@ The retry engine handles ffmpeg failures by classifying stderr against 4 known e
 | Subtitle issue | Subtitle codec not supported, tag not found, encoder error, etc. | Drop subtitles (`IncludeSubs = false`) |
 | Mux queue overflow | `Too many packets buffered for output stream` | Increase mux queue (4096 → 16384) |
 | Timestamp issue | Non-monotonous DTS, pts has no value, timestamps unset, etc. | Enable timestamp fix (`+genpts+discardcorrupt`) |
+| HW decode failure | Failed setup for format vaapi, impossible to convert between formats, no usable encoding profile, etc. | Disable HW decode (`HWDecode = false`, switch to `FilePlan.SWVideoFilters`) |
 
 **State machine logic:**
 
@@ -243,6 +244,7 @@ INITIAL STATE:
   include_attach = true, include_subs = true
   mux_queue = 4096
   timestamp_fix = false (remux) | Config.CleanTimestamps (encode)
+  hw_decode = FilePlan.HWDecode (VAAPI encode of hw-decodable sources)
 
 ON EACH FFMPEG FAILURE:
   if strict_mode → abort immediately (mark failed)
@@ -254,6 +256,8 @@ ON EACH FFMPEG FAILURE:
     2. subtitle issue    → if include_subs: set include_subs=false, retry
     3. mux queue overflow → if mux_queue < 16384: set mux_queue=16384, retry
     4. timestamp issue   → if NOT timestamp_fix: set timestamp_fix=true, retry
+    5. HW decode failure → if hw_decode: set hw_decode=false, retry
+                           (software decode + hwupload, plan.SWVideoFilters)
 
   if no pattern matched OR fix already applied → abort (mark failed)
 
@@ -355,9 +359,10 @@ The parser tries 14 ordered regex rules against each filename. First match wins.
 
 **Pre-processing:**
 1. Strip file extension → `base`
-2. Check if parent directory is specials-like (`extras`, `extra`, `specials`, `bonus`, `featurettes`, `nc`, `ncop*`, `nced*`)
+2. Check if parent directory is context-like (`Season NN`, `SNN`, `extras`, `extra`, `specials`, `bonus`, `featurettes`, `nc`, `ncop*`, `nced*`)
    - If yes: use grandparent directory as show name context
    - If no: use parent directory as show name context
+   - The immediate parent is still retained for season-hint detection
 
 **Rule table (evaluated in order, first match wins):**
 
@@ -381,9 +386,9 @@ The parser tries 14 ordered regex rules against each filename. First match wins.
 
 **Post-processing (applied to all matches):**
 - Strip release tags (40+ known tags like `[BluRay]`, `[1080p]`, `(HEVC)`, etc.)
-- Remove square/round brackets and their contents (group names, checksums)
+- Remove square-bracket groups and their contents (group names, checksums)
 - Title-case the result (capitalize every word at word boundaries)
-- Season hint: if season is still 0 and parent dir contains `Season N`, use that
+- Season hint: if a TV rule defaulted to season 1 and the immediate parent is `Season N` where N > 1, use that
 - Fallback names: if show name is empty after stripping, use parent dir name
 
 ---
@@ -445,7 +450,7 @@ type Config struct {
     CpuPreset        string // default: "slow"
     CpuProfile       string // fixed: "main10"
     CpuPixFmt        string // fixed: "yuv420p10le"
-    KeyframeInterval int    // fixed: 48
+    KeyframeInterval int    // fallback: 48; planner derives ~2s GOP from source fps
 
     // --- Output ---
     OutputContainer Container // default: "mkv"
@@ -885,7 +890,7 @@ func titleCase(s string) string {
 
 | Test file | Priority | Coverage |
 |---|---|---|
-| `naming/parser_test.go` | **Highest** | 60+ cases for all 15 regex rules, post-processing, output paths, collision resolution |
+| `naming/parser_test.go` | **Highest** | 60+ cases for all 14 regex rules plus fallback, post-processing, output paths, collision resolution |
 | `planner/planner_test.go` | High | Decision matrix, smart quality curves, estimation, audio plans, timestamp fix |
 | `ffmpeg/retry_test.go` | High | All 4 stderr patterns, retry state machine, mux queue escalation |
 | `config/config_test.go` | High | Flag precedence, validation, quality override logic |
@@ -920,7 +925,7 @@ Script that runs both implementations with `--dry-run` on the same directory and
 
 ```makefile
 BINARY  := muxmaster
-VERSION := 2.5.0
+VERSION := 2.6.0
 COMMIT  := $(shell git describe --always --dirty 2>/dev/null || echo unknown)
 LDFLAGS := -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)"
 
@@ -963,7 +968,7 @@ install: build
 // cmd/main.go
 
 var (
-    version = "2.5.0"
+    version = "2.6.0"
     commit  = "unknown"
 )
 ```
@@ -994,4 +999,3 @@ These are specific behaviors that are easy to get wrong. Each should have a corr
 | 16 | Group release year | Strip trailing year from show name unless parent has year range. |
 | 17 | Fractional episodes | `Episode 16.5` → Season 0, Episode 165 (concatenated). |
 | 18 | `SHOW_FFMPEG_FPS` default | `true` in shell script. Verify Go default matches. |
-

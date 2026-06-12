@@ -20,10 +20,12 @@ type FilePlan struct {
 	SkipReason string
 
 	// Video encoding.
-	VideoCodec   string   // "hevc_vaapi", "libx265", or "copy"
-	VideoFilters string   // comma-joined filter chain (may be empty)
-	ColorOpts    []string // -color_trc, -color_primaries, -colorspace pairs
-	HWDecode     bool     // Use VAAPI hardware decode (frames stay on GPU)
+	VideoCodec       string   // "hevc_vaapi", "libx265", or "copy"
+	VideoFilters     string   // comma-joined filter chain (may be empty)
+	SWVideoFilters   string   // software-decode fallback chain (set only when HWDecode is true)
+	ColorOpts        []string // -color_trc, -color_primaries, -colorspace pairs
+	HWDecode         bool     // Use VAAPI hardware decode (frames stay on GPU)
+	KeyframeInterval int      // Per-file GOP length (~2s at source fps); 0 = use config default
 
 	// HDR10 static metadata (empty when not present or not preserving HDR).
 	MasterDisplay string // ffmpeg format: G(gx,gy)B(bx,by)R(rx,ry)WP(wpx,wpy)L(maxL,minL)

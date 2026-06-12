@@ -694,6 +694,24 @@ func TestStreamBitRate_TagBPSFallback(t *testing.T) {
 				"bit_rate": "256000",
 				"disposition": { "default": 0 },
 				"tags": { "language": "eng", "BPS-eng": "192000" }
+			},
+			{
+				"index": 3,
+				"codec_name": "ac3",
+				"codec_type": "audio",
+				"channels": 6,
+				"sample_rate": "48000",
+				"disposition": { "default": 0 },
+				"tags": { "BPS-eng": "384000", "BPS": "640000" }
+			},
+			{
+				"index": 4,
+				"codec_name": "dts",
+				"codec_type": "audio",
+				"channels": 6,
+				"sample_rate": "48000",
+				"disposition": { "default": 0 },
+				"tags": { "BPS-jpn": "768000", "BPS-eng": "448000" }
 			}
 		],
 		"format": {
@@ -717,8 +735,8 @@ func TestStreamBitRate_TagBPSFallback(t *testing.T) {
 		t.Errorf("video BitRate: got %d, want 5000000 (from tags.BPS)", pr.PrimaryVideo.BitRate)
 	}
 
-	if len(pr.AudioStreams) != 2 {
-		t.Fatalf("audio streams: got %d, want 2", len(pr.AudioStreams))
+	if len(pr.AudioStreams) != 4 {
+		t.Fatalf("audio streams: got %d, want 4", len(pr.AudioStreams))
 	}
 
 	// Audio[0]: flac with no bit_rate, should fall back to tags.BPS.
@@ -729,6 +747,16 @@ func TestStreamBitRate_TagBPSFallback(t *testing.T) {
 	// Audio[1]: aac with bit_rate=256000; top-level value takes precedence over BPS-eng tag.
 	if pr.AudioStreams[1].BitRate != 256000 {
 		t.Errorf("audio[1] BitRate: got %d, want 256000 (from bit_rate field)", pr.AudioStreams[1].BitRate)
+	}
+
+	// Audio[2]: exact BPS should win over language-specific BPS-* tags.
+	if pr.AudioStreams[2].BitRate != 640000 {
+		t.Errorf("audio[2] BitRate: got %d, want 640000 (from exact tags.BPS)", pr.AudioStreams[2].BitRate)
+	}
+
+	// Audio[3]: multiple BPS-* tags should be read in stable key order.
+	if pr.AudioStreams[3].BitRate != 448000 {
+		t.Errorf("audio[3] BitRate: got %d, want 448000 (from first sorted BPS-* tag)", pr.AudioStreams[3].BitRate)
 	}
 }
 
@@ -765,5 +793,26 @@ func TestDebugSampleProbe(t *testing.T) {
 	}
 	for i, s := range pr.SubtitleStreams {
 		t.Logf("Sub[%d]: %s, lang=%s, bitmap=%v", i, s.Codec, s.Language, s.IsBitmap)
+	}
+}
+
+func TestVideoStreamFrameRate(t *testing.T) {
+	cases := []struct {
+		in   string
+		want float64
+	}{
+		{"24000/1001", 23.976023976023978},
+		{"25/1", 25},
+		{"30", 30},
+		{"0/0", 0},
+		{"", 0},
+		{"abc", 0},
+		{"24/0", 0},
+	}
+	for _, tc := range cases {
+		v := VideoStream{AvgFrameRate: tc.in}
+		if got := v.FrameRate(); got != tc.want {
+			t.Errorf("FrameRate(%q): got %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }

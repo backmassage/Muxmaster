@@ -169,7 +169,14 @@ func CheckDeps(cfg *config.Config) error {
 		return ErrFfprobeNotFound
 	}
 	if !testAudioEncoder(cfg.Audio.Encoder) {
-		return fmt.Errorf("%w: %s", ErrAudioEncodeFailed, cfg.Audio.Encoder)
+		// libfdk_aac is a nonfree component missing from most distro
+		// ffmpeg builds; fall back to the native aac encoder rather
+		// than refusing to run.
+		if cfg.Audio.Encoder == "libfdk_aac" && testAudioEncoder("aac") {
+			cfg.Audio.Encoder = "aac"
+		} else {
+			return fmt.Errorf("%w: %s", ErrAudioEncodeFailed, cfg.Audio.Encoder)
+		}
 	}
 
 	if cfg.Encoder.Mode == config.EncoderCPU {
@@ -181,16 +188,24 @@ func CheckDeps(cfg *config.Config) error {
 
 	// VAAPI mode: need a render device that passes an encode test.
 	// Prefer 10-bit (main10/p010); fall back to 8-bit (main/nv12).
-	dev := getFirstRenderDevice()
+	// The tested device is written back to cfg so the encode command
+	// targets the same render node the test passed on — the configured
+	// default (renderD128) may not be the node that exists on this host.
+	dev := cfg.Encoder.VaapiDevice
+	if _, err := os.Stat(dev); err != nil {
+		dev = getFirstRenderDevice()
+	}
 	if dev == "" {
 		return ErrNoVAAPIDevice
 	}
 	if testVAAPI(dev, "p010", "main10") {
+		cfg.Encoder.VaapiDevice = dev
 		cfg.Encoder.VaapiProfile = "main10"
 		cfg.Encoder.VaapiSwFormat = "p010"
 		return nil
 	}
 	if testVAAPI(dev, "nv12", "main") {
+		cfg.Encoder.VaapiDevice = dev
 		cfg.Encoder.VaapiProfile = "main"
 		cfg.Encoder.VaapiSwFormat = "nv12"
 		return nil

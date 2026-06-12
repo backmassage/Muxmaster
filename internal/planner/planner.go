@@ -142,8 +142,16 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		}
 
 		plan.VideoFilters = BuildVideoFilter(cfg, pr, plan.HWDecode)
+		if plan.HWDecode {
+			// Fallback chain for the retry engine: if hardware decode fails
+			// at runtime (codec the driver can't decode), the encode is
+			// retried with software decode + hwupload using this chain.
+			plan.SWVideoFilters = BuildVideoFilter(cfg, pr, false)
+		}
 		plan.ColorOpts = BuildColorOpts(cfg, pr)
 		BuildHDR10Meta(cfg, pr, plan)
+
+		plan.KeyframeInterval = keyframeInterval(cfg, pr)
 	}
 
 	// --- 4. Audio ---
@@ -168,6 +176,21 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		plan.VideoStreamIdx = v.Index
 	}
 	return plan
+}
+
+// keyframeInterval derives the GOP length from the source frame rate,
+// targeting a ~2 second keyframe cadence (the standard segment length for
+// Jellyfin/HLS streaming). The config value (48, i.e. 2s at 24fps) is the
+// fallback when the frame rate is unknown. The result is clamped so corrupt
+// frame-rate metadata can't produce degenerate GOPs.
+func keyframeInterval(cfg *config.Config, pr *probe.ProbeResult) int {
+	g := cfg.Encoder.KeyframeInterval
+	if v := pr.PrimaryVideo; v != nil {
+		if fps := v.FrameRate(); fps > 0 {
+			g = Clamp(int(fps*2+0.5), 24, 300)
+		}
+	}
+	return g
 }
 
 // vaapiHWDecodeViable is false when VAAPI hardware decode is known to fail for

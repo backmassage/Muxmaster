@@ -47,12 +47,16 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 		args = append(args, "-fflags", "+genpts+discardcorrupt")
 	}
 
+	// HW decode can be disabled by the retry engine after a hardware
+	// decode failure; the plan's software fallback chain is used instead.
+	hwDecode := plan.HWDecode && rs.HWDecode
+
 	// --- VAAPI hardware device (encode path only) ---
 	if plan.Action == planner.ActionEncode && cfg.Encoder.Mode == config.EncoderVAAPI {
 		args = append(args,
 			"-init_hw_device", "vaapi=va:"+cfg.Encoder.VaapiDevice,
 		)
-		if plan.HWDecode {
+		if hwDecode {
 			args = append(args,
 				"-hwaccel", "vaapi",
 				"-hwaccel_device", "va",
@@ -66,8 +70,12 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	args = append(args, "-i", plan.InputPath)
 
 	// --- Video filter chain (encode path only, before maps) ---
-	if plan.Action == planner.ActionEncode && plan.VideoFilters != "" {
-		args = append(args, "-vf", plan.VideoFilters)
+	videoFilters := plan.VideoFilters
+	if plan.HWDecode && !hwDecode {
+		videoFilters = plan.SWVideoFilters
+	}
+	if plan.Action == planner.ActionEncode && videoFilters != "" {
+		args = append(args, "-vf", videoFilters)
 	}
 
 	// --- Stream maps ---
@@ -118,13 +126,17 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 		args = append(args, "-c:v", "copy")
 
 	case planner.ActionEncode:
+		gop := plan.KeyframeInterval
+		if gop <= 0 {
+			gop = cfg.Encoder.KeyframeInterval
+		}
 		switch cfg.Encoder.Mode {
 		case config.EncoderVAAPI:
 			args = append(args,
 				"-c:v", "hevc_vaapi",
 				"-qp", strconv.Itoa(rs.VaapiQP),
 				"-profile:v", cfg.Encoder.VaapiProfile,
-				"-g", strconv.Itoa(cfg.Encoder.KeyframeInterval),
+				"-g", strconv.Itoa(gop),
 			)
 		case config.EncoderCPU:
 			x265Params := "log-level=error:open-gop=0"
@@ -134,13 +146,19 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 			if plan.MaxCLL != "" {
 				x265Params += ":max-cll=" + plan.MaxCLL
 			}
+			if plan.MasterDisplay != "" || plan.MaxCLL != "" {
+				// repeat-headers puts the HDR10 SEI on every keyframe so
+				// playback works from any seek point; hdr10-opt enables
+				// x265's PQ-aware rate-distortion tuning.
+				x265Params += ":hdr10=1:hdr10-opt=1:repeat-headers=1"
+			}
 			args = append(args,
 				"-c:v", "libx265",
 				"-crf", strconv.Itoa(rs.CpuCRF),
 				"-preset", cfg.Encoder.CpuPreset,
 				"-profile:v", cfg.Encoder.CpuProfile,
 				"-pix_fmt", cfg.Encoder.CpuPixFmt,
-				"-g", strconv.Itoa(cfg.Encoder.KeyframeInterval),
+				"-g", strconv.Itoa(gop),
 				"-x265-params", x265Params,
 			)
 			// VBV-constrained CRF: cap output at the input video bitrate

@@ -144,3 +144,41 @@ func TestAdvance_TimestampFix(t *testing.T) {
 		t.Error("TimestampFix should be true")
 	}
 }
+
+func TestHWDecodeIssue_Matches(t *testing.T) {
+	cases := []string{
+		"Failed setup for format vaapi: hwaccel initialisation returned error.",
+		"hwaccel initialisation returned error",
+		"Impossible to convert between the formats supported by the filter 'Parsed_scale_vaapi_0' and the filter 'auto_scaler_0'",
+		"No usable encoding profile found.",
+	}
+	for _, stderr := range cases {
+		if !MatchHWDecodeIssue(stderr) {
+			t.Errorf("MatchHWDecodeIssue should match: %q", stderr)
+		}
+	}
+}
+
+func TestAdvance_DisableHWDecode(t *testing.T) {
+	plan := testPlan()
+	plan.HWDecode = true
+	rs := NewRetryState(plan)
+	if !rs.HWDecode {
+		t.Fatal("HWDecode should be seeded from plan")
+	}
+	action := rs.Advance("Failed setup for format vaapi: hwaccel initialisation returned error.")
+	if action != RetryDisableHWDecode {
+		t.Errorf("expected RetryDisableHWDecode, got %d", action)
+	}
+	if rs.HWDecode {
+		t.Error("HWDecode should be false after fallback")
+	}
+}
+
+func TestAdvance_NoHWDecodeRetryForSoftwarePlans(t *testing.T) {
+	rs := NewRetryState(testPlan()) // plan.HWDecode = false
+	action := rs.Advance("No usable encoding profile found.")
+	if action != RetryNone {
+		t.Errorf("software-decode plan should not take HW decode retry, got %d", action)
+	}
+}
