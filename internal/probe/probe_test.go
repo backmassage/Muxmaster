@@ -816,3 +816,152 @@ func TestVideoStreamFrameRate(t *testing.T) {
 		}
 	}
 }
+
+// Dolby Vision profile 8.1 over an HDR10 base layer (typical UHD web rip).
+const sampleDoviP8 = `{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "hevc",
+      "codec_type": "video",
+      "profile": "Main 10",
+      "pix_fmt": "yuv420p10le",
+      "width": 3840,
+      "height": 2160,
+      "bit_rate": "20000000",
+      "field_order": "progressive",
+      "color_transfer": "smpte2084",
+      "color_primaries": "bt2020",
+      "color_space": "bt2020nc",
+      "chroma_location": "topleft",
+      "avg_frame_rate": "24000/1001",
+      "disposition": { "default": 1, "attached_pic": 0 },
+      "tags": {},
+      "side_data_list": [
+        {
+          "side_data_type": "DOVI configuration record",
+          "dv_version_major": 1,
+          "dv_version_minor": 0,
+          "dv_profile": 8,
+          "dv_level": 6,
+          "rpu_present_flag": 1,
+          "el_present_flag": 0,
+          "bl_present_flag": 1,
+          "dv_bl_signal_compatibility_id": 1
+        },
+        {
+          "side_data_type": "Content light level metadata",
+          "max_content": 1000,
+          "max_average": 400
+        }
+      ]
+    }
+  ],
+  "format": {
+    "filename": "/media/test/Movie.2023.DV.mkv",
+    "nb_streams": 1,
+    "format_name": "matroska,webm",
+    "duration": "7200.0",
+    "bit_rate": "21000000"
+  }
+}`
+
+// Dolby Vision profile 5 (IPTPQc2, no HDR10-compatible base layer).
+const sampleDoviP5 = `{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "hevc",
+      "codec_type": "video",
+      "profile": "Main 10",
+      "pix_fmt": "yuv420p10le",
+      "width": 3840,
+      "height": 2160,
+      "bit_rate": "15000000",
+      "avg_frame_rate": "24000/1001",
+      "disposition": { "default": 1, "attached_pic": 0 },
+      "tags": {},
+      "side_data_list": [
+        {
+          "side_data_type": "DOVI configuration record",
+          "dv_version_major": 1,
+          "dv_version_minor": 0,
+          "dv_profile": 5,
+          "dv_level": 6,
+          "rpu_present_flag": 1,
+          "el_present_flag": 0,
+          "bl_present_flag": 1,
+          "dv_bl_signal_compatibility_id": 0
+        }
+      ]
+    }
+  ],
+  "format": {
+    "filename": "/media/test/Movie.2023.DV5.mp4",
+    "nb_streams": 1,
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "duration": "7200.0",
+    "bit_rate": "15500000"
+  }
+}`
+
+func TestParseJSON_DoviP8(t *testing.T) {
+	pr, err := ParseJSON([]byte(sampleDoviP8))
+	if err != nil {
+		t.Fatalf("ParseJSON: %v", err)
+	}
+	v := pr.PrimaryVideo
+	if v == nil {
+		t.Fatal("PrimaryVideo is nil")
+	}
+	if v.DoviProfile != 8 {
+		t.Errorf("DoviProfile: got %d, want 8", v.DoviProfile)
+	}
+	if v.DoviBLCompatID != 1 {
+		t.Errorf("DoviBLCompatID: got %d, want 1", v.DoviBLCompatID)
+	}
+	if v.ChromaLocation != "topleft" {
+		t.Errorf("ChromaLocation: got %q, want topleft", v.ChromaLocation)
+	}
+	// DV side data must not clobber the other side-data entries.
+	if v.ContentLightLevel == nil || v.ContentLightLevel.MaxCLL != 1000 {
+		t.Error("ContentLightLevel should still be parsed alongside DOVI record")
+	}
+}
+
+func TestParseJSON_DoviP5(t *testing.T) {
+	pr, err := ParseJSON([]byte(sampleDoviP5))
+	if err != nil {
+		t.Fatalf("ParseJSON: %v", err)
+	}
+	v := pr.PrimaryVideo
+	if v == nil {
+		t.Fatal("PrimaryVideo is nil")
+	}
+	if v.DoviProfile != 5 {
+		t.Errorf("DoviProfile: got %d, want 5", v.DoviProfile)
+	}
+	if v.DoviBLCompatID != 0 {
+		t.Errorf("DoviBLCompatID: got %d, want 0", v.DoviBLCompatID)
+	}
+}
+
+func TestParseJSON_NoDovi(t *testing.T) {
+	pr, err := ParseJSON([]byte(sampleHDR))
+	if err != nil {
+		t.Fatalf("ParseJSON: %v", err)
+	}
+	if pr.PrimaryVideo.DoviProfile != 0 {
+		t.Errorf("non-DV file: DoviProfile should be 0, got %d", pr.PrimaryVideo.DoviProfile)
+	}
+}
+
+func TestParseJSON_AttachedPicIdxs(t *testing.T) {
+	pr, err := ParseJSON([]byte(sampleHDR))
+	if err != nil {
+		t.Fatalf("ParseJSON: %v", err)
+	}
+	if len(pr.AttachedPicIdxs) != 1 || pr.AttachedPicIdxs[0] != 0 {
+		t.Errorf("AttachedPicIdxs: got %v, want [0]", pr.AttachedPicIdxs)
+	}
+}

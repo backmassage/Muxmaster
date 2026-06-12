@@ -9,7 +9,7 @@ type Action int
 const (
 	ActionEncode Action = iota
 	ActionRemux
-	ActionSkip // Reserved; BuildPlan currently produces only Encode or Remux.
+	ActionSkip // File cannot be processed correctly (e.g. Dolby Vision profile 5).
 )
 
 // FilePlan holds the complete set of decisions for processing a single media
@@ -17,14 +17,18 @@ const (
 // construct command arguments and by the retry engine for initial state.
 type FilePlan struct {
 	Action     Action
-	SkipReason string
+	SkipReason string   // Why the file is skipped (Action == ActionSkip).
+	Notes      []string // One-line informational notes logged before processing.
 
 	// Video encoding.
 	VideoCodec       string   // "hevc_vaapi", "libx265", or "copy"
 	VideoFilters     string   // comma-joined filter chain (may be empty)
 	SWVideoFilters   string   // software-decode fallback chain (set only when HWDecode is true)
 	ColorOpts        []string // -color_trc, -color_primaries, -colorspace pairs
+	BSFOpts          []string // bitstream filter args (e.g. -bsf:v dovi_rpu=strip on remux)
 	HWDecode         bool     // Use VAAPI hardware decode (frames stay on GPU)
+	VaapiQVBR        bool     // Use QVBR rate control instead of constant-QP (capability-gated)
+	VaapiBFrames     bool     // Enable B-frames on the VAAPI encoder (capability-gated)
 	KeyframeInterval int      // Per-file GOP length (~2s at source fps); 0 = use config default
 
 	// HDR10 static metadata (empty when not present or not preserving HDR).
@@ -47,6 +51,9 @@ type FilePlan struct {
 	// Subtitles and attachments.
 	Subtitles   SubtitlePlan
 	Attachments AttachmentPlan
+
+	// Cover-art video streams to carry over (MKV only; absolute indices).
+	AttachedPicIdxs []int
 
 	// Stream dispositions.
 	DispositionOpts []string
@@ -91,9 +98,14 @@ type AudioStreamPlan struct {
 // SubtitlePlan describes how subtitles are handled.
 type SubtitlePlan struct {
 	Include    bool
-	Codec      string // "copy", "mov_text", or ""
+	Codec      string // "copy", "mov_text", or "" (per-stream codecs in use)
 	SkipBitmap bool   // When true, only text subtitle streams are mapped (MP4 with mixed subs).
-	TextIdxs   []int  // Absolute stream indices of text subtitle streams (used when SkipBitmap is true).
+	TextIdxs   []int  // Absolute stream indices of mapped subtitle streams (indexed-map modes).
+
+	// StreamCodecs holds per-output-stream subtitle codecs parallel to
+	// TextIdxs (MKV with mov_text sources that need srt conversion).
+	// Empty means Codec applies to all mapped streams.
+	StreamCodecs []string
 }
 
 // AttachmentPlan describes whether to carry attachments (fonts, etc.).

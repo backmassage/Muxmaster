@@ -97,30 +97,52 @@ func vaapiTonemapChain(swFormat string) string {
 		"zscale=t=bt709:m=bt709:r=tv,format=" + swFormat
 }
 
-// BuildColorOpts returns the ffmpeg color metadata flags for HDR preservation
-// on the encode path. When HDR is detected and preserve mode is active, the
-// source color transfer, primaries, and space are passed through to the output.
+// BuildColorOpts returns the ffmpeg color metadata flags for the encode path.
+// Probed color tags are passed through for SDR sources and HDR10 preserve mode
+// alike — untagged output forces clients to guess. When the HDR→SDR tonemap
+// chain runs, the output is explicitly tagged bt709 (the zscale chain converts
+// the pixels but leaves the stream untagged otherwise).
 func BuildColorOpts(cfg *config.Config, pr *probe.ProbeResult) []string {
-	if cfg.Encoder.HandleHDR != config.HDRPreserve || pr.HDRType() != "hdr10" {
-		return nil
-	}
-
 	v := pr.PrimaryVideo
 	if v == nil {
 		return nil
 	}
 
+	if pr.HDRType() == "hdr10" && cfg.Encoder.HandleHDR == config.HDRTonemap {
+		// The tonemap chain ends in a 4:4:4→4:2:0 downsample whose chroma
+		// siting no longer matches the source, so no chroma tag is emitted.
+		return []string{
+			"-color_trc", "bt709",
+			"-color_primaries", "bt709",
+			"-colorspace", "bt709",
+		}
+	}
+
 	var opts []string
-	if v.ColorTransfer != "" {
+	if tagged(v.ColorTransfer) {
 		opts = append(opts, "-color_trc", v.ColorTransfer)
 	}
-	if v.ColorPrimaries != "" {
+	if tagged(v.ColorPrimaries) {
 		opts = append(opts, "-color_primaries", v.ColorPrimaries)
 	}
-	if v.ColorSpace != "" {
+	if tagged(v.ColorSpace) {
 		opts = append(opts, "-colorspace", v.ColorSpace)
 	}
+	if tagged(v.ChromaLocation) {
+		opts = append(opts, "-chroma_sample_location", v.ChromaLocation)
+	}
 	return opts
+}
+
+// tagged reports whether a probed color metadata value carries real
+// information worth passing through to the output stream.
+func tagged(val string) bool {
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "", "unknown", "unspecified":
+		return false
+	default:
+		return true
+	}
 }
 
 // BuildHDR10Meta populates the FilePlan's MasterDisplay and MaxCLL fields

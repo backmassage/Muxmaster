@@ -117,14 +117,29 @@ func checkVAAPI(log Logger) bool {
 	log.Info("Testing VAAPI on %s...", dev)
 	if testVAAPI(dev, "p010", "main10") {
 		log.Success("VAAPI works (main10)")
+		logVaapiCaps(log, dev, "p010", "main10")
 		return true
 	}
 	if testVAAPI(dev, "nv12", "main") {
 		log.Success("VAAPI works (main/8-bit only)")
+		logVaapiCaps(log, dev, "nv12", "main")
 		return true
 	}
 	log.Error("VAAPI test encode failed on %s", dev)
 	return false
+}
+
+// logVaapiCaps reports optional encoder capabilities on the working device.
+func logVaapiCaps(log Logger, dev, swFormat, profile string) {
+	log.Info("  QVBR rate control: %s", yesNo(testVaapiQVBR(dev, swFormat, profile)))
+	log.Info("  B-frames: %s", yesNo(testVaapiBFrames(dev, swFormat, profile)))
+}
+
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }
 
 // checkCPUx265 runs a minimal libx265 encode to verify CPU encoding works.
@@ -202,15 +217,28 @@ func CheckDeps(cfg *config.Config) error {
 		cfg.Encoder.VaapiDevice = dev
 		cfg.Encoder.VaapiProfile = "main10"
 		cfg.Encoder.VaapiSwFormat = "p010"
+		detectVaapiCaps(cfg)
 		return nil
 	}
 	if testVAAPI(dev, "nv12", "main") {
 		cfg.Encoder.VaapiDevice = dev
 		cfg.Encoder.VaapiProfile = "main"
 		cfg.Encoder.VaapiSwFormat = "nv12"
+		detectVaapiCaps(cfg)
 		return nil
 	}
 	return ErrVAAPITestFailed
+}
+
+// detectVaapiCaps probes optional encoder capabilities on the validated
+// render node and writes the results back to cfg. Failures are capability
+// facts, not errors — the pipeline degrades to constant-QP / no B-frames.
+func detectVaapiCaps(cfg *config.Config) {
+	dev := cfg.Encoder.VaapiDevice
+	sw := cfg.Encoder.VaapiSwFormat
+	prof := cfg.Encoder.VaapiProfile
+	cfg.Encoder.VaapiQVBR = testVaapiQVBR(dev, sw, prof)
+	cfg.Encoder.VaapiBFrames = testVaapiBFrames(dev, sw, prof)
 }
 
 func testAudioEncoder(encoder string) bool {
@@ -248,6 +276,39 @@ func testVAAPI(device, swFormat, profile string) bool {
 		"-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
 		"-vf", "format="+swFormat+",hwupload",
 		"-c:v", "hevc_vaapi", "-profile:v", profile,
+		"-f", "null", "-",
+	)
+}
+
+// testVaapiQVBR runs a minimal encode with QVBR rate control. ffmpeg's
+// vaapi_encode validates the requested mode against the driver's
+// VAConfigAttribRateControl at init, so a passing encode proves support
+// (Mesa >= 24.3 on AMD radeonsi; broadly available on Intel iHD).
+func testVaapiQVBR(device, swFormat, profile string) bool {
+	return runSilent("ffmpeg",
+		"-hide_banner", "-nostdin", "-loglevel", "error",
+		"-init_hw_device", "vaapi=va:"+device,
+		"-filter_hw_device", "va",
+		"-f", "lavfi", "-i", "color=black:s=256x256:d=0.1",
+		"-vf", "format="+swFormat+",hwupload",
+		"-c:v", "hevc_vaapi", "-profile:v", profile,
+		"-rc_mode", "QVBR", "-global_quality", "25", "-b:v", "1M", "-maxrate", "2M",
+		"-f", "null", "-",
+	)
+}
+
+// testVaapiBFrames runs a minimal encode with B-frames enabled. Note some
+// driver stacks silently drop unsupported B-frames instead of erroring, in
+// which case this reports true and the real encode degrades the same way.
+func testVaapiBFrames(device, swFormat, profile string) bool {
+	return runSilent("ffmpeg",
+		"-hide_banner", "-nostdin", "-loglevel", "error",
+		"-init_hw_device", "vaapi=va:"+device,
+		"-filter_hw_device", "va",
+		"-f", "lavfi", "-i", "color=black:s=256x256:d=0.2",
+		"-vf", "format="+swFormat+",hwupload",
+		"-c:v", "hevc_vaapi", "-profile:v", profile,
+		"-bf", "2",
 		"-f", "null", "-",
 	)
 }

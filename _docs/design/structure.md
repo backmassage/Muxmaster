@@ -38,5 +38,10 @@ For the full dependency map and rules, see [architecture.md](../architecture.md)
 | Log level or sink | `internal/logging/logger.go` |
 | Color behavior | `internal/term/term.go` |
 | Banner or size/bitrate formatting | `internal/display/` |
-| System check | `internal/check/check.go` |
+| System check / VAAPI capability detection (QVBR, B-frames) | `internal/check/check.go` |
+| Dolby Vision policy (skip P5, strip otherwise) | `internal/planner/planner.go`, probe side-data in `internal/probe/prober.go` |
+| Color/chroma tagging (SDR passthrough, bt709 after tonemap) | `internal/planner/filter.go` (`BuildColorOpts`) |
+| Subtitle codec conversion (mov_text→srt for MKV) | `internal/planner/subtitle.go` |
+| Stereo downmix pan specs | `internal/planner/audio.go` (`downmixSpecs`) |
+| VAAPI rate control (QVBR/CQP) and encoder tuning flags | `internal/ffmpeg/builder.go` (`appendVideoCodec`) |
 | Probe / naming / plan / ffmpeg / pipeline | Same-named package under `internal/` |

@@ -35,6 +35,22 @@ var (
 			`hwaccel initialisation returned error|` +
 			`Impossible to convert between the formats supported by the filter|` +
 			`No usable encoding profile found`)
+
+	// Rate control init failures: vaapi_encode validates the requested
+	// -rc_mode against VAConfigAttribRateControl at init and errors out
+	// when the driver lacks the mode (QVBR needs Mesa >= 24.3 on AMD).
+	reRateControlIssue = regexp.MustCompile(
+		`(?i)does not support .*RC mode|` +
+			`RC mode.{0,30}not supported|` +
+			`Invalid rate control mode|` +
+			`unsupported rate control`)
+
+	// B-frame failures: drivers without HEVC B-frame encode support
+	// (AMD VCN <= 4) reject -bf at init on some stacks.
+	reBFrameIssue = regexp.MustCompile(
+		`(?i)does not support B-(frames|pictures)|` +
+			`B-?(frames|pictures).{0,30}not supported|` +
+			`invalid number of B-?frames`)
 )
 
 // MatchAttachmentIssue reports whether stderr contains an attachment tag error.
@@ -60,4 +76,15 @@ func MatchTimestampIssue(stderr string) bool {
 // MatchHWDecodeIssue reports whether stderr contains a hardware decode failure.
 func MatchHWDecodeIssue(stderr string) bool {
 	return reHWDecodeIssue.MatchString(stderr)
+}
+
+// MatchRateControlIssue reports whether stderr contains a VAAPI rate-control
+// mode rejection (e.g. QVBR unsupported by the driver).
+func MatchRateControlIssue(stderr string) bool {
+	return reRateControlIssue.MatchString(stderr)
+}
+
+// MatchBFrameIssue reports whether stderr contains a B-frame support failure.
+func MatchBFrameIssue(stderr string) bool {
+	return reBFrameIssue.MatchString(stderr)
 }

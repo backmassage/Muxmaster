@@ -28,6 +28,18 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 
 	v := pr.PrimaryVideo
 
+	// --- 0. Dolby Vision policy ---
+	// Profile 5 video carries no HDR10-compatible base layer (IPTPQc2
+	// signal); stripping the RPUs leaves unwatchable green/purple output,
+	// and the only correct conversion path (libplacebo tonemap) is out of
+	// scope. Skip the file instead of producing a broken one.
+	if v != nil && v.DoviProfile == 5 {
+		plan.Action = ActionSkip
+		plan.SkipReason = "Dolby Vision profile 5 (no HDR10 base layer)"
+		plan.Container = cfg.OutputContainer
+		return plan
+	}
+
 	// --- 1. Action decision ---
 	if cfg.SkipHEVC && v != nil && v.Codec == "hevc" {
 		if pr.IsEdgeSafeHEVC() {
@@ -48,6 +60,22 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		plan.TimestampFix = false
 	} else {
 		plan.TimestampFix = cfg.CleanTimestamps
+	}
+
+	// --- 1b. Dolby Vision stripping (profiles with an HDR10 base layer) ---
+	// On remux, -c:v copy would carry the DOVI configuration record into the
+	// output and DV-capable clients would engage DV mode on a stream we
+	// otherwise treat as HDR10; dovi_rpu=strip removes both the config record
+	// and the per-frame RPUs. On encode, re-encoding drops the RPUs on both
+	// encoder paths (hevc_vaapi never writes them; libx265 only with explicit
+	// dolby-vision-rpu config), so only a note is needed.
+	if v != nil && v.DoviProfile > 0 {
+		if plan.Action == ActionRemux {
+			// Scoped to v:0 so the bsf never touches cover-art streams
+			// (dovi_rpu rejects non-HEVC codecs at init).
+			plan.BSFOpts = []string{"-bsf:v:0", "dovi_rpu=strip"}
+		}
+		plan.Notes = append(plan.Notes, "stripping Dolby Vision, keeping HDR10 base layer")
 	}
 
 	// --- 2. Smart quality ---
@@ -102,12 +130,15 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		plan.Estimate = EstimateBitrate(cfg, pr, plan.VaapiQP, plan.CpuCRF)
 	}
 
-	// --- 2c. Bitrate ceiling (CPU only) ---
-	// Set -maxrate to the optimal bitrate with headroom so the encoder's
-	// CRF can target quality but never produce output larger than what we
-	// expect. VAAPI constant-QP mode does not support -maxrate; the QP
-	// targeting above handles VAAPI instead.
-	if plan.Action == ActionEncode && cfg.Encoder.Mode == config.EncoderCPU {
+	// --- 2c. Bitrate ceiling (CPU CRF and VAAPI QVBR) ---
+	// Set -maxrate to the optimal bitrate with headroom so the encoder can
+	// target quality but never produce output larger than what we expect.
+	// VAAPI constant-QP mode does not support -maxrate (the QP targeting
+	// above handles that case); QVBR does, which is its whole point — it
+	// bounds the peak spikes that cause direct-play buffering.
+	qvbrRequested := cfg.Encoder.Mode == config.EncoderVAAPI &&
+		cfg.Encoder.VaapiRC == config.VaapiRCQVBR && cfg.Encoder.VaapiQVBR
+	if plan.Action == ActionEncode && (cfg.Encoder.Mode == config.EncoderCPU || qvbrRequested) {
 		inputKbps := VideoBitrateKbps(pr)
 		if inputKbps > 0 {
 			// Use optimal bitrate + 15% headroom as ceiling, capped at
@@ -122,6 +153,15 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 			plan.MaxRateKbps = ceiling
 			plan.BufSizeKbps = ceiling * 2
 		}
+	}
+	// QVBR needs both a target bitrate and a ceiling; without them (smart
+	// quality disabled or unknown input bitrate) fall back to constant QP.
+	if plan.Action == ActionEncode && qvbrRequested &&
+		plan.OptimalBitrateKbps > 0 && plan.MaxRateKbps > 0 {
+		plan.VaapiQVBR = true
+	}
+	if plan.Action == ActionEncode && cfg.Encoder.Mode == config.EncoderVAAPI {
+		plan.VaapiBFrames = cfg.Encoder.VaapiBFrames
 	}
 
 	// --- 3. Video codec and filters ---
@@ -165,6 +205,20 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 	if cfg.OutputContainer == config.ContainerMP4 {
 		plan.ContainerOpts = []string{"-movflags", "+faststart"}
 		plan.TagOpts = []string{"-tag:v", "hvc1"}
+	} else if plan.Subtitles.Include {
+		// Sparse subtitle streams trip the muxer's default 10 s interleave
+		// cap (max_interleave_delta), forcing premature flushes and bad
+		// audio/video interleaving. Disabling the cap trades a bounded
+		// amount of muxer buffering memory for correct interleaving.
+		plan.ContainerOpts = []string{"-max_interleave_delta", "0"}
+	}
+
+	// Cover art: the builder maps only the primary video stream, so attached
+	// pictures would be silently dropped. MKV carries them as video streams
+	// with the attached_pic disposition; MP4 cover art handling differs, so
+	// it stays skipped there.
+	if cfg.OutputContainer == config.ContainerMKV {
+		plan.AttachedPicIdxs = pr.AttachedPicIdxs
 	}
 
 	// --- 7. Stream dispositions ---

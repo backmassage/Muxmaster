@@ -130,8 +130,19 @@ func processFile(
 	plan.InputPath = path
 	plan.OutputPath = outputPath
 
+	if plan.Action == planner.ActionSkip {
+		log.Warn("Skip: %s", plan.SkipReason)
+		stats.Skipped++
+		log.Blank()
+		return
+	}
+
 	if cfg.Display.FileStats {
 		logFileStats(log, plan)
+	}
+
+	for _, note := range plan.Notes {
+		log.Info("  %s", note)
 	}
 
 	if plan.QualityNote != "" {
@@ -338,6 +349,8 @@ func attemptWithErrorRetry(
 		ffmpeg.RetryIncreaseMux:     "increase mux queue",
 		ffmpeg.RetryFixTimestamps:   "fix timestamps",
 		ffmpeg.RetryDisableHWDecode: "disable hardware decode",
+		ffmpeg.RetryDisableQVBR:     "fall back to constant-QP rate control",
+		ffmpeg.RetryDropBFrames:     "drop B-frames",
 	}
 
 	for {

@@ -13,6 +13,8 @@ const (
 	RetryIncreaseMux                 // Raise max_muxing_queue_size to 16384.
 	RetryFixTimestamps               // Enable +genpts+discardcorrupt.
 	RetryDisableHWDecode             // Fall back to software decode + hwupload.
+	RetryDisableQVBR                 // Fall back from QVBR to constant-QP rate control.
+	RetryDropBFrames                 // Drop -bf (driver rejected B-frame encoding).
 )
 
 const (
@@ -32,6 +34,8 @@ type RetryState struct {
 	MuxQueueSize  int
 	TimestampFix  bool
 	HWDecode      bool
+	VaapiQVBR     bool
+	VaapiBFrames  bool
 
 	VaapiQP int
 	CpuCRF  int
@@ -47,6 +51,8 @@ func NewRetryState(plan *planner.FilePlan) *RetryState {
 		MuxQueueSize:  plan.MuxQueueSize,
 		TimestampFix:  plan.TimestampFix,
 		HWDecode:      plan.HWDecode,
+		VaapiQVBR:     plan.VaapiQVBR,
+		VaapiBFrames:  plan.VaapiBFrames,
 		VaapiQP:       plan.VaapiQP,
 		CpuCRF:        plan.CpuCRF,
 	}
@@ -58,7 +64,7 @@ func NewRetryState(plan *planner.FilePlan) *RetryState {
 // or the attempt limit is reached.
 //
 // Pattern evaluation order: attachment → subtitle → mux queue → timestamp →
-// hardware decode.
+// hardware decode → rate control (QVBR→CQP) → B-frames.
 // Only one fix is applied per call (one fix per retry attempt).
 func (s *RetryState) Advance(stderr string) RetryAction {
 	s.Attempt++
@@ -85,6 +91,14 @@ func (s *RetryState) Advance(stderr string) RetryAction {
 	if s.HWDecode && MatchHWDecodeIssue(stderr) {
 		s.HWDecode = false
 		return RetryDisableHWDecode
+	}
+	if s.VaapiQVBR && MatchRateControlIssue(stderr) {
+		s.VaapiQVBR = false
+		return RetryDisableQVBR
+	}
+	if s.VaapiBFrames && MatchBFrameIssue(stderr) {
+		s.VaapiBFrames = false
+		return RetryDropBFrames
 	}
 
 	return RetryNone

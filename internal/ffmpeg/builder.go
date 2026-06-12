@@ -93,6 +93,13 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	// --- Video codec ---
 	args = appendVideoCodec(args, cfg, plan, rs)
 
+	// --- Bitstream filters (e.g. dovi_rpu=strip on remux) ---
+	args = append(args, plan.BSFOpts...)
+
+	// --- Cover art (after the video codec section: the per-stream -c:v:N
+	// copy must come later than the global -c:v to win for that stream) ---
+	args = appendAttachedPicMaps(args, plan)
+
 	// --- Tag opts (e.g. -tag:v hvc1 for MP4) ---
 	args = append(args, plan.TagOpts...)
 
@@ -132,14 +139,41 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 		}
 		switch cfg.Encoder.Mode {
 		case config.EncoderVAAPI:
+			args = append(args, "-c:v", "hevc_vaapi")
+			if rs.VaapiQVBR {
+				// QVBR: quality-targeted VBR with a peak ceiling. Bounds
+				// the bitrate spikes that cause direct-play buffering,
+				// which constant-QP cannot. The retry engine falls back
+				// to CQP if the driver rejects the rate-control mode.
+				args = append(args,
+					"-rc_mode", "QVBR",
+					"-global_quality", strconv.Itoa(rs.VaapiQP),
+					"-b:v", strconv.Itoa(plan.OptimalBitrateKbps)+"k",
+					"-maxrate", strconv.Itoa(plan.MaxRateKbps)+"k",
+					"-bufsize", strconv.Itoa(plan.BufSizeKbps)+"k",
+				)
+			} else {
+				args = append(args, "-qp", strconv.Itoa(rs.VaapiQP))
+			}
 			args = append(args,
-				"-c:v", "hevc_vaapi",
-				"-qp", strconv.Itoa(rs.VaapiQP),
 				"-profile:v", cfg.Encoder.VaapiProfile,
 				"-g", strconv.Itoa(gop),
+				// Quality-first VA quality level (CPU "preset slow"
+				// equivalent). Driver-clamped to its supported range and
+				// ignored with a warning when unsupported.
+				"-compression_level", strconv.Itoa(cfg.Encoder.VaapiCompressionLevel),
+				// Deeper submission pipeline than the default 2 —
+				// throughput only, no effect on output.
+				"-async_depth", "4",
 			)
+			if rs.VaapiBFrames {
+				args = append(args, "-bf", "4")
+			}
 		case config.EncoderCPU:
-			x265Params := "log-level=error:open-gop=0"
+			// aq-mode=3: auto-variance AQ biased toward dark scenes —
+			// fights banding/blocking in dark content, the most visible
+			// artifact class on TV playback.
+			x265Params := "log-level=error:open-gop=0:aq-mode=3"
 			if plan.MasterDisplay != "" {
 				x265Params += ":master-display=" + plan.MasterDisplay
 			}
@@ -223,6 +257,17 @@ func appendSubtitleMaps(args []string, plan *planner.FilePlan, rs *RetryState) [
 		return args
 	}
 
+	if len(plan.Subtitles.StreamCodecs) > 0 {
+		// Per-stream codecs (MKV with mov_text sources): map each subtitle
+		// stream by absolute index and pair it with its output codec by
+		// output-subtitle ordinal.
+		for i, idx := range plan.Subtitles.TextIdxs {
+			args = append(args, "-map", fmt.Sprintf("0:%d", idx))
+			args = append(args, fmt.Sprintf("-c:s:%d", i), plan.Subtitles.StreamCodecs[i])
+		}
+		return args
+	}
+
 	if plan.Subtitles.SkipBitmap && len(plan.Subtitles.TextIdxs) > 0 {
 		// Map only text subtitle streams by absolute index.
 		for _, idx := range plan.Subtitles.TextIdxs {
@@ -234,6 +279,22 @@ func appendSubtitleMaps(args []string, plan *planner.FilePlan, rs *RetryState) [
 
 	if plan.Subtitles.Codec != "" {
 		args = append(args, "-c:s", plan.Subtitles.Codec)
+	}
+	return args
+}
+
+// appendAttachedPicMaps carries cover-art video streams (MKV only). They are
+// always stream-copied; the codec spec is emitted by video-stream ordinal
+// (primary video is v:0, covers follow), which overrides the global encode
+// codec because it is the later, more specific option.
+func appendAttachedPicMaps(args []string, plan *planner.FilePlan) []string {
+	for i, idx := range plan.AttachedPicIdxs {
+		ord := i + 1
+		args = append(args,
+			"-map", fmt.Sprintf("0:%d", idx),
+			fmt.Sprintf("-c:v:%d", ord), "copy",
+			fmt.Sprintf("-disposition:v:%d", ord), "attached_pic",
+		)
 	}
 	return args
 }

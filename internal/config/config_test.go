@@ -158,3 +158,31 @@ func TestValidatePaths(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_VaapiRC(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CheckOnly = true
+
+	if cfg.Encoder.VaapiRC != VaapiRCCQP {
+		t.Errorf("default VaapiRC should be cqp, got %q", cfg.Encoder.VaapiRC)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("default config should validate: %v", err)
+	}
+
+	cfg.Encoder.VaapiRC = VaapiRCQVBR
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("qvbr should validate: %v", err)
+	}
+
+	cfg.Encoder.VaapiRC = "vbr"
+	if err := cfg.Validate(); err == nil {
+		t.Error("invalid rate control mode should fail validation")
+	}
+
+	cfg.Encoder.VaapiRC = VaapiRCCQP
+	cfg.Encoder.VaapiCompressionLevel = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("negative compression level should fail validation")
+	}
+}

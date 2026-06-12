@@ -89,11 +89,18 @@ than destroying quality. The post-encode loop handles genuine blowups.
 
 - Config struct uses sub-structs: `cfg.Encoder.*` (video encoder), `cfg.Audio.*` (audio), `cfg.Display.*` (logging/output). Pipeline behavior flags remain at the top level.
 - Testability seams: `pipeline.Logger` interface decouples runner/report from `*logging.Logger`; `ffmpeg.RunFunc` decouples `Execute` from real subprocesses. Both accept mocks in tests.
-- VAAPI constant-QP encoding; CPU uses CRF with maxrate ceiling.
+- VAAPI constant-QP encoding by default; `--vaapi-rc qvbr` switches to QVBR (quality target + maxrate ceiling) when the driver supports it (detected by `CheckDeps`, see below). CPU uses CRF with maxrate ceiling and `aq-mode=3` (dark-scene AQ).
+- VAAPI capability detection: `check.CheckDeps` runs cheap test encodes on the selected render node and writes `cfg.Encoder.VaapiQVBR` / `VaapiBFrames` back to config. Failures are capability facts, not errors. AMD VAAPI is "partial support" — never assume Intel feature parity; every new VAAPI flag needs a capability gate or graceful degradation (`-compression_level` and `-async_depth` degrade gracefully and are set unconditionally).
+- Dolby Vision policy: profile 5 (no HDR10 base layer) → `ActionSkip` with reason. Any other DV profile: remux appends `-bsf:v:0 dovi_rpu=strip` (else `-c:v copy` carries the DOVI config record and DV clients engage DV mode); encode drops RPUs inherently (neither encoder writes them). We never preserve DV.
 - VAAPI hardware decode enabled by default (full GPU pipeline); falls back to software decode for HDR tonemap and H.264 10-bit (Hi10p) sources.
 - HDR10 static metadata (mastering display + MaxCLL/MaxFALL) parsed from ffprobe `side_data_list`. CPU mode injects via `-x265-params`; VAAPI relies on frame side-data passthrough.
 - VaapiQPMax = 30 — QP above this produces severe visible artifacts.
 - AAC audio is always passthrough (never re-encoded lossy-to-lossy).
+- Multichannel→stereo transcodes use a dialog-forward `pan` downmix (center at full weight, 0.6 fronts/surrounds, 0.3 LFE) built from the probed channel layout; pan's `<` syntax renormalizes gains so it cannot clip. Unknown layouts fall back to plain `-ac 2`.
+- Encode output is always tagged: probed color/chroma tags pass through for SDR and HDR10-preserve; the HDR→SDR tonemap path tags bt709 explicitly.
+- MKV outputs that map subtitles get `-max_interleave_delta 0` (sparse subs otherwise trip the muxer's 10 s interleave cap).
+- MKV subtitle handling is per-stream when needed: mov_text/tx3g converts to srt via indexed maps; everything else copies.
+- MKV outputs carry cover art (attached_pic video streams) via per-stream `-c:v:N copy`; the spec must be emitted *after* the global `-c:v` to win for that stream.
 - Remux path skips timestamp fix (+genpts); retry engine handles failures.
 - Output directory must never be inside input directory (Config.ValidatePaths).
 - All ffmpeg interaction goes through `internal/ffmpeg/` — never call exec directly.
@@ -105,6 +112,8 @@ than destroying quality. The post-encode loop handles genuine blowups.
 - `probe.ProbeResult.PrimaryVideo` can be nil (audio-only files) — always nil-check.
 - `VideoBitRate()` falls back to format bitrate minus audio when stream bitrate is zero.
 - Naming parser uses ordered regex rules — rule priority matters (first match wins).
-- The retry engine handles 5 error classes: attachment, subtitle, mux queue, timestamp, hardware decode (falls back to software decode + hwupload via `FilePlan.SWVideoFilters`).
+- The retry engine handles 7 error classes: attachment, subtitle, mux queue, timestamp, hardware decode (falls back to software decode + hwupload via `FilePlan.SWVideoFilters`), rate control (QVBR → CQP), and B-frames (drop `-bf`).
+- `dovi_rpu=strip` has no profile-conversion option (folklore); it removes the config record and RPUs, nothing more. It works on `-c:v copy`.
+- QVBR requires smart quality: without an `OptimalBitrateKbps` target (override set or `--no-smart-quality`) the planner silently falls back to CQP.
 - Density = kbps × 1,000,000 / pixels (kbps per megapixel).
 - H.264 10-bit (Hi10p) sources disable VAAPI hardware decode — most drivers lack AVC 10-bit decode support. `vaapiHWDecodeViable` in `planner.go` gates this via `probe.PixFmtIs10Bit`.

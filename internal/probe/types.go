@@ -31,8 +31,15 @@ type VideoStream struct {
 	ColorTransfer  string
 	ColorPrimaries string
 	ColorSpace     string
+	ChromaLocation string
 	IsAttachedPic  bool
 	AvgFrameRate   string
+
+	// Dolby Vision (from the DOVI configuration record side data).
+	// DoviProfile is 0 when the stream carries no DV metadata; no real-world
+	// DV stream uses profile 0, so 0 unambiguously means "not Dolby Vision".
+	DoviProfile    int
+	DoviBLCompatID int
 
 	MasteringDisplay  *MasteringDisplay
 	ContentLightLevel *ContentLightLevel
@@ -98,11 +105,14 @@ func (v *VideoStream) FrameRate() float64 {
 
 // ProbeResult is the fully parsed output of a single ffprobe JSON call.
 // PrimaryVideo is the first non-attached-pic video stream (nil if none).
+// AttachedPicIdxs are the absolute stream indices of cover-art video
+// streams (attached_pic disposition).
 type ProbeResult struct {
 	Format          FormatInfo
 	PrimaryVideo    *VideoStream
 	AudioStreams    []AudioStream
 	SubtitleStreams []SubtitleStream
+	AttachedPicIdxs []int
 	HasBitmapSubs   bool
 }
 

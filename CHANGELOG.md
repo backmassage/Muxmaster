@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Dolby Vision policy.** The probe now parses the DOVI configuration record (`dv_profile`, `dv_bl_signal_compatibility_id`). Profile 5 files (no HDR10-compatible base layer) are skipped with a logged reason — re-encoding them without libplacebo produces green/purple output. All other DV profiles are stripped to their HDR10 base layer: remuxes get `-bsf:v:0 dovi_rpu=strip` (previously `-c:v copy` carried the DOVI record into the output and DV-capable clients engaged DV mode on it); encodes drop the RPUs inherently and log a note.
+- **VAAPI QVBR rate control** (`--vaapi-rc qvbr`). Quality-targeted VBR with a `-maxrate` ceiling derived from the optimal-bitrate model, bounding the peak spikes that cause direct-play buffering — something constant-QP cannot do. Requires driver support (Mesa ≥ 24.3 on AMD), detected at startup via a test encode; a new retry class falls back to CQP if the driver rejects the mode at runtime. Default remains `cqp` until QVBR quality semantics are validated on real content.
+- **VAAPI capability detection.** `CheckDeps` now probes QVBR and B-frame support on the validated render node and writes the results back to config; `--check` reports both.
+- **VAAPI encoder tuning.** `-compression_level 1` (quality-first VA quality level, driver-clamped, `--vaapi-compression-level` to override), `-async_depth 4` (submission pipelining), and `-bf 4` when B-frame support is detected (retry class drops it on failure).
+- **x265 `aq-mode=3`.** Auto-variance AQ biased toward dark scenes on all CPU encodes — targets banding/blocking in dark content.
+- **Dialog-forward stereo downmix.** Multichannel→stereo transcodes now build a layout-aware `pan` filter (5.1, 5.1(side), 7.1) with center at full weight, 0.6 fronts/surrounds, 0.3 LFE; pan's `<` gain syntax renormalizes so the mix cannot clip. Unknown layouts fall back to plain `-ac 2`.
+- **Cover art carry-over.** MKV outputs now map attached-picture video streams with `-c copy` and the `attached_pic` disposition instead of silently dropping them.
+
+### Fixed
+
+- **mov_text subtitles broke MKV outputs.** MP4-sourced files with mov_text subs failed to mux into MKV and the retry engine then dropped *all* subtitles. The MKV subtitle plan is now per-stream: mov_text/tx3g converts to `srt`, everything else still copies.
+- **Untagged SDR and tonemapped output.** Probed color tags (`color_trc`/`color_primaries`/`colorspace`/`chroma_sample_location`) now pass through on every encode, not only HDR10-preserve; the HDR→SDR tonemap path explicitly tags its output bt709 instead of leaving it untagged.
+- **Sparse-subtitle interleaving.** MKV outputs that map subtitles set `-max_interleave_delta 0`, preventing the muxer's 10 s interleave cap from forcing premature flushes around sparse subtitle streams.
+
 ## [2.6.0] — 2026-06-11
 
 ### Added

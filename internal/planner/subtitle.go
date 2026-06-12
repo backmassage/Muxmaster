@@ -34,7 +34,44 @@ func BuildSubtitlePlan(cfg *config.Config, pr *probe.ProbeResult) SubtitlePlan {
 		}
 	}
 
-	return SubtitlePlan{Include: true, Codec: "copy"}
+	// MKV: mov_text (tx3g) cannot be muxed into Matroska — a straight
+	// -c:s copy makes the mux fail and the retry engine then drops *all*
+	// subtitles. Convert those streams to srt (tx3g positioning/styling is
+	// lost — acceptable) and copy everything else. Indexed maps with
+	// per-stream codecs are only used when a conversion is actually needed.
+	needsConvert := false
+	for _, s := range pr.SubtitleStreams {
+		if isMovText(s.Codec) {
+			needsConvert = true
+			break
+		}
+	}
+	if !needsConvert {
+		return SubtitlePlan{Include: true, Codec: "copy"}
+	}
+
+	var idxs []int
+	var codecs []string
+	for _, s := range pr.SubtitleStreams {
+		idxs = append(idxs, s.Index)
+		if isMovText(s.Codec) {
+			codecs = append(codecs, "srt")
+		} else {
+			codecs = append(codecs, "copy")
+		}
+	}
+	return SubtitlePlan{Include: true, TextIdxs: idxs, StreamCodecs: codecs}
+}
+
+// isMovText reports whether the probed subtitle codec is MP4 timed text,
+// which Matroska cannot carry.
+func isMovText(codec string) bool {
+	switch codec {
+	case "mov_text", "tx3g":
+		return true
+	default:
+		return false
+	}
 }
 
 // BuildAttachmentPlan decides whether to carry font/image attachments.

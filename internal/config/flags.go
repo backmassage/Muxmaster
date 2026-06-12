@@ -85,6 +85,9 @@ func defineEncodingFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.StringVar(&cfg.Encoder.VaapiQPFixedOverride, "vaapi-qp", "", "Fixed VAAPI QP (overrides --quality in VAAPI mode)")
 	fs.StringVar(&cfg.Encoder.CpuPreset, "preset", cfg.Encoder.CpuPreset, "x265 preset (e.g. slow, medium)")
 	fs.StringVar(&cfg.Encoder.CpuPreset, "p", cfg.Encoder.CpuPreset, "Same as --preset")
+	fs.Var(&vaapiRCValue{&cfg.Encoder.VaapiRC}, "vaapi-rc", "VAAPI rate control: cqp | qvbr")
+	fs.IntVar(&cfg.Encoder.VaapiCompressionLevel, "vaapi-compression-level",
+		cfg.Encoder.VaapiCompressionLevel, "VAAPI encoder quality level (driver-clamped)")
 	fs.StringVar(&cfg.Audio.Bitrate, "audio-bitrate", cfg.Audio.Bitrate, "Audio bitrate in Kbps (e.g. 128k, 320k)")
 }
 
@@ -278,6 +281,8 @@ func printUsage(_ *flag.FlagSet, version string) {
 		{"  --cpu-crf <value>", "Fixed CPU CRF (overrides --quality in CPU mode)"},
 		{"  --vaapi-qp <value>", "Fixed VAAPI QP (overrides --quality in VAAPI mode)"},
 		{"  -p, --preset <name>", "x265 preset (default: slow)"},
+		{"  --vaapi-rc <cqp|qvbr>", "VAAPI rate control (default: cqp; qvbr needs driver support)"},
+		{"  --vaapi-compression-level <n>", "VAAPI quality level, driver-clamped (default: 1)"},
 		{"  --audio-bitrate <rate>", "Audio bitrate in Kbps (default: 320k)"},
 		{"", ""},
 		{"Container & HDR", ""},
@@ -366,6 +371,21 @@ func (c *containerValue) Set(s string) error {
 		*c.p = ContainerMP4
 	default:
 		return fmt.Errorf("invalid container %q (use 'mkv' or 'mp4')", s)
+	}
+	return nil
+}
+
+type vaapiRCValue struct{ p *VaapiRCMode }
+
+func (v *vaapiRCValue) String() string { return string(*v.p) }
+func (v *vaapiRCValue) Set(s string) error {
+	switch strings.ToLower(s) {
+	case "cqp":
+		*v.p = VaapiRCCQP
+	case "qvbr":
+		*v.p = VaapiRCQVBR
+	default:
+		return fmt.Errorf("invalid VAAPI rate control %q (use 'cqp' or 'qvbr')", s)
 	}
 	return nil
 }

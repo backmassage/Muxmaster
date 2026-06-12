@@ -182,3 +182,70 @@ func TestAdvance_NoHWDecodeRetryForSoftwarePlans(t *testing.T) {
 		t.Errorf("software-decode plan should not take HW decode retry, got %d", action)
 	}
 }
+
+func TestRateControlIssue_Matches(t *testing.T) {
+	cases := []string{
+		"[hevc_vaapi @ 0x55] Driver does not support QVBR RC mode (supported modes: CQP, CBR, VBR).",
+		"RC mode QVBR is not supported by the driver",
+		"Invalid rate control mode",
+		"Unsupported rate control mode requested",
+	}
+	for _, stderr := range cases {
+		if !MatchRateControlIssue(stderr) {
+			t.Errorf("MatchRateControlIssue should match: %q", stderr)
+		}
+	}
+	if MatchRateControlIssue("Error while opening encoder for output stream") {
+		t.Error("MatchRateControlIssue should not match generic encoder error")
+	}
+}
+
+func TestBFrameIssue_Matches(t *testing.T) {
+	cases := []string{
+		"[hevc_vaapi @ 0x55] Driver does not support B-frames in this configuration",
+		"B-frames are not supported by this driver",
+		"invalid number of B-frames",
+	}
+	for _, stderr := range cases {
+		if !MatchBFrameIssue(stderr) {
+			t.Errorf("MatchBFrameIssue should match: %q", stderr)
+		}
+	}
+}
+
+func TestAdvance_DisableQVBR(t *testing.T) {
+	plan := testPlan()
+	plan.VaapiQVBR = true
+	rs := NewRetryState(plan)
+	if !rs.VaapiQVBR {
+		t.Fatal("VaapiQVBR should be seeded from plan")
+	}
+	action := rs.Advance("Driver does not support QVBR RC mode (supported modes: CQP).")
+	if action != RetryDisableQVBR {
+		t.Errorf("expected RetryDisableQVBR, got %d", action)
+	}
+	if rs.VaapiQVBR {
+		t.Error("VaapiQVBR should be false after fallback")
+	}
+}
+
+func TestAdvance_NoQVBRRetryForCQPPlans(t *testing.T) {
+	rs := NewRetryState(testPlan()) // plan.VaapiQVBR = false
+	action := rs.Advance("Driver does not support QVBR RC mode (supported modes: CQP).")
+	if action != RetryNone {
+		t.Errorf("CQP plan should not take QVBR retry, got %d", action)
+	}
+}
+
+func TestAdvance_DropBFrames(t *testing.T) {
+	plan := testPlan()
+	plan.VaapiBFrames = true
+	rs := NewRetryState(plan)
+	action := rs.Advance("Driver does not support B-frames")
+	if action != RetryDropBFrames {
+		t.Errorf("expected RetryDropBFrames, got %d", action)
+	}
+	if rs.VaapiBFrames {
+		t.Error("VaapiBFrames should be false after fallback")
+	}
+}

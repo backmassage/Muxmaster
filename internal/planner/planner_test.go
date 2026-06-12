@@ -1823,3 +1823,345 @@ func TestClampChannels_UnknownSourceUsesCap(t *testing.T) {
 		t.Errorf("mono source: got %d", got)
 	}
 }
+
+// --- Dolby Vision policy matrix tests ---
+
+func doviFile(profile, compatID int, hevcSafe bool) *probe.ProbeResult {
+	pr := hdr10File()
+	pr.PrimaryVideo.DoviProfile = profile
+	pr.PrimaryVideo.DoviBLCompatID = compatID
+	if !hevcSafe {
+		pr.PrimaryVideo.Codec = "h264"
+		pr.PrimaryVideo.Profile = "High"
+	}
+	return pr
+}
+
+func TestBuildPlan_DolbyVisionMatrix(t *testing.T) {
+	cases := []struct {
+		name       string
+		profile    int
+		hevcSafe   bool // edge-safe HEVC source → remux path
+		wantAction Action
+		wantBSF    bool
+		wantNote   bool
+	}{
+		{"none-remux", 0, true, ActionRemux, false, false},
+		{"none-encode", 0, false, ActionEncode, false, false},
+		{"p5-remux-source", 5, true, ActionSkip, false, false},
+		{"p5-encode-source", 5, false, ActionSkip, false, false},
+		{"p8-remux", 8, true, ActionRemux, true, true},
+		{"p8-encode", 8, false, ActionEncode, false, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaultCfg()
+			plan := BuildPlan(cfg, doviFile(tc.profile, 1, tc.hevcSafe))
+			if plan.Action != tc.wantAction {
+				t.Fatalf("Action: got %d, want %d", plan.Action, tc.wantAction)
+			}
+			if tc.wantAction == ActionSkip && plan.SkipReason == "" {
+				t.Error("skip plan must carry a SkipReason")
+			}
+			hasBSF := len(plan.BSFOpts) == 2 &&
+				plan.BSFOpts[0] == "-bsf:v:0" && plan.BSFOpts[1] == "dovi_rpu=strip"
+			if hasBSF != tc.wantBSF {
+				t.Errorf("BSFOpts: got %v, want strip=%v", plan.BSFOpts, tc.wantBSF)
+			}
+			hasNote := len(plan.Notes) > 0
+			if hasNote != tc.wantNote {
+				t.Errorf("Notes: got %v, want note=%v", plan.Notes, tc.wantNote)
+			}
+		})
+	}
+}
+
+// --- SDR color tagging tests ---
+
+func TestBuildColorOpts_SDRPassthrough(t *testing.T) {
+	cfg := defaultCfg()
+	pr := h264SDR()
+	pr.PrimaryVideo.ColorTransfer = "bt709"
+	pr.PrimaryVideo.ColorPrimaries = "bt709"
+	pr.PrimaryVideo.ColorSpace = "bt709"
+	pr.PrimaryVideo.ChromaLocation = "left"
+	opts := BuildColorOpts(cfg, pr)
+	want := []string{
+		"-color_trc", "bt709",
+		"-color_primaries", "bt709",
+		"-colorspace", "bt709",
+		"-chroma_sample_location", "left",
+	}
+	if fmt.Sprint(opts) != fmt.Sprint(want) {
+		t.Errorf("SDR passthrough: got %v, want %v", opts, want)
+	}
+}
+
+func TestBuildColorOpts_SDRUntagged(t *testing.T) {
+	cfg := defaultCfg()
+	opts := BuildColorOpts(cfg, h264SDR())
+	if len(opts) != 0 {
+		t.Errorf("untagged SDR should produce no color opts, got %v", opts)
+	}
+}
+
+func TestBuildColorOpts_SDRUnspecifiedFiltered(t *testing.T) {
+	cfg := defaultCfg()
+	pr := h264SDR()
+	pr.PrimaryVideo.ColorTransfer = "unknown"
+	pr.PrimaryVideo.ColorPrimaries = "unspecified"
+	pr.PrimaryVideo.ColorSpace = "bt470bg"
+	opts := BuildColorOpts(cfg, pr)
+	want := []string{"-colorspace", "bt470bg"}
+	if fmt.Sprint(opts) != fmt.Sprint(want) {
+		t.Errorf("got %v, want %v", opts, want)
+	}
+}
+
+func TestBuildColorOpts_TonemapTagsBT709(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.HandleHDR = config.HDRTonemap
+	pr := hdr10File()
+	pr.PrimaryVideo.ChromaLocation = "topleft"
+	opts := BuildColorOpts(cfg, pr)
+	want := []string{
+		"-color_trc", "bt709",
+		"-color_primaries", "bt709",
+		"-colorspace", "bt709",
+	}
+	if fmt.Sprint(opts) != fmt.Sprint(want) {
+		t.Errorf("tonemap should tag bt709 (and no chroma tag): got %v, want %v", opts, want)
+	}
+}
+
+func TestBuildColorOpts_HDRPreserveChromaLoc(t *testing.T) {
+	cfg := defaultCfg()
+	pr := hdr10File()
+	pr.PrimaryVideo.ChromaLocation = "topleft"
+	opts := BuildColorOpts(cfg, pr)
+	if fmt.Sprint(opts[len(opts)-2:]) != fmt.Sprint([]string{"-chroma_sample_location", "topleft"}) {
+		t.Errorf("HDR preserve should pass chroma location through, got %v", opts)
+	}
+}
+
+// --- Subtitle codec × container matrix tests ---
+
+func subsFile(codecs ...string) *probe.ProbeResult {
+	pr := h264SDR()
+	pr.SubtitleStreams = nil
+	pr.HasBitmapSubs = false
+	for i, c := range codecs {
+		s := probe.SubtitleStream{Index: 2 + i, Codec: c,
+			IsBitmap: c == "hdmv_pgs_subtitle"}
+		pr.SubtitleStreams = append(pr.SubtitleStreams, s)
+		if s.IsBitmap {
+			pr.HasBitmapSubs = true
+		}
+	}
+	return pr
+}
+
+func TestBuildSubtitlePlan_Matrix(t *testing.T) {
+	cases := []struct {
+		name      string
+		container config.Container
+		codecs    []string
+		wantCodec string   // global Codec ("" when per-stream)
+		wantIdxs  []int    // nil = no indexed mapping
+		wantPer   []string // per-stream codecs (MKV conversion mode)
+	}{
+		{"mkv-srt", config.ContainerMKV, []string{"subrip"}, "copy", nil, nil},
+		{"mkv-ass", config.ContainerMKV, []string{"ass"}, "copy", nil, nil},
+		{"mkv-pgs", config.ContainerMKV, []string{"hdmv_pgs_subtitle"}, "copy", nil, nil},
+		{"mkv-movtext", config.ContainerMKV, []string{"mov_text"}, "",
+			[]int{2}, []string{"srt"}},
+		{"mkv-mixed", config.ContainerMKV, []string{"subrip", "mov_text", "hdmv_pgs_subtitle"}, "",
+			[]int{2, 3, 4}, []string{"copy", "srt", "copy"}},
+		{"mp4-srt", config.ContainerMP4, []string{"subrip"}, "mov_text", []int{2}, nil},
+		{"mp4-movtext", config.ContainerMP4, []string{"mov_text"}, "mov_text", []int{2}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaultCfg()
+			cfg.OutputContainer = tc.container
+			sp := BuildSubtitlePlan(cfg, subsFile(tc.codecs...))
+			if !sp.Include {
+				t.Fatal("subtitles should be included")
+			}
+			if sp.Codec != tc.wantCodec {
+				t.Errorf("Codec: got %q, want %q", sp.Codec, tc.wantCodec)
+			}
+			if tc.wantIdxs != nil && fmt.Sprint(sp.TextIdxs) != fmt.Sprint(tc.wantIdxs) {
+				t.Errorf("TextIdxs: got %v, want %v", sp.TextIdxs, tc.wantIdxs)
+			}
+			if fmt.Sprint(sp.StreamCodecs) != fmt.Sprint(tc.wantPer) {
+				t.Errorf("StreamCodecs: got %v, want %v", sp.StreamCodecs, tc.wantPer)
+			}
+		})
+	}
+}
+
+func TestBuildSubtitlePlan_MP4AllBitmap(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.OutputContainer = config.ContainerMP4
+	sp := BuildSubtitlePlan(cfg, subsFile("hdmv_pgs_subtitle"))
+	if sp.Include {
+		t.Error("MP4 with only bitmap subs should exclude subtitles")
+	}
+}
+
+// --- Container opts tests ---
+
+func TestBuildPlan_MKVSubsInterleaveDelta(t *testing.T) {
+	cfg := defaultCfg()
+	plan := BuildPlan(cfg, h264SDR()) // has an ass subtitle stream
+	want := []string{"-max_interleave_delta", "0"}
+	if fmt.Sprint(plan.ContainerOpts) != fmt.Sprint(want) {
+		t.Errorf("MKV with subs: ContainerOpts got %v, want %v", plan.ContainerOpts, want)
+	}
+}
+
+func TestBuildPlan_MKVNoSubsNoInterleaveDelta(t *testing.T) {
+	cfg := defaultCfg()
+	plan := BuildPlan(cfg, hevcEdgeSafe()) // no subtitle streams
+	if len(plan.ContainerOpts) != 0 {
+		t.Errorf("MKV without subs: ContainerOpts should be empty, got %v", plan.ContainerOpts)
+	}
+}
+
+func TestBuildPlan_AttachedPics(t *testing.T) {
+	cfg := defaultCfg()
+	pr := h264SDR()
+	pr.AttachedPicIdxs = []int{4}
+	plan := BuildPlan(cfg, pr)
+	if fmt.Sprint(plan.AttachedPicIdxs) != fmt.Sprint([]int{4}) {
+		t.Errorf("MKV should carry attached pics, got %v", plan.AttachedPicIdxs)
+	}
+
+	cfg.OutputContainer = config.ContainerMP4
+	plan = BuildPlan(cfg, pr)
+	if len(plan.AttachedPicIdxs) != 0 {
+		t.Errorf("MP4 should skip attached pics, got %v", plan.AttachedPicIdxs)
+	}
+}
+
+// --- VAAPI QVBR planning tests ---
+
+func TestBuildPlan_QVBRRequiresFlagAndDetection(t *testing.T) {
+	cases := []struct {
+		name     string
+		rc       config.VaapiRCMode
+		detected bool
+		want     bool
+	}{
+		{"default-cqp", config.VaapiRCCQP, true, false},
+		{"qvbr-not-detected", config.VaapiRCQVBR, false, false},
+		{"qvbr-detected", config.VaapiRCQVBR, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := defaultCfg()
+			cfg.Encoder.VaapiRC = tc.rc
+			cfg.Encoder.VaapiQVBR = tc.detected
+			plan := BuildPlan(cfg, h264SDR())
+			if plan.VaapiQVBR != tc.want {
+				t.Errorf("VaapiQVBR: got %v, want %v", plan.VaapiQVBR, tc.want)
+			}
+			if tc.want && (plan.MaxRateKbps <= 0 || plan.BufSizeKbps != plan.MaxRateKbps*2) {
+				t.Errorf("QVBR plan needs maxrate/bufsize, got %d/%d",
+					plan.MaxRateKbps, plan.BufSizeKbps)
+			}
+		})
+	}
+}
+
+func TestBuildPlan_QVBRFallsBackWithoutSmartQuality(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.VaapiRC = config.VaapiRCQVBR
+	cfg.Encoder.VaapiQVBR = true
+	cfg.Encoder.SmartQuality = false // no optimal bitrate → no QVBR target
+	plan := BuildPlan(cfg, h264SDR())
+	if plan.VaapiQVBR {
+		t.Error("QVBR should fall back to CQP without an optimal bitrate target")
+	}
+}
+
+func TestBuildPlan_VaapiBFramesFromConfig(t *testing.T) {
+	cfg := defaultCfg()
+	cfg.Encoder.VaapiBFrames = true
+	plan := BuildPlan(cfg, h264SDR())
+	if !plan.VaapiBFrames {
+		t.Error("detected B-frame capability should carry into the plan")
+	}
+
+	cfg.Encoder.Mode = config.EncoderCPU
+	plan = BuildPlan(cfg, h264SDR())
+	if plan.VaapiBFrames {
+		t.Error("CPU mode should not set VaapiBFrames")
+	}
+}
+
+// --- Audio downmix matrix tests ---
+
+func TestBuildAudioPlan_DownmixMatrix(t *testing.T) {
+	cases := []struct {
+		name    string
+		layout  string
+		ch      int
+		wantPan bool
+		wantSub string // substring expected in the pan spec
+	}{
+		{"stereo", "stereo", 2, false, ""},
+		{"5.1", "5.1", 6, true, "0.60*BL"},
+		{"5.1-side", "5.1(side)", 6, true, "0.60*SL"},
+		{"7.1", "7.1", 8, true, "0.60*BR+0.60*SR"},
+		{"unknown", "6.1", 7, false, ""},
+		{"empty-layout", "", 6, false, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pr := &probe.ProbeResult{
+				PrimaryVideo: &probe.VideoStream{Codec: "h264"},
+				AudioStreams: []probe.AudioStream{
+					{Codec: "ac3", Channels: tc.ch, ChannelLayout: tc.layout, SampleRate: 48000},
+				},
+			}
+			ap := BuildAudioPlan(defaultCfg(), pr)
+			if len(ap.Streams) != 1 {
+				t.Fatalf("expected 1 stream plan, got %d", len(ap.Streams))
+			}
+			fs := ap.Streams[0].FilterStr
+			hasPan := strings.Contains(fs, "pan=stereo|")
+			if hasPan != tc.wantPan {
+				t.Fatalf("pan presence: got %v (filter %q), want %v", hasPan, fs, tc.wantPan)
+			}
+			if tc.wantPan {
+				if !strings.HasPrefix(fs, "pan=stereo|FL<FC+") {
+					t.Errorf("pan must lead the chain and use normalizing '<' gains: %q", fs)
+				}
+				if !strings.Contains(fs, tc.wantSub) {
+					t.Errorf("pan spec missing %q: %q", tc.wantSub, fs)
+				}
+				if !strings.Contains(fs, ",aresample=") {
+					t.Errorf("aresample chain must follow pan: %q", fs)
+				}
+			}
+			if !strings.Contains(fs, "aformat=sample_rates=48000") {
+				t.Errorf("aformat chain missing: %q", fs)
+			}
+		})
+	}
+}
+
+func TestBuildAudioPlan_NoDownmixForAACCopy(t *testing.T) {
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{Codec: "h264"},
+		AudioStreams: []probe.AudioStream{
+			{Codec: "aac", Channels: 6, ChannelLayout: "5.1", SampleRate: 48000},
+		},
+	}
+	ap := BuildAudioPlan(defaultCfg(), pr)
+	if !ap.CopyAll {
+		t.Error("AAC 5.1 stays passthrough — downmix must not force a transcode")
+	}
+}

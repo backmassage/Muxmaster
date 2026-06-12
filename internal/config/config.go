@@ -27,6 +27,14 @@ const (
 	ContainerMP4 Container = "mp4" // MP4 (compatibility; limited subtitle support).
 )
 
+// VaapiRCMode selects the VAAPI rate-control strategy.
+type VaapiRCMode string
+
+const (
+	VaapiRCCQP  VaapiRCMode = "cqp"  // Constant QP (default; universally supported).
+	VaapiRCQVBR VaapiRCMode = "qvbr" // Quality-defined VBR with peak ceiling (needs driver support).
+)
+
 // HDRMode controls HDR handling during encoding.
 type HDRMode string
 
@@ -59,6 +67,14 @@ type EncoderConfig struct {
 	KeyframeInterval int    // Fallback: 48 frames. Planner derives ~2s GOP from source fps per file.
 	HandleHDR        HDRMode
 	DeinterlaceAuto  bool
+
+	// VAAPI rate control and tuning.
+	VaapiRC               VaapiRCMode // Default: "cqp". QVBR also requires detected driver support.
+	VaapiCompressionLevel int         // Default: 1 (quality-first VA quality level; driver-clamped).
+
+	// Detected capabilities (written back by check.CheckDeps in VAAPI mode).
+	VaapiQVBR    bool // Driver supports QVBR rate control.
+	VaapiBFrames bool // Driver supports HEVC B-frame encoding.
 
 	// Smart quality adaptation.
 	SmartQuality     bool // Default: true. Per-file quality adaptation.
@@ -136,6 +152,10 @@ func DefaultConfig() Config {
 			KeyframeInterval: 48,
 			HandleHDR:        HDRPreserve,
 			DeinterlaceAuto:  true,
+
+			VaapiRC:               VaapiRCCQP,
+			VaapiCompressionLevel: 1,
+
 			SmartQuality:     true,
 			SmartQualityBias: -2,
 		},
@@ -204,6 +224,16 @@ func (c *Config) Validate() error {
 		// valid
 	default:
 		return errors.New("invalid HDR mode (use 'preserve' or 'tonemap')")
+	}
+
+	switch c.Encoder.VaapiRC {
+	case VaapiRCCQP, VaapiRCQVBR:
+		// valid
+	default:
+		return errors.New("invalid VAAPI rate control (use 'cqp' or 'qvbr')")
+	}
+	if c.Encoder.VaapiCompressionLevel < 0 {
+		return errors.New("VAAPI compression level must be >= 0")
 	}
 	normalizedBitrate, err := normalizeAudioBitrate(c.Audio.Bitrate)
 	if err != nil {

@@ -85,6 +85,7 @@ type ffprobeStream struct {
 	ColorTransfer  string            `json:"color_transfer"`
 	ColorPrimaries string            `json:"color_primaries"`
 	ColorSpace     string            `json:"color_space"`
+	ChromaLocation string            `json:"chroma_location"`
 	AvgFrameRate   string            `json:"avg_frame_rate"`
 	Channels       int               `json:"channels"`
 	ChannelLayout  string            `json:"channel_layout"`
@@ -114,6 +115,10 @@ type ffprobeSideData struct {
 	// Content light level metadata (integer nits).
 	MaxContent int `json:"max_content"`
 	MaxAverage int `json:"max_average"`
+
+	// Dolby Vision configuration record (integers).
+	DvProfile                 int `json:"dv_profile"`
+	DvBLSignalCompatibilityID int `json:"dv_bl_signal_compatibility_id"`
 }
 
 // --- Conversion from wire types to domain types ---
@@ -128,7 +133,9 @@ func buildResult(raw *ffprobeOutput) *ProbeResult {
 		switch s.CodecType {
 		case "video":
 			vs := convertVideo(s)
-			if !vs.IsAttachedPic && pr.PrimaryVideo == nil {
+			if vs.IsAttachedPic {
+				pr.AttachedPicIdxs = append(pr.AttachedPicIdxs, vs.Index)
+			} else if pr.PrimaryVideo == nil {
 				pr.PrimaryVideo = &vs
 			}
 		case "audio":
@@ -170,6 +177,7 @@ func convertVideo(s *ffprobeStream) VideoStream {
 		ColorTransfer:  s.ColorTransfer,
 		ColorPrimaries: s.ColorPrimaries,
 		ColorSpace:     s.ColorSpace,
+		ChromaLocation: s.ChromaLocation,
 		IsAttachedPic:  s.Disposition["attached_pic"] == 1,
 		AvgFrameRate:   s.AvgFrameRate,
 	}
@@ -191,6 +199,9 @@ func convertVideo(s *ffprobeStream) VideoStream {
 				MaxCLL:  sd.MaxContent,
 				MaxFALL: sd.MaxAverage,
 			}
+		case "DOVI configuration record":
+			vs.DoviProfile = sd.DvProfile
+			vs.DoviBLCompatID = sd.DvBLSignalCompatibilityID
 		}
 	}
 
