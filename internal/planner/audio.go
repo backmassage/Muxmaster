@@ -101,11 +101,33 @@ var downmixSpecs = map[string]string{
 		"FR<FC+0.60*FR+0.60*BR+0.60*SR+0.30*LFE",
 }
 
+// downmixChannelCounts gives the channel count for each multichannel layout we
+// have a verified downmix spec for. It is used to infer that a downmix applies
+// when the probed channel count is missing (0) but the layout string is present
+// — otherwise such a stream would skip the dialog-forward pan and fall back to
+// ffmpeg's default (surround-crushing) stereo fold. Keys mirror downmixSpecs.
+var downmixChannelCounts = map[string]int{
+	"5.1":       6,
+	"5.1(side)": 6,
+	"7.1":       8,
+}
+
 // downmixSpec returns the pan filter for a multichannel→stereo transcode,
-// or "" when no downmix applies (already ≤2ch target mismatch, or a layout
-// we have no verified spec for).
+// or "" when no downmix applies (target isn't stereo, source is already ≤2ch,
+// or the layout has no verified spec). When the probed channel count is
+// unknown (<1), it is inferred from the layout so a 0-channel-count 5.1 source
+// still gets the dialog-forward downmix; a stream whose probed count is ≤2 is
+// trusted as-is so contradictory metadata (count=2 + layout=5.1) can't apply a
+// pan spec naming channels the stream lacks (which would error in ffmpeg).
 func downmixSpec(src *probe.AudioStream, targetChannels int) string {
-	if targetChannels != 2 || src.Channels <= 2 {
+	if targetChannels != 2 {
+		return ""
+	}
+	ch := src.Channels
+	if ch < 1 {
+		ch = downmixChannelCounts[src.ChannelLayout]
+	}
+	if ch <= 2 {
 		return ""
 	}
 	return downmixSpecs[src.ChannelLayout]

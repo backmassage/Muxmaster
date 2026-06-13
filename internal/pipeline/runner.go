@@ -38,6 +38,14 @@ func Run(ctx context.Context, cfg *config.Config, log Logger, run ffmpeg.RunFunc
 
 	logBatchHeader(cfg, log, &stats)
 
+	// --tune auto: detect grain per series and prompt the user once each,
+	// before processing. Gated on an interactive stdin — non-interactive runs
+	// fall back to no prefilter (seriesTunes stays nil → effectiveTune none).
+	var seriesTunes map[string]config.TuneMode
+	if cfg.Encoder.Tune == config.TuneAuto && term.IsTerminal(os.Stdin) {
+		seriesTunes = resolveSeriesTunes(ctx, log, files, yearIndex)
+	}
+
 	for i, path := range files {
 		stats.Current = i + 1
 
@@ -46,7 +54,7 @@ func Run(ctx context.Context, cfg *config.Config, log Logger, run ffmpeg.RunFunc
 			break
 		}
 
-		processFile(ctx, cfg, log, path, &stats, yearIndex, resolver, run)
+		processFile(ctx, cfg, log, path, &stats, yearIndex, resolver, seriesTunes, run)
 	}
 
 	logSummary(cfg, log, &stats)
@@ -62,6 +70,7 @@ func processFile(
 	stats *RunStats,
 	yearIndex naming.YearVariantIndex,
 	resolver *naming.CollisionResolver,
+	seriesTunes map[string]config.TuneMode,
 	run ffmpeg.RunFunc,
 ) {
 	basename := filepath.Base(path)
@@ -126,7 +135,24 @@ func processFile(
 	logBitrateOutlier(log, pr)
 
 	// --- Build plan ---
-	plan := planner.BuildPlan(cfg, pr)
+	// Resolve the effective prefilter: an explicit --tune is global; --tune auto
+	// uses the per-series choice made before the loop (none if non-interactive
+	// or this file wasn't grouped). Only the plan reads Encoder.Tune, so a
+	// shallow cfg copy with the resolved value is enough.
+	planCfg := cfg
+	if cfg.Encoder.Tune == config.TuneAuto {
+		effective := config.TuneNone
+		if seriesTunes != nil {
+			key, _ := seriesKey(parsed, path)
+			if t, ok := seriesTunes[key]; ok {
+				effective = t
+			}
+		}
+		c := *cfg
+		c.Encoder.Tune = effective
+		planCfg = &c
+	}
+	plan := planner.BuildPlan(planCfg, pr)
 	plan.InputPath = path
 	plan.OutputPath = outputPath
 
@@ -244,6 +270,13 @@ func processFile(
 const (
 	maxQualityBumps = 2
 	qualityBumpStep = 1
+
+	// qvbrEscalateRetainPct shrinks the QVBR bitrate target/ceiling on each
+	// size-overshoot bump. In QVBR the output size is governed by -b:v, which
+	// is pinned to the plan's bitrate target; raising -global_quality alone
+	// won't shrink the file, so the target itself must come down for the
+	// escalation to take effect.
+	qvbrEscalateRetainPct = 85
 )
 
 // executeWithRetry runs ffmpeg with the error-retry inner loop, then checks
@@ -286,6 +319,14 @@ func executeWithRetry(
 				break
 			}
 			rs.VaapiQP = next
+			// QVBR size is bounded by -b:v (pinned to the plan target), not by
+			// global_quality, so shrink the bitrate target/ceiling too — a QP
+			// bump alone would leave the output the same size.
+			if rs.VaapiQVBR {
+				plan.OptimalBitrateKbps = plan.OptimalBitrateKbps * qvbrEscalateRetainPct / 100
+				plan.MaxRateKbps = plan.MaxRateKbps * qvbrEscalateRetainPct / 100
+				plan.BufSizeKbps = plan.MaxRateKbps * 2
+			}
 			log.Warn("Output larger than input (%d%%), re-encoding at QP %d", pct, rs.VaapiQP)
 		} else {
 			next := rs.CpuCRF + qualityBumpStep

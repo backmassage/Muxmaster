@@ -1,6 +1,6 @@
 # FFmpeg Jellyfin-Playback Optimizations
 
-**Status:** done (implemented 2026-06-12; QVBR default stays `cqp` pending real-content validation, see done-when)
+**Status:** done (implemented 2026-06-12). The "flip default to QVBR" follow-up is **cancelled**: VCN 3.1 benchmarking proved CQP wins quality-per-bit over QVBR, so CQP stays the permanent default and QVBR is opt-in peak-bounding only (see `vaapi-quality-tuning.md`).
 **Goal:** Close playback-correctness gaps (Dolby Vision, SDR color tags, mov_text subs) and adopt researched encoder optimizations (QVBR rate control, compression_level, dialog-aware downmix, x265 AQ) with runtime capability detection so the tool stays portable beyond the dev box (AMD 680M / Mesa radeonsi).
 **Non-goals:** Dolby Vision *preservation* (we strip to the HDR10 base layer); multichannel AAC output (stereo stays the target); HDR10+ dynamic metadata; AV1; two-pass loudness normalization.
 
@@ -207,6 +207,6 @@ consistent with ffmpeg/x265 docs — re-confirm during implementation):
 - [x] MP4-sourced file with mov_text subs → MKV output retains a usable srt stream (verified end-to-end; no retry-drop).
 - [x] MKV output with subs carries `max_interleave_delta=0` (10 s / 10000000 µs default re-confirmed against ffmpeg 8.1 `-h full`).
 - [x] `--check` on the 680M reports QVBR=yes (Mesa 26), B-frames=yes (note: some stacks silently degrade B-frames instead of erroring, so "yes" may mean "accepted"); CQP fallback covered by retry tests (`RetryDisableQVBR`).
-- [ ] QVBR validation: 2–3 sample encodes on real content compared against CQP for size/quality/peak bitrate (`ffprobe -show_packets` peak window) before the default flips. *(Synthetic smoke test passed: QVBR encode succeeded on radeonsi and bounded output to 88% of input where CQP overshot to 131%.)*
+- [x] QVBR vs CQP validated on VCN 3.1: CQP wins quality-per-bit (98.9 vs 95.9 VMAF at matched size — `-b:v` binds before `-global_quality`). **Default stays CQP permanently; the planned flip is cancelled.** QVBR remains opt-in for peak-bitrate bounding on bandwidth-limited streaming only. *(Synthetic smoke test had shown QVBR bounds output to 88% of input where CQP overshot to 131% — useful only when a peak ceiling is the goal, not for quality-per-bit.)*
 - [x] VAAPI HDR10 sample → output bitstream contains mastering-display + CLL SEI (verified on the hw-decode path with a synthetic HDR10 source; the sw-decode zscale/hwupload variant uses the same frame-side-data mechanism).
 - [x] Downmixed 5.1 sample: pan filter applied, no clipping (`astats` peak −18 dBFS on synthetic 5.1). Dialog-forward listening check on real content still recommended.

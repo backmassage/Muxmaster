@@ -18,7 +18,12 @@ const (
 )
 
 const (
-	maxAttempts      = 4
+	// maxAttempts caps ffmpeg re-runs per file. There are 7 distinct error
+	// classes, and a single messy source can need several independent fixes
+	// at once (e.g. drop-attach + drop-subs + raise-mux-queue + fix-timestamps).
+	// Set to 8 so every class can fire across a run; Advance still stops early
+	// once no further fix pattern matches, so healthy files never approach this.
+	maxAttempts      = 8
 	muxQueueEscalate = 16384
 )
 

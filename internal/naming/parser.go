@@ -16,12 +16,13 @@ const (
 
 // ParsedName holds the structured result of filename parsing.
 type ParsedName struct {
-	MediaType MediaType
-	ShowName  string
-	Season    int
-	Episode   int
-	MovieName string
-	Year      string
+	MediaType  MediaType
+	ShowName   string
+	Season     int
+	Episode    int
+	EpisodeEnd int
+	MovieName  string
+	Year       string
 }
 
 // ParseFilename parses a media filename into structured naming components.

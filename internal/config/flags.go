@@ -86,6 +86,9 @@ func defineEncodingFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.StringVar(&cfg.Encoder.CpuPreset, "preset", cfg.Encoder.CpuPreset, "x265 preset (e.g. slow, medium)")
 	fs.StringVar(&cfg.Encoder.CpuPreset, "p", cfg.Encoder.CpuPreset, "Same as --preset")
 	fs.Var(&vaapiRCValue{&cfg.Encoder.VaapiRC}, "vaapi-rc", "VAAPI rate control: cqp | qvbr")
+	fs.Var(&tuneValue{&cfg.Encoder.Tune}, "tune", "Content prefilter: auto | none | film | grain | anime")
+	fs.BoolVar(&cfg.Encoder.QualityPriority, "quality-priority", cfg.Encoder.QualityPriority,
+		"Keep the SmartQuality QP; skip the optimal-bitrate size push")
 	fs.IntVar(&cfg.Encoder.VaapiCompressionLevel, "vaapi-compression-level",
 		cfg.Encoder.VaapiCompressionLevel, "VAAPI encoder quality level (driver-clamped)")
 	fs.StringVar(&cfg.Audio.Bitrate, "audio-bitrate", cfg.Audio.Bitrate, "Audio bitrate in Kbps (e.g. 128k, 320k)")
@@ -283,6 +286,8 @@ func printUsage(_ *flag.FlagSet, version string) {
 		{"  -p, --preset <name>", "x265 preset (default: slow)"},
 		{"  --vaapi-rc <cqp|qvbr>", "VAAPI rate control (default: cqp; qvbr needs driver support)"},
 		{"  --vaapi-compression-level <n>", "VAAPI quality level, driver-clamped (default: 1)"},
+		{"  --tune <auto|none|film|grain|anime>", "Prefilter; auto (default) detects grain per series and prompts; forces sw decode"},
+		{"  --quality-priority", "Keep the SmartQuality QP; skip the optimal-bitrate size push"},
 		{"  --audio-bitrate <rate>", "Audio bitrate in Kbps (default: 320k)"},
 		{"", ""},
 		{"Container & HDR", ""},
@@ -386,6 +391,27 @@ func (v *vaapiRCValue) Set(s string) error {
 		*v.p = VaapiRCQVBR
 	default:
 		return fmt.Errorf("invalid VAAPI rate control %q (use 'cqp' or 'qvbr')", s)
+	}
+	return nil
+}
+
+type tuneValue struct{ p *TuneMode }
+
+func (t *tuneValue) String() string { return string(*t.p) }
+func (t *tuneValue) Set(s string) error {
+	switch strings.ToLower(s) {
+	case "auto":
+		*t.p = TuneAuto
+	case "none":
+		*t.p = TuneNone
+	case "film":
+		*t.p = TuneFilm
+	case "grain":
+		*t.p = TuneGrain
+	case "anime":
+		*t.p = TuneAnime
+	default:
+		return fmt.Errorf("invalid tune %q (use 'auto', 'none', 'film', 'grain', or 'anime')", s)
 	}
 	return nil
 }

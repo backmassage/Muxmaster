@@ -141,10 +141,15 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 		case config.EncoderVAAPI:
 			args = append(args, "-c:v", "hevc_vaapi")
 			if rs.VaapiQVBR {
-				// QVBR: quality-targeted VBR with a peak ceiling. Bounds
-				// the bitrate spikes that cause direct-play buffering,
-				// which constant-QP cannot. The retry engine falls back
-				// to CQP if the driver rejects the rate-control mode.
+				// QVBR: opt-in only, for *peak-bitrate bounding* on
+				// bandwidth-limited streaming — NOT a quality improvement.
+				// Benchmarking on VCN 3.1 showed QVBR loses quality-per-bit
+				// to CQP at matched size (95.9 vs 98.9 VMAF) because -b:v binds
+				// before the -global_quality target. CQP is the recommended
+				// default; QVBR's only real use is bounding the bitrate spikes
+				// that cause direct-play buffering, which constant-QP cannot.
+				// The retry engine falls back to CQP if the driver rejects the
+				// rate-control mode.
 				args = append(args,
 					"-rc_mode", "QVBR",
 					"-global_quality", strconv.Itoa(rs.VaapiQP),
@@ -158,9 +163,11 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 			args = append(args,
 				"-profile:v", cfg.Encoder.VaapiProfile,
 				"-g", strconv.Itoa(gop),
-				// Quality-first VA quality level (CPU "preset slow"
-				// equivalent). Driver-clamped to its supported range and
-				// ignored with a warning when unsupported.
+				// Quality-first VA quality level. Inert for HEVC on AMD VCN
+				// (bit-identical across 1/16/32/default on radeonsi); kept for
+				// Intel/discrete-AMD portability where it maps to a real
+				// speed/quality tradeoff. Driver-clamped, ignored with a
+				// warning when unsupported.
 				"-compression_level", strconv.Itoa(cfg.Encoder.VaapiCompressionLevel),
 				// Deeper submission pipeline than the default 2 —
 				// throughput only, no effect on output.

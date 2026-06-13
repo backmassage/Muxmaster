@@ -23,7 +23,7 @@ func parseIntOr0(s string) int {
 // --- Helper regexes for show-name extraction in rules 1 & 2 ---
 
 var reStripSxxExx = regexp.MustCompile(
-	`(?i)[\s._\-]*[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Vv][0-9]+)?[^\s]*.*`)
+	`(?i)[\s._\-]*[Ss][0-9]{1,2}[Ee][0-9]{1,3}([Ee][0-9]{1,3})?([Vv][0-9]+)?[^\s]*.*`)
 
 var reStrip1x01 = regexp.MustCompile(
 	`(?i)[\s._\-]*[0-9]{1,2}[xX][0-9]{1,3}([Vv][0-9]+)?[^\s]*.*`)
@@ -77,7 +77,7 @@ func resolveGroupReleaseYear(show, parent string) string {
 
 var (
 	reSxxExx = regexp.MustCompile(
-		`(^|[^[:alnum:]])[Ss]([0-9]{1,2})[Ee]([0-9]{1,3})([Vv][0-9]+)?([^[:alnum:]]|$)`)
+		`(^|[^[:alnum:]])[Ss]([0-9]{1,2})[Ee]([0-9]{1,3})([Ee]([0-9]{1,3}))?([Vv][0-9]+)?([^[:alnum:]]|$)`)
 
 	re1x01 = regexp.MustCompile(
 		`(^|[^0-9])([0-9]{1,2})[xX]([0-9]{1,3})([Vv][0-9]+)?([^0-9]|$)`)
@@ -145,10 +145,11 @@ func extractSxxExx(base string, matches []string, parent string) ParsedName {
 		show = extractShowFromParent(parent)
 	}
 	return ParsedName{
-		MediaType: MediaTV,
-		ShowName:  show,
-		Season:    parseIntOr0(matches[2]),
-		Episode:   parseIntOr0(matches[3]),
+		MediaType:  MediaTV,
+		ShowName:   show,
+		Season:     parseIntOr0(matches[2]),
+		Episode:    parseIntOr0(matches[3]),
+		EpisodeEnd: parseIntOr0(matches[5]),
 	}
 }
 

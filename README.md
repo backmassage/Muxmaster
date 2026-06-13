@@ -96,8 +96,14 @@ muxmaster [OPTIONS] <input_dir> <output_dir>
 # Dry-run: see what would happen without encoding anything
 muxmaster -d /media/anime /out/anime
 
-# VAAPI encode (default), MKV output (default)
+# VAAPI encode (default), MKV output (default).
+# On a terminal this prompts once per series for a denoise profile
+# (grain auto-detected); pipe stdin or pass --tune none to skip.
 muxmaster /media/library /out/library
+
+# Force a specific prefilter for the whole run (no prompt)
+muxmaster --tune grain /media/film-noir /out/film-noir
+muxmaster --tune anime --quality-priority /media/anime /out/anime
 
 # CPU encode with fixed CRF 22
 muxmaster -m cpu -q 22 /media/library /out/library
@@ -132,6 +138,10 @@ muxmaster --analyze /media/library
 | `--vaapi-qp <value>` | Fixed VAAPI QP (overrides `--quality`) | 18 |
 | `--cpu-crf <value>` | Fixed CPU CRF (overrides `--quality`) | 18 |
 | `-p, --preset <name>` | x265 CPU preset | `slow` |
+| `--tune <auto\|none\|film\|grain\|anime>` | Content prefilter: `auto` detects grain per series and prompts; `film`/`grain` denoise, `anime` debands (forces software decode) | `auto` |
+| `--quality-priority` | Keep the SmartQuality QP; skip the optimal-bitrate size push (favors quality for keeper content) | off |
+| `--vaapi-rc <cqp\|qvbr>` | VAAPI rate control; CQP wins quality-per-bit, QVBR is opt-in peak-bitrate bounding (needs driver support) | `cqp` |
+| `--vaapi-compression-level <n>` | VAAPI quality level, driver-clamped (inert for HEVC on AMD VCN; kept for Intel/discrete-AMD portability) | `1` |
 | `--audio-bitrate <rate>` | AAC bitrate for non-AAC audio transcodes (e.g. `128k`, `320k`) | `320k` |
 
 **Container & HDR**
@@ -200,9 +210,11 @@ Validate → Probe → Parse filename → Resolve output path → Plan → Execu
 - **Validate**: skip files under 1 KB (likely corrupt)
 - **Probe**: single `ffprobe -print_format json` call extracts codec, resolution, bitrate, HDR, interlace, and stream info
 - **Parse filename**: 14 regex rules extract show name, season, episode, or movie title and year
-- **Plan**: smart quality selects QP/CRF per-file based on resolution and bitrate curves; decides encode vs remux based on HEVC edge-safety (profile + pix_fmt); VAAPI encodes use hardware decode for a full GPU pipeline (automatic software fallback for HDR tonemapping)
-- **Execute**: runs ffmpeg with automatic retry (up to 4 attempts) for attachment errors, subtitle mux issues, queue overflow, and timestamp discontinuities
+- **Plan**: smart quality selects QP/CRF per-file based on resolution and bitrate curves; decides encode vs remux based on HEVC edge-safety (profile + pix_fmt); VAAPI encodes use hardware decode for a full GPU pipeline (automatic software fallback for HDR tonemapping and content prefilters)
+- **Execute**: runs ffmpeg with automatic retry (up to 8 attempts) covering attachment errors, subtitle mux issues, queue overflow, timestamp discontinuities, hardware-decode fallback, QVBR→CQP, and B-frame drop
 - **Quality escalation**: if output exceeds input size, QP/CRF is bumped and re-encoded (up to 2 times) to ensure output stays smaller than the original
+
+On an interactive run, `--tune auto` (the default) first groups files by series, runs a cheap grain pre-pass on one episode per series, and prompts you once per series to confirm the suggested denoise profile — applied to every episode. Non-interactive runs skip this and apply no prefilter.
 
 ### Audio handling
 

@@ -24,6 +24,7 @@ Root meta-files: `README.md`, `CHANGELOG.md`, `AGENTS.md`, `LICENSE`, `Makefile`
 | **probe**   | ffprobe JSON → typed structs, HDR/interlace/HEVC-safe detection, pixel format helpers | `types.go`, `prober.go`, `hdr.go`, `interlace.go`, `pixfmt.go`, `probe_test.go`, `pixfmt_test.go`, `probe_live_test.go` |
 | **naming**  | Filename parsing, output paths, collision, harmonization | `parser.go`, `rules.go`, `postprocess.go`, `outputpath.go`, `collision.go`, `harmonize.go`, `parser_test.go` |
 | **planner** | Encode vs remux vs skip, smart quality, estimation, audio/subtitle/filter plans | `types.go`, `planner.go`, `quality.go`, `estimation.go`, `filter.go`, `audio.go`, `subtitle.go`, `disposition.go`, `planner_test.go`, `helpers_test.go` |
+| **tune** | Grain pre-pass + `--tune auto` suggestion (ffmpeg `bitplanenoise`) | `signal.go`, `suggest.go`, `tune_test.go` |
 | **ffmpeg**  | Command building, execution, retry | `builder.go`, `executor.go`, `errors.go`, `retry.go`, `builder_test.go`, `retry_test.go` |
 | **pipeline**| File discovery, per-file processing, batch analysis, batch stats | `discover.go`, `runner.go`, `analyze.go`, `stats.go`, `pipeline_test.go` |
 
@@ -44,4 +45,10 @@ For the full dependency map and rules, see [architecture.md](../architecture.md)
 | Subtitle codec conversion (mov_text→srt for MKV) | `internal/planner/subtitle.go` |
 | Stereo downmix pan specs | `internal/planner/audio.go` (`downmixSpecs`) |
 | VAAPI rate control (QVBR/CQP) and encoder tuning flags | `internal/ffmpeg/builder.go` (`appendVideoCodec`) |
+| Content prefilter (`--tune` denoise/deband) mapping | `internal/planner/filter.go` (`TunePrefilter`) |
+| Grain detection / `--tune auto` suggestion thresholds | `internal/tune/` (`signal.go`, `suggest.go`) |
+| Per-series grouping + auto-tune prompt | `internal/pipeline/autotune.go` (`resolveSeriesTunes`, `seriesKey`) |
+| Force software decode when a prefilter is active | `internal/planner/planner.go` (`BuildPlan`, HWDecode gate) |
+| Tune QP/CRF bias and `--quality-priority` push gate | `internal/planner/quality.go` (`tuneQPBias`), `planner.go` (§2b) |
+| VAAPI B-frame capability *verification* (ffprobe pict_type) | `internal/check/check.go` (`testVaapiBFrames`, `pictTypesContainB`) |
 | Probe / naming / plan / ffmpeg / pipeline | Same-named package under `internal/` |

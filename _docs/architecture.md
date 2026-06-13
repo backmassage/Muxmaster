@@ -14,7 +14,7 @@ Package dependency map and design overview for the Muxmaster Go project.
 
 - **One ffprobe call per file** — JSON with `-show_format` and `-show_streams`; all logic uses typed structs.
 - **VAAPI hardware decode** — Full GPU pipeline (decode + encode on same device) when no CPU-only filters are needed; automatic software-decode fallback for HDR tonemapping.
-- **Unified retry** — Single state machine for both encode and remux (attachment → subtitle → mux queue → timestamp); up to 4 attempts per file.
+- **Unified retry** — Single state machine for both encode and remux across 7 error classes (attachment → subtitle → mux queue → timestamp → hardware-decode → QVBR→CQP → B-frame drop); up to 8 attempts per file.
 - **14 naming rules** — Ordered regex-based parser for TV/movie and specials; Jellyfin-style output paths; collision resolution and TV year harmonization.
 - **Quality** — Smart per-file QP/CRF with configurable bias; optional fixed override via `--quality` or `--vaapi-qp`/`--cpu-crf`.
 - **No subcommands in MVP** — Single invocation `muxmaster [options] <input_dir> <output_dir>`. Subcommands and config file are post-MVP.
@@ -57,6 +57,9 @@ planner
   -> config
   -> probe
 
+tune
+  -> config
+
 ffmpeg
   -> config
   -> planner
@@ -67,11 +70,12 @@ pipeline (orchestrator)
   -> naming
   -> planner
   -> ffmpeg
+  -> tune
   -> display
   -> term
 ```
 
-Leaf packages (no internal imports): `config`, `probe`, `naming`. Near-leaf: `term` (config), `check` (config), `display` (term).
+Leaf packages (no internal imports): `config`, `probe`, `naming`. Near-leaf: `term` (config), `check` (config), `tune` (config), `display` (term).
 
 ---
 
@@ -84,8 +88,9 @@ Leaf packages (no internal imports): `config`, `probe`, `naming`. Near-leaf: `te
 - **probe** and **naming** stay dependency-free (pure logic + external tool wrappers).
 - **planner** combines config + probe data to produce a `FilePlan`.
 - **ffmpeg** depends on config and planner (consumes `FilePlan`).
-- **pipeline** is the sole orchestrator — it wires probe, naming, planner, ffmpeg, display, and term into the per-file processing loop and analysis feature.
+- **pipeline** is the sole orchestrator — it wires probe, naming, planner, ffmpeg, tune, display, and term into the per-file processing loop and analysis feature.
 - **check** depends only on config; it accepts a small Logger interface.
+- **tune** depends only on config; it runs a cheap ffmpeg grain pre-pass (shelling ffmpeg directly, like check) so the pipeline can suggest a `--tune` profile per series.
 
 ---
 

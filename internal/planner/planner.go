@@ -95,7 +95,15 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		optKbps := OptimalBitrate(pr)
 		plan.OptimalBitrateKbps = optKbps
 
-		if optKbps > 0 {
+		// --quality-priority keeps the SmartQuality value as-is by skipping the
+		// upward optimal-bitrate push (which trades quality for smaller files).
+		// The preflight/post-encode size safety nets below stay intact — they
+		// only fire when output ≳ input, which never happens for Blu-ray.
+		if cfg.Encoder.QualityPriority {
+			plan.Notes = append(plan.Notes,
+				"quality-priority: keeping SmartQuality QP, skipping optimal-bitrate push")
+		}
+		if optKbps > 0 && !cfg.Encoder.QualityPriority {
 			if cfg.Encoder.Mode == config.EncoderVAAPI {
 				targetQP := QPForTargetBitrate(cfg, pr, optKbps)
 				if targetQP > plan.VaapiQP {
@@ -177,8 +185,15 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		}
 
 		needsHDRTonemap := pr.HDRType() == "hdr10" && cfg.Encoder.HandleHDR == config.HDRTonemap
-		if cfg.Encoder.Mode == config.EncoderVAAPI && !needsHDRTonemap && vaapiHWDecodeViable(pr) {
+		// A content prefilter is a CPU filter; it cannot enter a VAAPI surface
+		// chain (ffmpeg error -22), so its presence forces software decode.
+		prefilter := TunePrefilter(cfg)
+		if cfg.Encoder.Mode == config.EncoderVAAPI && !needsHDRTonemap && prefilter == "" && vaapiHWDecodeViable(pr) {
 			plan.HWDecode = true
+		}
+		if cfg.Encoder.Mode == config.EncoderVAAPI && prefilter != "" {
+			plan.Notes = append(plan.Notes,
+				fmt.Sprintf("tune=%s prefilter %q; GPU decode disabled", cfg.Encoder.Tune, prefilter))
 		}
 
 		plan.VideoFilters = BuildVideoFilter(cfg, pr, plan.HWDecode)

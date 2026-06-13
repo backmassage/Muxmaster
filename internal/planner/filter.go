@@ -54,6 +54,14 @@ func buildSoftwareDecodeFilters(cfg *config.Config, pr *probe.ProbeResult) strin
 		filters = append(filters, "yadif=mode=send_frame:parity=auto:deint=interlaced")
 	}
 
+	// Content-aware prefilter (denoise/deband). Placed after deinterlace
+	// (denoise must follow deinterlace) and before tonemap/scale/hwupload
+	// (deband before scaling). This single function feeds both the VAAPI-sw
+	// and CPU chains, so CPU mode gets the prefilter for free.
+	if pre := TunePrefilter(cfg); pre != "" {
+		filters = append(filters, pre)
+	}
+
 	if pr.HDRType() == "hdr10" && cfg.Encoder.HandleHDR == config.HDRTonemap {
 		if cfg.Encoder.Mode == config.EncoderVAAPI {
 			swFormat := cfg.Encoder.VaapiSwFormat
@@ -79,6 +87,34 @@ func buildSoftwareDecodeFilters(cfg *config.Config, pr *probe.ProbeResult) strin
 	}
 
 	return strings.Join(filters, ",")
+}
+
+// TunePrefilter returns the CPU filter string for the active --tune profile,
+// or "" for TuneNone. These run on the software-decode path only (CPU filters
+// cannot be inserted into a hardware-decoded VAAPI surface chain — ffmpeg
+// errors with -22), so an active prefilter forces software decode in VAAPI
+// mode (see planner.BuildPlan). Constants are tuned for raw Blu-ray sources;
+// re-confirm strengths on real content before treating them as final.
+func TunePrefilter(cfg *config.Config) string {
+	switch cfg.Encoder.Tune {
+	case config.TuneFilm:
+		// Light luma+chroma spatial/temporal denoise for film/light grain.
+		return "hqdn3d=1.5:1.5:6:6"
+	case config.TuneGrain:
+		// Heavier denoise for strong Blu-ray grain.
+		return "hqdn3d=4:4:9:9"
+	case config.TuneAnime:
+		// Fast gradient deband for flat cels. Strength 1.2 is ffmpeg's
+		// default and the valid minimum is 0.51 (0.5 errors at graph init);
+		// `deband` is the heavier alternative if residual banding remains.
+		return "gradfun=1.2:16"
+	default:
+		// TuneAuto and TuneNone carry no prefilter. TuneAuto is a pipeline-level
+		// sentinel resolved to a concrete profile (via the grain pre-pass +
+		// per-series prompt) before BuildPlan runs; if it ever reaches here
+		// unresolved it is a safe no-op.
+		return ""
+	}
 }
 
 // cpuTonemapChain is the zscale+tonemap pipeline for converting HDR10 to SDR

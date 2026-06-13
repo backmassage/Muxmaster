@@ -201,7 +201,7 @@ This is the step-by-step flow for processing a single file within the batch loop
 
  8. R → RT: NewRetryState(FilePlan)
 
- 9. RETRY LOOP (max 4 attempts):
+ 9. RETRY LOOP (max 8 attempts — one per error class plus headroom):
       R → F: Execute(FilePlan, RetryState)
       F builds ffmpeg args, runs ffmpeg
       ├── on success: break loop

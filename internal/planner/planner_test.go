@@ -2117,6 +2117,12 @@ func TestBuildAudioPlan_DownmixMatrix(t *testing.T) {
 		{"7.1", "7.1", 8, true, "0.60*BR+0.60*SR"},
 		{"unknown", "6.1", 7, false, ""},
 		{"empty-layout", "", 6, false, ""},
+		// Channel count missing (0) but a known multichannel layout is present:
+		// infer the downmix from the layout instead of falling back to -ac 2.
+		{"unknown-count-5.1", "5.1", 0, true, "0.60*BL"},
+		// Contradictory metadata (count says stereo, layout says 5.1): trust the
+		// probed count and skip the downmix so the pan can't name absent channels.
+		{"contradictory-2ch-5.1", "5.1", 2, false, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

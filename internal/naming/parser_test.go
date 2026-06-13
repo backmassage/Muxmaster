@@ -35,6 +35,11 @@ func TestParseFilename(t *testing.T) {
 			parentDir: "/media/Cool Show",
 			wantType:  MediaTV, wantShow: "Cool Show", wantSeason: 3, wantEpisode: 1,
 		},
+		{
+			name: "SxxExx double episode", basename: "Mr.Robot.S02E01E02.eps2.0_unm4sk-pt1-2.tc.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-EPSiLON.mkv",
+			parentDir: "/media/Mr Robot/Mr.Robot.S02.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-EPSiLON",
+			wantType:  MediaTV, wantShow: "Mr Robot", wantSeason: 2, wantEpisode: 1,
+		},
 
 		// Rule 2: 1x01
 		{
@@ -211,6 +216,21 @@ func TestParseFilename(t *testing.T) {
 	}
 }
 
+func TestParseFilenameDoubleEpisodeRange(t *testing.T) {
+	got := ParseFilename(
+		"Mr.Robot.S02E01E02.eps2.0_unm4sk-pt1-2.tc.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-EPSiLON.mkv",
+		"/media/Mr Robot/Mr.Robot.S02.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-EPSiLON",
+	)
+
+	if got.MediaType != MediaTV {
+		t.Fatalf("type: got %q, want %q", got.MediaType, MediaTV)
+	}
+	if got.ShowName != "Mr Robot" || got.Season != 2 || got.Episode != 1 || got.EpisodeEnd != 2 {
+		t.Fatalf("got show=%q S%02dE%02d-E%02d, want Mr Robot S02E01-E02",
+			got.ShowName, got.Season, got.Episode, got.EpisodeEnd)
+	}
+}
+
 func TestGetOutputPath(t *testing.T) {
 	cases := []struct {
 		name string
@@ -221,6 +241,11 @@ func TestGetOutputPath(t *testing.T) {
 			name: "TV show",
 			p:    ParsedName{MediaType: MediaTV, ShowName: "My Show", Season: 1, Episode: 5},
 			want: "/output/My Show/Season 01/My Show - S01E05.mkv",
+		},
+		{
+			name: "TV double episode",
+			p:    ParsedName{MediaType: MediaTV, ShowName: "Mr Robot", Season: 2, Episode: 1, EpisodeEnd: 2},
+			want: "/output/Mr Robot/Season 02/Mr Robot - S02E01-E02.mkv",
 		},
 		{
 			name: "Movie with year",
@@ -320,6 +345,7 @@ func TestRuleMatching(t *testing.T) {
 		wantRule string
 	}{
 		{"SxxExx", "My.Show.S01E05.720p.mkv", "SxxExx"},
+		{"SxxExx double", "Mr.Robot.S02E01E02.1080p.mkv", "SxxExx"},
 		{"1x01", "Show.1x05.mkv", "1x01"},
 		{"Season OPED", "Show.S01.NCOP1.mkv", "S01-OP/ED"},
 		{"Creditless", "[G] Show - 001 - T [Creditless Opening].mkv", "Creditless-OP/ED"},

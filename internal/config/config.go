@@ -43,6 +43,20 @@ const (
 	HDRTonemap  HDRMode = "tonemap"  // Tonemap to SDR.
 )
 
+// TuneMode selects a content-aware pre-encode filter profile. Each profile
+// injects a CPU filter (denoise or deband) into the software-decode chain,
+// which forces software decode in VAAPI mode (CPU filters cannot enter a
+// hardware VAAPI surface chain).
+type TuneMode string
+
+const (
+	TuneAuto  TuneMode = "auto"  // Detect per series via a grain pre-pass + prompt (default).
+	TuneNone  TuneMode = "none"  // No pre-filtering (preserves pre-tune behavior).
+	TuneFilm  TuneMode = "film"  // Light hqdn3d denoise for film/light grain.
+	TuneGrain TuneMode = "grain" // Heavier hqdn3d denoise for strong Blu-ray grain.
+	TuneAnime TuneMode = "anime" // gradfun deband for flat-cel animation.
+)
+
 // ColorMode controls ANSI color output.
 type ColorMode string
 
@@ -67,6 +81,10 @@ type EncoderConfig struct {
 	KeyframeInterval int    // Fallback: 48 frames. Planner derives ~2s GOP from source fps per file.
 	HandleHDR        HDRMode
 	DeinterlaceAuto  bool
+
+	// Content-aware pre-filtering and QP strategy.
+	Tune            TuneMode // Default: "none". Injects a denoise/deband prefilter (forces sw decode).
+	QualityPriority bool     // Default: false. Skip the optimal-bitrate upward QP/CRF push.
 
 	// VAAPI rate control and tuning.
 	VaapiRC               VaapiRCMode // Default: "cqp". QVBR also requires detected driver support.
@@ -153,6 +171,9 @@ func DefaultConfig() Config {
 			HandleHDR:        HDRPreserve,
 			DeinterlaceAuto:  true,
 
+			Tune:            TuneAuto,
+			QualityPriority: false,
+
 			VaapiRC:               VaapiRCCQP,
 			VaapiCompressionLevel: 1,
 
@@ -234,6 +255,13 @@ func (c *Config) Validate() error {
 	}
 	if c.Encoder.VaapiCompressionLevel < 0 {
 		return errors.New("VAAPI compression level must be >= 0")
+	}
+
+	switch c.Encoder.Tune {
+	case TuneAuto, TuneNone, TuneFilm, TuneGrain, TuneAnime:
+		// valid
+	default:
+		return errors.New("invalid tune (use 'auto', 'none', 'film', 'grain', or 'anime')")
 	}
 	normalizedBitrate, err := normalizeAudioBitrate(c.Audio.Bitrate)
 	if err != nil {

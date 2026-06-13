@@ -297,20 +297,70 @@ func testVaapiQVBR(device, swFormat, profile string) bool {
 	)
 }
 
-// testVaapiBFrames runs a minimal encode with B-frames enabled. Note some
-// driver stacks silently drop unsupported B-frames instead of erroring, in
-// which case this reports true and the real encode degrades the same way.
+// testVaapiBFrames verifies the driver actually *emits* B-frames, not merely
+// that it accepts the -bf flag. A short motion clip is encoded to a temp file
+// with -bf 2, then ffprobe inspects the frame types: support is reported only
+// if a B-frame is present. This avoids a false positive on stacks (e.g. AMD
+// VCN 3.x via Mesa radeonsi) that accept -bf and encode cleanly but produce
+// only I+P frames — there Mesa MR !25565 added H.264 B-frames only, so HEVC
+// silently has none. The probe stays generic: Intel iHD emits real B-frames
+// and reports true; AMD VCN reports false. The RetryDropBFrames class remains
+// a runtime safety net for stacks that error on -bf instead of degrading.
 func testVaapiBFrames(device, swFormat, profile string) bool {
-	return runSilent("ffmpeg",
-		"-hide_banner", "-nostdin", "-loglevel", "error",
+	tmp, err := os.CreateTemp("", "muxmaster-bframe-*.mkv")
+	if err != nil {
+		return false
+	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	// A 2-second clip with a long GOP (-g 120) gives a B-capable encoder room
+	// to insert B-frames: a short or GOP-bounded clip could legitimately emit
+	// only I/P even on a capable stack, producing a (conservative) false
+	// negative. The dangerous direction — a false positive on AMD — is
+	// eliminated regardless, since the driver emits no HEVC B-frames at all.
+	ok := runSilent("ffmpeg",
+		"-hide_banner", "-nostdin", "-loglevel", "error", "-y",
 		"-init_hw_device", "vaapi=va:"+device,
 		"-filter_hw_device", "va",
-		"-f", "lavfi", "-i", "color=black:s=256x256:d=0.2",
+		"-f", "lavfi", "-i", "testsrc=size=256x256:rate=30:duration=2",
 		"-vf", "format="+swFormat+",hwupload",
 		"-c:v", "hevc_vaapi", "-profile:v", profile,
-		"-bf", "2",
-		"-f", "null", "-",
+		"-g", "120", "-bf", "2",
+		tmpPath,
 	)
+	if !ok {
+		return false
+	}
+	return ffprobeHasBFrame(tmpPath)
+}
+
+// ffprobeHasBFrame returns true if the primary video stream of path contains
+// at least one B-frame, per ffprobe's per-frame pict_type listing.
+func ffprobeHasBFrame(path string) bool {
+	out, err := exec.Command("ffprobe",
+		"-hide_banner", "-loglevel", "error",
+		"-select_streams", "v:0",
+		"-show_entries", "frame=pict_type",
+		"-of", "csv=p=0",
+		path,
+	).Output()
+	if err != nil {
+		return false
+	}
+	return pictTypesContainB(string(out))
+}
+
+// pictTypesContainB scans ffprobe's pict_type output (one frame type per line)
+// and reports whether a B-frame appears. Split out for table-driven testing.
+func pictTypesContainB(ffprobeOutput string) bool {
+	for _, line := range strings.Split(ffprobeOutput, "\n") {
+		if strings.EqualFold(strings.TrimSpace(line), "B") {
+			return true
+		}
+	}
+	return false
 }
 
 // cpuTestArgs returns the ffmpeg arguments for a minimal libx265 test encode.

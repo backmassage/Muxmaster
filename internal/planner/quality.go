@@ -59,19 +59,48 @@ func SmartQuality(cfg *config.Config, pr *probe.ProbeResult) QualityResult {
 	selectedCRF := Clamp(cfg.Encoder.CpuCRF+cpuAdj+cfg.Encoder.SmartQualityBias, CpuCRFMin, CpuCRFMax)
 	selectedQP := Clamp(cfg.Encoder.VaapiQP+vaapiAdj+cfg.Encoder.SmartQualityBias, VaapiQPMin, VaapiQPMax)
 
+	// Per-tune QP/CRF bias: flat anime cels tolerate slightly higher QP (the
+	// deband prefilter handles banding); film/grain/none stay neutral.
+	// Applied after the curve clamp, then re-clamped to the same range.
+	if b := tuneCRFBias(cfg.Encoder.Tune); b != 0 {
+		selectedCRF = Clamp(selectedCRF+b, CpuCRFMin, CpuCRFMax)
+	}
+	if b := tuneQPBias(cfg.Encoder.Tune); b != 0 {
+		selectedQP = Clamp(selectedQP+b, VaapiQPMin, VaapiQPMax)
+	}
+
 	densityLabel := "n/a"
 	if bitrateKbps > 0 && pixels > 0 {
 		densityLabel = fmt.Sprintf("%d kbps/Mpx", Density(bitrateKbps, pixels))
 	}
 
-	note := fmt.Sprintf("smart (%s, %s, density=%s, cpu_adj=%d, vaapi_adj=%d, smart_bias=%d, cpu_crf=%d, vaapi_qp=%d, mode=%s)",
-		resLabel, bitrateLabel, densityLabel, cpuAdj, vaapiAdj, cfg.Encoder.SmartQualityBias, selectedCRF, selectedQP, cfg.Encoder.Mode)
+	note := fmt.Sprintf("smart (%s, %s, density=%s, cpu_adj=%d, vaapi_adj=%d, smart_bias=%d, tune=%s, cpu_crf=%d, vaapi_qp=%d, mode=%s)",
+		resLabel, bitrateLabel, densityLabel, cpuAdj, vaapiAdj, cfg.Encoder.SmartQualityBias, cfg.Encoder.Tune, selectedCRF, selectedQP, cfg.Encoder.Mode)
 
 	return QualityResult{
 		VaapiQP: selectedQP,
 		CpuCRF:  selectedCRF,
 		Note:    note,
 	}
+}
+
+// tuneQPBias and tuneCRFBias return the per-tune additive bias folded into the
+// SmartQuality-selected QP/CRF. Only anime biases upward (+1): flat cels
+// tolerate slightly higher QP and the deband prefilter handles banding. The
+// two functions are kept separate so the VAAPI and CPU paths can diverge later
+// without touching call sites.
+func tuneQPBias(tune config.TuneMode) int {
+	if tune == config.TuneAnime {
+		return 1
+	}
+	return 0
+}
+
+func tuneCRFBias(tune config.TuneMode) int {
+	if tune == config.TuneAnime {
+		return 1
+	}
+	return 0
 }
 
 func cpuResolutionCurve(pixels int) int {
@@ -164,12 +193,14 @@ func VideoBitrateKbps(pr *probe.ProbeResult) int {
 	return int((pr.VideoBitRate() + 500) / 1000)
 }
 
-// Density computes bitrate density in kbps per megapixel.
+// Density computes bitrate density in kbps per megapixel. The multiplication
+// is done in int64 so a high-bitrate source (kbps × 1e6 exceeds 2^31) can't
+// overflow on 32-bit builds; the quotient always fits back in an int.
 func Density(kbps, pixels int) int {
 	if pixels <= 0 {
 		return 0
 	}
-	return kbps * 1_000_000 / pixels
+	return int(int64(kbps) * 1_000_000 / int64(pixels))
 }
 
 // Clamp restricts v to the range [lo, hi].
