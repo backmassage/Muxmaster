@@ -100,6 +100,8 @@ func TestBuildPlan_TunePrefilterOrder(t *testing.T) {
 	}
 }
 
+// TestSmartQuality_TuneQPBias covers Change 2 (anime +1 → 0) and Change 4
+// (film/grain −1 only when DenoiseQPBias is set; off by default).
 func TestSmartQuality_TuneQPBias(t *testing.T) {
 	pr := h264SDR()
 
@@ -107,28 +109,44 @@ func TestSmartQuality_TuneQPBias(t *testing.T) {
 	base.Encoder.Mode = config.EncoderVAAPI
 	none := SmartQuality(base, pr)
 
+	// Change 2: anime now carries no bias — quality-first keeps cels at the
+	// curve QP rather than biasing them toward smaller files.
 	anime := defaultCfg()
 	anime.Encoder.Mode = config.EncoderVAAPI
 	anime.Encoder.Tune = config.TuneAnime
 	withAnime := SmartQuality(anime, pr)
-
-	// Anime biases +1 toward higher QP (unless clamped at the ceiling).
-	wantQP := Clamp(none.VaapiQP+1, VaapiQPMin, VaapiQPMax)
-	if withAnime.VaapiQP != wantQP {
-		t.Errorf("anime VaapiQP: got %d, want %d (none=%d)", withAnime.VaapiQP, wantQP, none.VaapiQP)
+	if withAnime.VaapiQP != none.VaapiQP {
+		t.Errorf("anime VaapiQP: got %d, want %d (Change 2: anime bias is 0)", withAnime.VaapiQP, none.VaapiQP)
 	}
-	wantCRF := Clamp(none.CpuCRF+1, CpuCRFMin, CpuCRFMax)
-	if withAnime.CpuCRF != wantCRF {
-		t.Errorf("anime CpuCRF: got %d, want %d (none=%d)", withAnime.CpuCRF, wantCRF, none.CpuCRF)
+	if withAnime.CpuCRF != none.CpuCRF {
+		t.Errorf("anime CpuCRF: got %d, want %d (Change 2: anime bias is 0)", withAnime.CpuCRF, none.CpuCRF)
 	}
 
-	// film/grain stay neutral.
+	// film/grain stay neutral by default (Change 4 gated off).
 	for _, tune := range []config.TuneMode{config.TuneFilm, config.TuneGrain} {
 		cfg := defaultCfg()
 		cfg.Encoder.Mode = config.EncoderVAAPI
 		cfg.Encoder.Tune = tune
 		if got := SmartQuality(cfg, pr); got.VaapiQP != none.VaapiQP {
-			t.Errorf("tune=%s VaapiQP: got %d, want %d (no bias)", tune, got.VaapiQP, none.VaapiQP)
+			t.Errorf("tune=%s VaapiQP: got %d, want %d (no bias by default)", tune, got.VaapiQP, none.VaapiQP)
+		}
+	}
+
+	// Change 4: with DenoiseQPBias enabled, film/grain bias QP/CRF down by 1
+	// (bounded below by the Change 5 invariant, not tested here).
+	for _, tune := range []config.TuneMode{config.TuneFilm, config.TuneGrain} {
+		cfg := defaultCfg()
+		cfg.Encoder.Mode = config.EncoderVAAPI
+		cfg.Encoder.Tune = tune
+		cfg.Encoder.DenoiseQPBias = true
+		got := SmartQuality(cfg, pr)
+		wantQP := Clamp(none.VaapiQP-1, VaapiQPMin, VaapiQPMax)
+		if got.VaapiQP != wantQP {
+			t.Errorf("tune=%s DenoiseQPBias VaapiQP: got %d, want %d (−1)", tune, got.VaapiQP, wantQP)
+		}
+		wantCRF := Clamp(none.CpuCRF-1, CpuCRFMin, CpuCRFMax)
+		if got.CpuCRF != wantCRF {
+			t.Errorf("tune=%s DenoiseQPBias CpuCRF: got %d, want %d (−1)", tune, got.CpuCRF, wantCRF)
 		}
 	}
 }

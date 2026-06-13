@@ -39,7 +39,7 @@ func ParseFilename(basename, parentPath string) ParsedName {
 		if m == nil {
 			continue
 		}
-		parsed := rule.Extract(base, m, parent)
+		parsed := rule.Extract(base, m, parent, seasonHintParent)
 		return postProcess(parsed, seasonHintParent)
 	}
 

@@ -25,7 +25,7 @@ type FilePlan struct {
 	VideoFilters     string   // comma-joined filter chain (may be empty)
 	SWVideoFilters   string   // software-decode fallback chain (set only when HWDecode is true)
 	ColorOpts        []string // -color_trc, -color_primaries, -colorspace pairs
-	BSFOpts          []string // bitstream filter args (e.g. -bsf:v dovi_rpu=strip on remux)
+	BSFOpts          []string // bitstream filter args (e.g. -bsf:v dovi_rpu=strip=1 on remux)
 	HWDecode         bool     // Use VAAPI hardware decode (frames stay on GPU)
 	VaapiQVBR        bool     // Use QVBR rate control instead of constant-QP (capability-gated)
 	VaapiBFrames     bool     // Enable B-frames on the VAAPI encoder (capability-gated)

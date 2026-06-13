@@ -1864,7 +1864,7 @@ func TestBuildPlan_DolbyVisionMatrix(t *testing.T) {
 				t.Error("skip plan must carry a SkipReason")
 			}
 			hasBSF := len(plan.BSFOpts) == 2 &&
-				plan.BSFOpts[0] == "-bsf:v:0" && plan.BSFOpts[1] == "dovi_rpu=strip"
+				plan.BSFOpts[0] == "-bsf:v:0" && plan.BSFOpts[1] == "dovi_rpu=strip=1"
 			if hasBSF != tc.wantBSF {
 				t.Errorf("BSFOpts: got %v, want strip=%v", plan.BSFOpts, tc.wantBSF)
 			}

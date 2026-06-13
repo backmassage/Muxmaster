@@ -33,6 +33,13 @@ func tierLookup(tiers []tier, val, above int) int {
 const vaapiRatioBase = 14 // QP 14 → index 0
 
 // vaapiRatios: QP 14 (930‰) through QP 36+ (180‰).
+//
+// TODO(Change 6, plan: hevc-vaapi-quality-maximization): these are a withdrawn
+// heuristic, not measured VCN data — they over-predict h264/hevc output, so
+// PreflightAdjust overrides the quality-first QP ceiling on those codecs. Refit
+// from the rate–QP sweep as per-(content-class, source-codec, resolution) curves
+// (subsuming the codec/res/density biases) and land with the relaxed preflight
+// trigger. Calibrate before merge.
 var vaapiRatios = [...]int{
 	930, // QP 14
 	900, // QP 15

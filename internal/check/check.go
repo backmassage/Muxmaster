@@ -132,6 +132,12 @@ func checkVAAPI(cfg *config.Config, log Logger) bool {
 
 // logVaapiCaps reports optional encoder capabilities on the working device.
 func logVaapiCaps(log Logger, dev, swFormat, profile string) {
+	vendor, pciDevice := detectVaapiVendor(dev)
+	if pciDevice != "" {
+		log.Info("  Device vendor: %s (PCI device %s)", vendor, pciDevice)
+	} else {
+		log.Info("  Device vendor: %s", vendor)
+	}
 	log.Info("  QVBR rate control: %s", yesNo(testVaapiQVBR(dev, swFormat, profile)))
 	log.Info("  B-frames: %s", yesNo(testVaapiBFrames(dev, swFormat, profile)))
 }
@@ -237,6 +243,57 @@ func detectVaapiCaps(cfg *config.Config) {
 	prof := cfg.Encoder.VaapiProfile
 	cfg.Encoder.VaapiQVBR = testVaapiQVBR(dev, sw, prof)
 	cfg.Encoder.VaapiBFrames = testVaapiBFrames(dev, sw, prof)
+	vendor, pciDevice := detectVaapiVendor(dev)
+	cfg.Encoder.VaapiVendor = vendor
+	cfg.Encoder.VaapiPCIDevice = pciDevice
+}
+
+// detectVaapiVendor reads the render node's PCI vendor and device ids from
+// sysfs (/sys/class/drm/<node>/device/{vendor,device}) and maps the vendor id
+// to a config.VaapiVendor. The mapping gates the VCN-3.1-calibrated quality
+// magnitudes (Change 5): only AMD gets the calibrated profile; others fall back
+// to conservative bounds. The device id is returned for future generation-level
+// mapping (VCN vs RDNA), which the rate–QP sweep will need. On any read failure
+// the vendor is Unknown (conservative fallback), never an error.
+func detectVaapiVendor(devicePath string) (config.VaapiVendor, string) {
+	if resolved, err := filepath.EvalSymlinks(devicePath); err == nil {
+		devicePath = resolved
+	}
+	node := filepath.Base(filepath.Clean(devicePath)) // e.g. "renderD128"
+	if node == "" || node == "." || node == string(filepath.Separator) {
+		return config.VaapiVendorUnknown, ""
+	}
+	return detectVaapiVendorFromSysfs("/sys/class/drm", node)
+}
+
+func detectVaapiVendorFromSysfs(sysfsDRMRoot, node string) (config.VaapiVendor, string) {
+	base := filepath.Join(sysfsDRMRoot, node, "device")
+	vendorID := readSysfsHexID(filepath.Join(base, "vendor"))
+	deviceID := readSysfsHexID(filepath.Join(base, "device"))
+	return vaapiVendorFromID(vendorID), deviceID
+}
+
+func vaapiVendorFromID(vendorID string) config.VaapiVendor {
+	switch strings.ToLower(strings.TrimSpace(vendorID)) {
+	case "0x1002":
+		return config.VaapiVendorAMD
+	case "0x8086":
+		return config.VaapiVendorIntel
+	case "":
+		return config.VaapiVendorUnknown
+	default:
+		return config.VaapiVendorOther
+	}
+}
+
+// readSysfsHexID reads a single-line sysfs PCI id file ("0x1002\n") and returns
+// the trimmed, lower-cased value, or "" if the file cannot be read.
+func readSysfsHexID(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(string(b)))
 }
 
 func testAudioEncoder(encoder string) bool {

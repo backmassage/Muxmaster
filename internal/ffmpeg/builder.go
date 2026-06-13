@@ -93,7 +93,7 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	// --- Video codec ---
 	args = appendVideoCodec(args, cfg, plan, rs)
 
-	// --- Bitstream filters (e.g. dovi_rpu=strip on remux) ---
+	// --- Bitstream filters (e.g. dovi_rpu=strip=1 on remux) ---
 	args = append(args, plan.BSFOpts...)
 
 	// --- Cover art (after the video codec section: the per-stream -c:v:N

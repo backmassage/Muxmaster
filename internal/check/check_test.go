@@ -50,3 +50,40 @@ func TestSelectVaapiDevicePrefersConfiguredExistingPath(t *testing.T) {
 		t.Fatalf("selectVaapiDevice = %q, want configured device %q", got, dev)
 	}
 }
+
+func TestVaapiVendorFromID(t *testing.T) {
+	cases := []struct {
+		id   string
+		want config.VaapiVendor
+	}{
+		{"0x1002", config.VaapiVendorAMD},
+		{"0X8086\n", config.VaapiVendorIntel},
+		{"0x10de", config.VaapiVendorOther},
+		{"", config.VaapiVendorUnknown},
+	}
+	for _, c := range cases {
+		if got := vaapiVendorFromID(c.id); got != c.want {
+			t.Errorf("vaapiVendorFromID(%q) = %q, want %q", c.id, got, c.want)
+		}
+	}
+}
+
+func TestDetectVaapiVendorFromSysfs(t *testing.T) {
+	root := t.TempDir()
+	devDir := filepath.Join(root, "renderD999", "device")
+	if err := os.MkdirAll(devDir, 0o755); err != nil {
+		t.Fatalf("mkdir fake sysfs: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "vendor"), []byte("0x1002\n"), 0o644); err != nil {
+		t.Fatalf("write vendor: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(devDir, "device"), []byte("0x1681\n"), 0o644); err != nil {
+		t.Fatalf("write device: %v", err)
+	}
+
+	vendor, device := detectVaapiVendorFromSysfs(root, "renderD999")
+	if vendor != config.VaapiVendorAMD || device != "0x1681" {
+		t.Fatalf("detectVaapiVendorFromSysfs = (%q, %q), want (%q, %q)",
+			vendor, device, config.VaapiVendorAMD, "0x1681")
+	}
+}

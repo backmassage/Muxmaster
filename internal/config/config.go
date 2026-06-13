@@ -35,6 +35,20 @@ const (
 	VaapiRCQVBR VaapiRCMode = "qvbr" // Quality-defined VBR with peak ceiling (needs driver support).
 )
 
+// VaapiVendor identifies the VAAPI device vendor, used to gate the
+// VCN-3.1-calibrated quality magnitudes (QP ceiling, content-class floors,
+// denoise strengths) per Change 5 of the hevc_vaapi quality plan. Only AMD is
+// calibrated today; other vendors fall back to conservative bounds until
+// measured. Detected by check.CheckDeps from the render node's PCI vendor id.
+type VaapiVendor string
+
+const (
+	VaapiVendorAMD     VaapiVendor = "amd"     // PCI 0x1002. The VCN-3.1-calibrated profile.
+	VaapiVendorIntel   VaapiVendor = "intel"   // PCI 0x8086. Conservative fallback until measured.
+	VaapiVendorOther   VaapiVendor = "other"   // Known vendor id, not AMD/Intel.
+	VaapiVendorUnknown VaapiVendor = "unknown" // Not detected (default; CPU mode, or sysfs unreadable).
+)
+
 // HDRMode controls HDR handling during encoding.
 type HDRMode string
 
@@ -84,7 +98,15 @@ type EncoderConfig struct {
 
 	// Content-aware pre-filtering and QP strategy.
 	Tune            TuneMode // Default: "auto". Resolves to a denoise/deband prefilter or none.
-	QualityPriority bool     // Default: false. Skip the optimal-bitrate upward QP/CRF push.
+	QualityPriority bool     // Default: false. Skip the optimal-bitrate upward QP/CRF push entirely.
+
+	// hevc_vaapi quality-first push control (plan: hevc-vaapi-quality-maximization).
+	// Default is the bounded-push path (QP raised only to an absolute per-content
+	// ceiling). SizePriority restores the legacy unbounded push (base +
+	// MaxOptimalOverride) for smaller files. DenoiseQPBias is the validation-gated
+	// Change 4 lever (film/grain QP −1 after denoise); off until the sweep calibrates it.
+	SizePriority  bool // Default: false. Restore the legacy unbounded optimal-bitrate QP push.
+	DenoiseQPBias bool // Default: false. Validation-gated film/grain −1 QP bias (Change 4).
 
 	// VAAPI rate control and tuning.
 	VaapiRC               VaapiRCMode // Default: "cqp". QVBR also requires detected driver support.
@@ -93,6 +115,11 @@ type EncoderConfig struct {
 	// Detected capabilities (written back by check.CheckDeps in VAAPI mode).
 	VaapiQVBR    bool // Driver supports QVBR rate control.
 	VaapiBFrames bool // Driver supports HEVC B-frame encoding.
+
+	// Detected device identity (written back by check.CheckDeps in VAAPI mode),
+	// used to gate the VCN-calibrated quality magnitudes per vendor/generation.
+	VaapiVendor    VaapiVendor // amd | intel | other | unknown (default).
+	VaapiPCIDevice string      // Raw PCI device id hex (e.g. "0x1681"), for future gen mapping.
 
 	// Smart quality adaptation.
 	SmartQuality     bool // Default: true. Per-file quality adaptation.
@@ -173,6 +200,9 @@ func DefaultConfig() Config {
 
 			Tune:            TuneAuto,
 			QualityPriority: false,
+			SizePriority:    false,
+			DenoiseQPBias:   false,
+			VaapiVendor:     VaapiVendorUnknown,
 
 			VaapiRC:               VaapiRCCQP,
 			VaapiCompressionLevel: 1,

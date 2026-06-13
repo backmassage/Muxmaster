@@ -36,7 +36,7 @@ muxmaster --mode cpu /media/library /out/library
 # Analyze codec and bitrate stats for a library (no encoding)
 muxmaster --analyze /media/library
 
-# Run system diagnostics (ffmpeg, ffprobe, VAAPI, x265, libfdk_aac)
+# Run system diagnostics (ffmpeg, ffprobe, VAAPI, x265, AAC)
 muxmaster --check
 ```
 
@@ -140,6 +140,7 @@ muxmaster --analyze /media/library
 | `-p, --preset <name>` | x265 CPU preset | `slow` |
 | `--tune <auto\|none\|film\|grain\|anime>` | Content prefilter: `auto` detects grain per series and prompts; `film`/`grain` denoise, `anime` debands (forces software decode) | `auto` |
 | `--quality-priority` | Keep the SmartQuality QP; skip the optimal-bitrate size push (favors quality for keeper content) | off |
+| `--size-priority` | Restore the legacy unbounded QP push for smaller files (`hevc_vaapi`; the default is the quality-first bounded push on AMD/VCN) | off |
 | `--vaapi-rc <cqp\|qvbr>` | VAAPI rate control; CQP wins quality-per-bit, QVBR is opt-in peak-bitrate bounding (needs driver support) | `cqp` |
 | `--vaapi-compression-level <n>` | VAAPI quality level, driver-clamped (inert for HEVC on AMD VCN; kept for Intel/discrete-AMD portability) | `1` |
 | `--audio-bitrate <rate>` | AAC bitrate for non-AAC audio transcodes (e.g. `128k`, `320k`) | `320k` |
@@ -219,7 +220,7 @@ On an interactive run, `--tune auto` (the default) first groups files by series,
 ### Audio handling
 
 - AAC streams are always copied (no lossy-to-lossy re-encode)
-- Non-AAC streams are transcoded to AAC via `libfdk_aac` at configured bitrate (`--audio-bitrate`, default `320k`), 48 kHz, up to 2 channels
+- Non-AAC streams are transcoded to AAC via the configured encoder (default `libfdk_aac`, with startup fallback to native `aac`) at configured bitrate (`--audio-bitrate`, default `320k`), 48 kHz, up to 2 channels
 - Optional channel layout normalization (`--match-audio-layout`)
 
 ### Subtitle and attachment handling

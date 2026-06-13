@@ -161,7 +161,7 @@ func resolveSeriesTunes(ctx context.Context, log Logger, files []string, yearInd
 		return result
 	}
 
-	log.Info("Auto-tune: analyzing %d series for grain (pick a prefilter per series)…", len(groups))
+	log.Info("Auto-tune: analyzing %d series with video encodes for grain (pick a prefilter per series)…", len(groups))
 	in := bufio.NewReader(deps.Reader())
 	for i := range groups {
 		g := groups[i]

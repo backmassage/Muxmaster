@@ -18,3 +18,10 @@ All documentation for the Muxmaster project. Start with [architecture.md](archit
 | Document | Purpose |
 |----------|---------|
 | [design/structure.md](design/structure.md) | Folder layout, package table, "where to change what" quick finder |
+
+## Research and plans
+
+| Document | Purpose |
+|----------|---------|
+| [plans/anime-4k-upscaling-research.md](plans/anime-4k-upscaling-research.md) | WIP feasibility plan for opt-in anime 4K upscaling/remaster experiments |
+| [plans/hevc-vaapi-quality-maximization.md](plans/hevc-vaapi-quality-maximization.md) | Draft plan: content-adaptive quality-first `hevc_vaapi` tuning (QP ceiling, per-vendor gating, denoise calibration) pending the rate–QP sweep |

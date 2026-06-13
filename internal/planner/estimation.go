@@ -80,6 +80,13 @@ func EstimateBitrate(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF 
 // 105 (5% overshoot tolerance to avoid chasing marginal gains at quality
 // cost). The adjustment is capped at 4 steps from the starting values to
 // prevent the estimator from over-correcting on unreliable models.
+//
+// TODO(Change 6, plan: hevc-vaapi-quality-maximization): the trigger keys on the
+// HIGH estimate (point × 1.30), so it enforces a hard ~19%-shrink floor that
+// overrides the Change 1 quality ceiling on h264/hevc. Once vaapiRatios is refit
+// from the sweep, re-key this to true anti-bloat (point estimate near ~100% of
+// input); the post-encode escalation loop stays the backstop. Land with the
+// table refit, not before (relaxing it against the over-predicting table is unsafe).
 func PreflightAdjust(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF, targetPct int) (adjQP, adjCRF, bumps int) {
 	const maxBumps = 4
 	adjQP, adjCRF = vaapiQP, cpuCRF

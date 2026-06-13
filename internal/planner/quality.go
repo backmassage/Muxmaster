@@ -56,18 +56,19 @@ func SmartQuality(cfg *config.Config, pr *probe.ProbeResult) QualityResult {
 	cpuAdj := cpuResolutionCurve(pixels) + cpuBitrateCurve(bitrateKbps) + cpuDensityCurve(bitrateKbps, pixels)
 	vaapiAdj := vaapiResolutionCurve(pixels) + vaapiBitrateCurve(bitrateKbps) + vaapiDensityCurve(bitrateKbps, pixels)
 
+	// CPU CRF: curve + global bias, then optional per-tune bias, clamped to the
+	// CRF range. The CPU path is out of scope for the hevc_vaapi quality plan.
 	selectedCRF := Clamp(cfg.Encoder.CpuCRF+cpuAdj+cfg.Encoder.SmartQualityBias, CpuCRFMin, CpuCRFMax)
-	selectedQP := Clamp(cfg.Encoder.VaapiQP+vaapiAdj+cfg.Encoder.SmartQualityBias, VaapiQPMin, VaapiQPMax)
-
-	// Per-tune QP/CRF bias: flat anime cels tolerate slightly higher QP (the
-	// deband prefilter handles banding); film/grain/none stay neutral.
-	// Applied after the curve clamp, then re-clamped to the same range.
-	if b := tuneCRFBias(cfg.Encoder.Tune); b != 0 {
+	if b := tuneCRFBias(cfg); b != 0 {
 		selectedCRF = Clamp(selectedCRF+b, CpuCRFMin, CpuCRFMax)
 	}
-	if b := tuneQPBias(cfg.Encoder.Tune); b != 0 {
-		selectedQP = Clamp(selectedQP+b, VaapiQPMin, VaapiQPMax)
-	}
+
+	// VAAPI QP: enforce the Change 5 stacked-bias invariant in a single clamp so
+	// no (curve, global bias, tune bias) combination can exit
+	// [contentClassMin, VaapiQPMax]. The lower bound is the per-content-class,
+	// per-vendor floor (grain ≈ its knee on VCN); other classes use VaapiQPMin.
+	qpFloor := vaapiContentClassMin(cfg)
+	selectedQP := Clamp(cfg.Encoder.VaapiQP+vaapiAdj+cfg.Encoder.SmartQualityBias+tuneQPBias(cfg), qpFloor, VaapiQPMax)
 
 	densityLabel := "n/a"
 	if bitrateKbps > 0 && pixels > 0 {
@@ -85,20 +86,33 @@ func SmartQuality(cfg *config.Config, pr *probe.ProbeResult) QualityResult {
 }
 
 // tuneQPBias and tuneCRFBias return the per-tune additive bias folded into the
-// SmartQuality-selected QP/CRF. Only anime biases upward (+1): flat cels
-// tolerate slightly higher QP and the deband prefilter handles banding. The
-// two functions are kept separate so the VAAPI and CPU paths can diverge later
-// without touching call sites.
-func tuneQPBias(tune config.TuneMode) int {
-	if tune == config.TuneAnime {
-		return 1
+// SmartQuality-selected QP/CRF.
+//
+//   - anime: 0 (Change 2). Was +1 (biased flat cels toward smaller files); a
+//     quality-first default keeps cels at the curve QP so the deband prefilter's
+//     gradients aren't re-quantized harder.
+//   - film/grain: −1 only when DenoiseQPBias is set (Change 4, validation-gated,
+//     default off) — spend the bits denoise frees on fidelity. The Change 5
+//     invariant clamps the full stack to [contentClassMin, VaapiQPMax], so this
+//     can never drive grain below its knee.
+//
+// The two functions are kept separate so the VAAPI and CPU paths can diverge.
+func tuneQPBias(cfg *config.Config) int {
+	switch cfg.Encoder.Tune {
+	case config.TuneFilm, config.TuneGrain:
+		if cfg.Encoder.DenoiseQPBias {
+			return -1
+		}
 	}
 	return 0
 }
 
-func tuneCRFBias(tune config.TuneMode) int {
-	if tune == config.TuneAnime {
-		return 1
+func tuneCRFBias(cfg *config.Config) int {
+	switch cfg.Encoder.Tune {
+	case config.TuneFilm, config.TuneGrain:
+		if cfg.Encoder.DenoiseQPBias {
+			return -1
+		}
 	}
 	return 0
 }
@@ -171,6 +185,81 @@ const (
 	DensityHigh     = 8000  // High quality source (Blu-ray).
 	DensityVeryHigh = 10000 // Premium quality (remux grade).
 )
+
+// --- Change 1 & 5: per-content-class, per-vendor QP bounds (hevc_vaapi) ---
+//
+// These gate the quality-first default. The absolute QP ceiling bounds how high
+// the optimal-bitrate push may raise QP (Change 1); the content-class floor
+// bounds how low the stacked bias may drive it (Change 5 invariant). Both are
+// VCN-3.1-calibrated and apply only to AMD devices — other vendors use the
+// conservative fallback ceiling and the plain VaapiQPMin floor until measured.
+//
+// PLACEHOLDER — pending rate–QP sweep, plan validation section; calibrate
+// before merge. These are NOT measured values: the ceiling comes from the
+// lowest QP whose size delta vs the old base+3 push stays in the ~25% envelope,
+// and the grain floor is the measured knee — both produced by the sweep.
+const (
+	vcnQPCeilingClean = 16 // PLACEHOLDER — clean/film/anime push ceiling on VCN; calibrate before merge.
+	vcnQPCeilingGrain = 22 // PLACEHOLDER — grain push ceiling (≈ knee); calibrate before merge.
+
+	// vcnContentClassMinGrain is the measured grain knee (≈22 on VCN; memory:
+	// below qp22 = huge bits, invisible gains). PLACEHOLDER — confirm via sweep.
+	vcnContentClassMinGrain = 22
+
+	// fallbackQPCeiling is the conservative ceiling for non-AMD vendors until a
+	// per-device sweep calibrates them. Higher than the VCN value → allows more
+	// push (closer to the legacy size-discipline behavior) rather than asserting
+	// an unvalidated quality-first magnitude off-VCN.
+	fallbackQPCeiling = 21
+)
+
+// vaapiUseQualityFirstPush reports whether the quality-first bounded push
+// (Change 1) applies, versus the legacy unbounded base+MaxOptimalOverride push.
+// It is gated to AMD/VCN — the only calibrated vendor (Change 5) — and disabled
+// by --size-priority. Non-AMD/unknown vendors fall back to the legacy push,
+// which is the conservative behavior until they are measured.
+func vaapiUseQualityFirstPush(cfg *config.Config) bool {
+	if cfg.Encoder.SizePriority {
+		return false
+	}
+	return cfg.Encoder.VaapiVendor == config.VaapiVendorAMD
+}
+
+// boundedPushQP implements the Change 1 quality-first push: the optimal-bitrate
+// push may raise QP from baseQP toward targetQP but never above the absolute
+// ceiling, and never below baseQP (the push only raises QP).
+//
+//	finalQP = max(baseQP, min(targetQP, ceiling))
+func boundedPushQP(baseQP, targetQP, ceiling int) int {
+	return max(baseQP, min(targetQP, ceiling))
+}
+
+// vaapiQPCeiling returns the absolute QP ceiling for the optimal-bitrate push
+// (Change 1), gated by vendor (Change 5). Only AMD/VCN uses the calibrated
+// magnitudes; other vendors get the conservative fallback.
+func vaapiQPCeiling(cfg *config.Config) int {
+	if cfg.Encoder.VaapiVendor != config.VaapiVendorAMD {
+		return fallbackQPCeiling
+	}
+	if cfg.Encoder.Tune == config.TuneGrain {
+		return vcnQPCeilingGrain
+	}
+	return vcnQPCeilingClean
+}
+
+// vaapiContentClassMin returns the per-content-class lower bound on QP enforced
+// after the full bias stack (Change 5 invariant). Only AMD/VCN grain raises the
+// floor to its knee; every other case uses VaapiQPMin so behavior is unchanged
+// where uncalibrated.
+func vaapiContentClassMin(cfg *config.Config) int {
+	if cfg.Encoder.Mode != config.EncoderVAAPI {
+		return VaapiQPMin
+	}
+	if cfg.Encoder.VaapiVendor == config.VaapiVendorAMD && cfg.Encoder.Tune == config.TuneGrain {
+		return vcnContentClassMinGrain
+	}
+	return VaapiQPMin
+}
 
 // Planner-level tuning constants exported for cross-package use.
 const (

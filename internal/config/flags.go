@@ -89,6 +89,10 @@ func defineEncodingFlags(fs *flag.FlagSet, cfg *Config) {
 	fs.Var(&tuneValue{&cfg.Encoder.Tune}, "tune", "Content prefilter: auto | none | film | grain | anime")
 	fs.BoolVar(&cfg.Encoder.QualityPriority, "quality-priority", cfg.Encoder.QualityPriority,
 		"Keep the SmartQuality QP; skip the optimal-bitrate size push")
+	fs.BoolVar(&cfg.Encoder.SizePriority, "size-priority", cfg.Encoder.SizePriority,
+		"Restore the legacy unbounded optimal-bitrate QP push (smaller files)")
+	fs.BoolVar(&cfg.Encoder.DenoiseQPBias, "denoise-qp-bias", cfg.Encoder.DenoiseQPBias,
+		"Experimental: film/grain QP -1 after denoise (validation-gated, hevc_vaapi)")
 	fs.IntVar(&cfg.Encoder.VaapiCompressionLevel, "vaapi-compression-level",
 		cfg.Encoder.VaapiCompressionLevel, "VAAPI encoder quality level (driver-clamped)")
 	fs.StringVar(&cfg.Audio.Bitrate, "audio-bitrate", cfg.Audio.Bitrate, "Audio bitrate in Kbps (e.g. 128k, 320k)")
@@ -288,6 +292,8 @@ func printUsage(_ *flag.FlagSet, version string) {
 		{"  --vaapi-compression-level <n>", "VAAPI quality level, driver-clamped (default: 1)"},
 		{"  --tune <auto|none|film|grain|anime>", "Prefilter; auto (default) detects grain per series and prompts; forces sw decode"},
 		{"  --quality-priority", "Keep the SmartQuality QP; skip the optimal-bitrate size push"},
+		{"  --size-priority", "Legacy unbounded QP push for smaller files (hevc_vaapi)"},
+		{"  --denoise-qp-bias", "Experimental film/grain QP -1 after denoise"},
 		{"  --audio-bitrate <rate>", "Audio bitrate in Kbps (default: 320k)"},
 		{"", ""},
 		{"Container & HDR", ""},
@@ -322,7 +328,7 @@ func printUsage(_ *flag.FlagSet, version string) {
 		{"Utility", ""},
 		{"  -l, --log <path>", "Append logs to file"},
 		{"  -a, --analyze", "Probe all files and print codec/bitrate table"},
-		{"  -c, --check", "System diagnostics (ffmpeg, VAAPI, x265, libfdk_aac)"},
+		{"  -c, --check", "System diagnostics (ffmpeg, VAAPI, x265, AAC)"},
 		{"  -V, --version", "Print version and exit"},
 		{"  -h, --help", "Show this help and exit"},
 	}

@@ -2,6 +2,7 @@ package naming
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -21,168 +22,168 @@ func TestParseFilename(t *testing.T) {
 	}{
 		// Rule 1: SxxExx
 		{
-			name: "SxxExx standard", basename: "My.Show.S01E05.720p.BluRay.mkv",
-			parentDir: "/media/My Show",
-			wantType:  MediaTV, wantShow: "My Show", wantSeason: 1, wantEpisode: 5,
+			name: "SxxExx standard", basename: "Series.One.S01E05.720p.BluRay.mkv",
+			parentDir: "/media/Series One",
+			wantType:  MediaTV, wantShow: "Series One", wantSeason: 1, wantEpisode: 5,
 		},
 		{
-			name: "SxxExx with version", basename: "Show.S02E10v2.HEVC.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show", wantSeason: 2, wantEpisode: 10,
+			name: "SxxExx with version", basename: "Series.S02E10v2.HEVC.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series", wantSeason: 2, wantEpisode: 10,
 		},
 		{
 			name: "SxxExx show from parent", basename: "S03E01.1080p.mkv",
-			parentDir: "/media/Cool Show",
-			wantType:  MediaTV, wantShow: "Cool Show", wantSeason: 3, wantEpisode: 1,
+			parentDir: "/media/Parent Series",
+			wantType:  MediaTV, wantShow: "Parent Series", wantSeason: 3, wantEpisode: 1,
 		},
 		{
-			name: "SxxExx double episode", basename: "Mr.Robot.S02E01E02.eps2.0_unm4sk-pt1-2.tc.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-EPSiLON.mkv",
-			parentDir: "/media/Mr Robot/Mr.Robot.S02.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-EPSiLON",
-			wantType:  MediaTV, wantShow: "Mr Robot", wantSeason: 2, wantEpisode: 1,
+			name: "SxxExx double episode", basename: "Series.Name.S02E01E02.eps2.0_sample-pt1-2.tc.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-Group.mkv",
+			parentDir: "/media/Series Name/Series.Name.S02.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-Group",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 2, wantEpisode: 1,
 		},
 
 		// Rule 2: 1x01
 		{
-			name: "1x01 format", basename: "Show.Name.1x05.mkv",
-			parentDir: "/media/Show Name",
-			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 5,
+			name: "1x01 format", basename: "Series.Name.1x05.mkv",
+			parentDir: "/media/Series Name",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 1, wantEpisode: 5,
 		},
 
 		// Rule 3: Season OP/ED
 		{
-			name: "S01 NCOP", basename: "Show.S01.NCOP1.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show", wantSeason: 1, wantEpisode: 101,
+			name: "S01 NCOP", basename: "Series.S01.NCOP1.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series", wantSeason: 1, wantEpisode: 101,
 		},
 		{
-			name: "S02 NCED", basename: "Show.S02.NCED2.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show", wantSeason: 2, wantEpisode: 202,
+			name: "S02 NCED", basename: "Series.S02.NCED2.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series", wantSeason: 2, wantEpisode: 202,
 		},
 
 		// Rule 4: Creditless OP/ED
 		{
-			name: "Creditless Opening", basename: "[Group] Show - 001 - Title [Creditless Opening].mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show", wantSeason: 0, wantEpisode: 101,
+			name: "Creditless Opening", basename: "[Group] Series - 001 - Title [Creditless Opening].mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series", wantSeason: 0, wantEpisode: 101,
 		},
 
 		// Rule 5: Episode keyword
 		{
-			name: "Episode keyword", basename: "[SubGroup] Show Name - Episode 16 - Title.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 16,
+			name: "Episode keyword", basename: "[SubGroup] Series Name - Episode 16 - Title.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 1, wantEpisode: 16,
 		},
 		{
-			name: "Episode keyword fractional", basename: "[SubGroup] Show - Episode 16.5 - Title.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show", wantSeason: 0, wantEpisode: 165,
+			name: "Episode keyword fractional", basename: "[SubGroup] Series - Episode 16.5 - Title.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series", wantSeason: 0, wantEpisode: 165,
 		},
 
 		// Rule 6: Named special index
 		{
-			name: "Named special OP", basename: "Show OP-01.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show", wantSeason: 0, wantEpisode: 101,
+			name: "Named special OP", basename: "Series OP-01.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series", wantSeason: 0, wantEpisode: 101,
 		},
 		{
-			name: "Named special PV", basename: "Show PV-03.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show", wantSeason: 0, wantEpisode: 303,
+			name: "Named special PV", basename: "Series PV-03.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series", wantSeason: 0, wantEpisode: 303,
 		},
 
 		// Rule 7: Named special bare
 		{
-			name: "Bare special Recap", basename: "Show Name - Recap.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 0, wantEpisode: 601,
+			name: "Bare special Recap", basename: "Series Name - Recap.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 0, wantEpisode: 601,
 		},
 
 		// Rule 8: Movie part
 		{
-			name: "Movie part", basename: "Title The Movie 2 - Part Two.mkv",
+			name: "Movie part", basename: "Feature The Movie 2 - Part Two.mkv",
 			parentDir: "/media/Movies",
-			wantType:  MediaMovie, wantMovie: "Title The Movie 2 - Part Two",
+			wantType:  MediaMovie, wantMovie: "Feature The Movie 2 - Part Two",
 		},
 
 		// Rule 9: Anime dash
 		{
-			name: "Anime dash standard", basename: "[SubGroup] Anime Name - 12 [1080p].mkv",
-			parentDir: "/media/Anime Name",
-			wantType:  MediaTV, wantShow: "Anime Name", wantSeason: 1, wantEpisode: 12,
+			name: "Anime dash standard", basename: "[SubGroup] Animated Series - 12 [1080p].mkv",
+			parentDir: "/media/Animated Series",
+			wantType:  MediaTV, wantShow: "Animated Series", wantSeason: 1, wantEpisode: 12,
 		},
 		{
-			name: "Anime dash greedy recovery", basename: "[SubGroup] Show - 027 - 800 Years of History.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show", wantSeason: 1, wantEpisode: 27,
+			name: "Anime dash greedy recovery", basename: "[SubGroup] Series - 027 - 800 Years of History.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series", wantSeason: 1, wantEpisode: 27,
 		},
 
 		// Rule 10: Episodic title
 		{
-			name: "Episodic title", basename: "[Group] Show Name 05 - Episode Title.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 5,
+			name: "Episodic title", basename: "[Group] Series Name 05 - Episode Title.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 1, wantEpisode: 5,
 		},
 
 		// Rule 11: Bare number dash
 		{
 			name: "Bare number dash", basename: "03 - Episode Title.mkv",
-			parentDir: "/media/Show Name",
-			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 3,
+			parentDir: "/media/Series Name",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 1, wantEpisode: 3,
 		},
 		{
 			name: "Bare number dash in season folder", basename: "03 - Episode Title.mkv",
-			parentDir: "/media/Cool Show/Season 03",
-			wantType:  MediaTV, wantShow: "Cool Show", wantSeason: 3, wantEpisode: 3,
+			parentDir: "/media/Parent Series/Season 03",
+			wantType:  MediaTV, wantShow: "Parent Series", wantSeason: 3, wantEpisode: 3,
 		},
 
 		// Rule 12: Group release
 		{
-			name: "Group release", basename: "[SubGroup] Show Name 05 [1080p].mkv",
-			parentDir: "/media/Show Name",
-			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 5,
+			name: "Group release", basename: "[SubGroup] Series Name 05 [1080p].mkv",
+			parentDir: "/media/Series Name",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 1, wantEpisode: 5,
 		},
 
 		// Rule 13: Underscore anime
 		{
-			name: "Underscore anime", basename: "[Group]Show_Name_01_BD.mkv",
-			parentDir: "/media/Show",
-			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 1,
+			name: "Underscore anime", basename: "[Group]Series_Name_01_BD.mkv",
+			parentDir: "/media/Series",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 1, wantEpisode: 1,
 		},
 
 		// Rule 14: Movie year
 		{
-			name: "Movie with year", basename: "The.Matrix.1999.mkv",
+			name: "Movie with year", basename: "Feature.Title.1999.mkv",
 			parentDir: "/media/Movies",
-			wantType:  MediaMovie, wantMovie: "The Matrix", wantYear: "1999",
+			wantType:  MediaMovie, wantMovie: "Feature Title", wantYear: "1999",
 		},
 
 		// Rule 15: Fallback
 		{
-			name: "Fallback movie", basename: "Random Movie Title.mkv",
+			name: "Fallback movie", basename: "Generic Feature Title.mkv",
 			parentDir: "/media/Movies",
-			wantType:  MediaMovie, wantMovie: "Random Movie Title",
+			wantType:  MediaMovie, wantMovie: "Generic Feature Title",
 		},
 
 		// Edge: specials folder — bare-number file inside NCOP gets grandparent
 		{
 			name: "Specials folder grandparent", basename: "01 - Title.mkv",
-			parentDir: "/media/Show Name/NCOP",
-			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 1,
+			parentDir: "/media/Series Name/NCOP",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 1, wantEpisode: 1,
 		},
 
 		// Edge: season hint from parent overrides default season 1
 		{
-			name: "Season hint from parent", basename: "[Group] Show 03 [Tags].mkv",
+			name: "Season hint from parent", basename: "[Group] Series 03 [Tags].mkv",
 			parentDir: "Season 03",
-			wantType:  MediaTV, wantShow: "Show", wantSeason: 3, wantEpisode: 3,
+			wantType:  MediaTV, wantShow: "Series", wantSeason: 3, wantEpisode: 3,
 		},
 
 		// Edge: release tag stripping
 		{
-			name: "Release tag stripping", basename: "Show.Name.S01E01.1080p.BluRay.x265.HEVC.mkv",
-			parentDir: "/media/Show Name",
-			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 1,
+			name: "Release tag stripping", basename: "Series.Name.S01E01.1080p.BluRay.x265.HEVC.mkv",
+			parentDir: "/media/Series Name",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 1, wantEpisode: 1,
 		},
 	}
 
@@ -264,6 +265,76 @@ func TestGetOutputPath(t *testing.T) {
 			got := GetOutputPath(tc.p, "/output", "mkv")
 			if got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestFileListNamingRegression(t *testing.T) {
+	cases := []struct {
+		name string
+		path string
+		want string
+	}{
+		{
+			name: "movie with release tags",
+			path: "Iron.Lung.2026.2160p.WEB-DL.HDR.DDP5.1.H265.MP4-BEN.THE.MEN/Iron.Lung.2026.2160p.WEB-DL.HDR[Ben The Men].mp4",
+			want: "/output/Iron Lung (2026)/Iron Lung (2026).mp4",
+		},
+		{
+			name: "standard SxxExx episode",
+			path: "Fallout.S02.UHD.BluRay.2160p.TrueHD.Atmos.7.1.DV.HDR10P.HEVC.HYBRID.REMUX-FraMeSToR/Fallout.S02E04.The.Demon.in.the.Snow.UHD.BluRay.2160p.TrueHD.Atmos.7.1.DV.HDR10P.HEVC.HYBRID.REMUX-FraMeSToR.mkv",
+			want: "/output/Fallout/Season 02/Fallout - S02E04.mkv",
+		},
+		{
+			name: "double episode range",
+			path: "Mr Robot S01-S04 1080p BluRay REMUX AVC DTS-HD MA 5.1-MiXED [RiCK]/Mr.Robot.S02.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-EPSiLON/Mr.Robot.S02E01E02.eps2.0_unm4sk-pt1-2.tc.1080p.BluRay.REMUX.AVC.DTS-HD.MA.5.1-EPSiLON.mkv",
+			want: "/output/Mr Robot/Season 02/Mr Robot - S02E01-E02.mkv",
+		},
+		{
+			name: "S00 OVA",
+			path: "[smol] Masamune-kun no Revenge (BD 1080p HEVC Opus)/[smol] Masamune-kun no Revenge - S00E01 - 13 (OVA) (BD 1080p HEVC Opus) [DF02B841].mkv",
+			want: "/output/Masamune-Kun No Revenge/Season 00/Masamune-Kun No Revenge - S00E01.mkv",
+		},
+		{
+			name: "NCOP extra",
+			path: "[smol] Masamune-kun no Revenge (BD 1080p HEVC Opus)/Extras/[smol] Masamune-kun no Revenge - NCOP - Wagamama MIRROR HEART (BD 1080p HEVC Opus) [B77B4D3B].mkv",
+			want: "/output/Masamune-Kun No Revenge/Season 00/Masamune-Kun No Revenge - S00E101.mkv",
+		},
+		{
+			name: "NCED numbered extra",
+			path: "[smol] Masamune-kun no Revenge (BD 1080p HEVC Opus)/Extras/[smol] Masamune-kun no Revenge - NCED 2 - Manazashi Silent (BD 1080p 1920x816 HEVC Opus) [48C75AEC].mkv",
+			want: "/output/Masamune-Kun No Revenge/Season 00/Masamune-Kun No Revenge - S00E202.mkv",
+		},
+		{
+			name: "Oreimo S02 release",
+			path: "Oreimo.S02.1080p.BluRay.10-Bit.FLAC2.0.x265-YURASUKA/Oreimo.S02E16.1080p.BluRay.10-Bit.FLAC2.0.x265-YURASUKA.mkv",
+			want: "/output/Oreimo/Season 02/Oreimo - S02E16.mkv",
+		},
+		{
+			name: "Avatar Book 1 compact episode",
+			path: "Avatar - The Last Airbender [1080p]/Book 1; Water/101 - The Boy in the Iceberg.mp4",
+			want: "/output/Avatar - The Last Airbender/Season 01/Avatar - The Last Airbender - S01E01.mp4",
+		},
+		{
+			name: "Avatar Book 2 compact episode",
+			path: "Avatar - The Last Airbender [1080p]/Book 2; Earth/220 - The Crossroads of Destiny.mp4",
+			want: "/output/Avatar - The Last Airbender/Season 02/Avatar - The Last Airbender - S02E20.mp4",
+		},
+		{
+			name: "Avatar Book 3 compact episode",
+			path: "Avatar - The Last Airbender [1080p]/Book 3; Fire/321 - Sozin's Comet, Part 4 - Avatar Aang.mp4",
+			want: "/output/Avatar - The Last Airbender/Season 03/Avatar - The Last Airbender - S03E21.mp4",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := ParseFilename(filepath.Base(tc.path), filepath.Dir(tc.path))
+			container := strings.TrimPrefix(filepath.Ext(tc.path), ".")
+			got := GetOutputPath(p, "/output", container)
+			if got != tc.want {
+				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -391,6 +462,7 @@ func TestSpecialsFolder(t *testing.T) {
 		{"/media/Show/NCED01", "Show"},
 		{"/media/Show/Extras", "Show"},
 		{"/media/Show/Season 01", "Show"},
+		{"/media/Show/Book 2; Earth", "Show"},
 		{"JustDir", "JustDir"},
 	}
 	for _, tc := range cases {
@@ -432,6 +504,7 @@ func TestSeasonHint(t *testing.T) {
 		{"Season 03", 3},
 		{"Season_2", 2},
 		{"S4", 4},
+		{"Book 2; Earth", 2},
 		{"Just A Dir", 0},
 	}
 	for _, tc := range cases {
@@ -557,6 +630,13 @@ func TestEdgeCases(t *testing.T) {
 			name: "Bare number with apostrophe", basename: "03' - Title.mkv",
 			parentDir: "My Show",
 			wantType:  MediaTV, wantShow: "My Show", wantSeason: 1, wantEpisode: 3,
+		},
+		// Regular Season folders keep long absolute episode numbers; only
+		// Book folders split compact 201-style season/episode numbers.
+		{
+			name: "Season folder keeps long episode number", basename: "101 - Title.mkv",
+			parentDir: "/media/Show Name/Season 01",
+			wantType:  MediaTV, wantShow: "Show Name", wantSeason: 1, wantEpisode: 101,
 		},
 		// Creditless Ending variant.
 		{

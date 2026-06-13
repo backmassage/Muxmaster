@@ -276,11 +276,11 @@ func TestBuild_BSFOpts_RemuxDoviStrip(t *testing.T) {
 		InputPath:    "/in/test.mkv",
 		OutputPath:   "/out/test.mkv",
 		MuxQueueSize: 4096,
-		BSFOpts:      []string{"-bsf:v:0", "dovi_rpu=strip"},
+		BSFOpts:      []string{"-bsf:v:0", "dovi_rpu=strip=1"},
 	}
 	args := Build(cfg, plan, NewRetryState(plan))
-	if got := argValue(args, "-bsf:v:0"); got != "dovi_rpu=strip" {
-		t.Errorf("expected -bsf:v:0 dovi_rpu=strip, got %q", got)
+	if got := argValue(args, "-bsf:v:0"); got != "dovi_rpu=strip=1" {
+		t.Errorf("expected -bsf:v:0 dovi_rpu=strip=1, got %q", got)
 	}
 }
 

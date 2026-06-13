@@ -76,8 +76,19 @@ var reSeasonHintFull = regexp.MustCompile(
 var reSeasonHintShort = regexp.MustCompile(
 	`(?i)(^|[^[:alnum:]])[Ss]([0-9]{1,2})([^[:alnum:]]|$)`)
 
+// reSeasonHintBook matches "Book 2" in a directory name.
+var reSeasonHintBook = regexp.MustCompile(
+	`(?i)(^|[^[:alnum:]])[Bb]ook[\s_.\-]*([0-9]{1,2})([^[:alnum:]]|$)`)
+
+func extractBookSeasonHint(parent string) int {
+	if m := reSeasonHintBook.FindStringSubmatch(parent); m != nil {
+		return parseIntOr0(m[2])
+	}
+	return 0
+}
+
 // extractParentSeasonHint extracts a season number from a parent directory
-// name like "Season 02" or "S2". Returns 0 if no season hint is found.
+// name like "Season 02", "S2", or "Book 2". Returns 0 if no season hint is found.
 func extractParentSeasonHint(parent string) int {
 	if m := reSeasonHintFull.FindStringSubmatch(parent); m != nil {
 		return parseIntOr0(m[2])
@@ -85,7 +96,7 @@ func extractParentSeasonHint(parent string) int {
 	if m := reSeasonHintShort.FindStringSubmatch(parent); m != nil {
 		return parseIntOr0(m[2])
 	}
-	return 0
+	return extractBookSeasonHint(parent)
 }
 
 // postProcess applies universal cleaning to a parsed name: strip release

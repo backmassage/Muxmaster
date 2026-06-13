@@ -89,6 +89,23 @@ func buildSoftwareDecodeFilters(cfg *config.Config, pr *probe.ProbeResult) strin
 	return strings.Join(filters, ",")
 }
 
+// Denoise/deband strengths for the --tune prefilters (Change 3). Parameterized
+// as named constants so the sweep-selected hqdn3d/nlmeans strings drop straight
+// in without touching TunePrefilter's logic.
+//
+//   - filmDenoise is measured strong on VCN (−21% size / −0.15 VMAF, memory) —
+//     kept as the default value until the sweep says otherwise.
+//   - grainDenoise is an INITIAL ESTIMATE: strong hqdn3d destroys fine detail
+//     (dr-lex); the sweep evaluates gentler hqdn3d and an nlmeans variant by
+//     quality-per-bit. Re-calibrate before treating as final.
+//   - animeDeband: gradfun strength 1.2 is ffmpeg's default; valid minimum 0.51
+//     (0.5 errors at graph init). `deband` is the heavier alternative.
+const (
+	filmDenoise  = "hqdn3d=1.5:1.5:6:6"
+	grainDenoise = "hqdn3d=4:4:9:9" // INITIAL ESTIMATE — calibrate via sweep.
+	animeDeband  = "gradfun=1.2:16"
+)
+
 // TunePrefilter returns the CPU filter string for the active --tune profile,
 // or "" for TuneNone. These run on the software-decode path only (CPU filters
 // cannot be inserted into a hardware-decoded VAAPI surface chain — ffmpeg
@@ -98,16 +115,11 @@ func buildSoftwareDecodeFilters(cfg *config.Config, pr *probe.ProbeResult) strin
 func TunePrefilter(cfg *config.Config) string {
 	switch cfg.Encoder.Tune {
 	case config.TuneFilm:
-		// Light luma+chroma spatial/temporal denoise for film/light grain.
-		return "hqdn3d=1.5:1.5:6:6"
+		return filmDenoise
 	case config.TuneGrain:
-		// Heavier denoise for strong Blu-ray grain.
-		return "hqdn3d=4:4:9:9"
+		return grainDenoise
 	case config.TuneAnime:
-		// Fast gradient deband for flat cels. Strength 1.2 is ffmpeg's
-		// default and the valid minimum is 0.51 (0.5 errors at graph init);
-		// `deband` is the heavier alternative if residual banding remains.
-		return "gradfun=1.2:16"
+		return animeDeband
 	default:
 		// TuneAuto and TuneNone carry no prefilter. TuneAuto is a pipeline-level
 		// sentinel resolved to a concrete profile (via the grain pre-pass +

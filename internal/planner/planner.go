@@ -65,7 +65,7 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 	// --- 1b. Dolby Vision stripping (profiles with an HDR10 base layer) ---
 	// On remux, -c:v copy would carry the DOVI configuration record into the
 	// output and DV-capable clients would engage DV mode on a stream we
-	// otherwise treat as HDR10; dovi_rpu=strip removes both the config record
+	// otherwise treat as HDR10; dovi_rpu=strip=1 removes both the config record
 	// and the per-frame RPUs. On encode, re-encoding drops the RPUs on both
 	// encoder paths (hevc_vaapi never writes them; libx265 only with explicit
 	// dolby-vision-rpu config), so only a note is needed.
@@ -73,7 +73,7 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		if plan.Action == ActionRemux {
 			// Scoped to v:0 so the bsf never touches cover-art streams
 			// (dovi_rpu rejects non-HEVC codecs at init).
-			plan.BSFOpts = []string{"-bsf:v:0", "dovi_rpu=strip"}
+			plan.BSFOpts = []string{"-bsf:v:0", "dovi_rpu=strip=1"}
 		}
 		plan.Notes = append(plan.Notes, "stripping Dolby Vision, keeping HDR10 base layer")
 	}
@@ -106,14 +106,33 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 		if optKbps > 0 && !cfg.Encoder.QualityPriority {
 			if cfg.Encoder.Mode == config.EncoderVAAPI {
 				targetQP := QPForTargetBitrate(cfg, pr, optKbps)
-				if targetQP > plan.VaapiQP {
-					ceiling := plan.VaapiQP + MaxOptimalOverride
+				baseQP := plan.VaapiQP
+				// Change 1 + Change 5: quality-first by default *where calibrated*.
+				// On VCN-class AMD the push may raise QP only to an absolute
+				// per-content ceiling:
+				//   finalQP = max(baseQP, min(pushTargetQP, qpCeiling))
+				// --size-priority, and any non-AMD/unknown vendor (no calibrated
+				// ceiling yet), fall back to the legacy unbounded push
+				// (base+MaxOptimalOverride) — the conservative behavior.
+				if vaapiUseQualityFirstPush(cfg) {
+					ceiling := vaapiQPCeiling(cfg)
+					finalQP := boundedPushQP(baseQP, targetQP, ceiling)
+					if finalQP != baseQP {
+						plan.Notes = append(plan.Notes,
+							fmt.Sprintf("quality-first push: QP %d→%d (ceiling %d, target %d)",
+								baseQP, finalQP, ceiling, targetQP))
+					}
+					plan.VaapiQP = finalQP
+				} else if targetQP > baseQP {
+					ceiling := baseQP + MaxOptimalOverride
 					if targetQP > ceiling {
 						targetQP = ceiling
 					}
 					plan.VaapiQP = targetQP
 				}
 			} else {
+				// CPU path is out of scope for the hevc_vaapi quality plan; the
+				// legacy bounded push stays.
 				targetCRF := CRFForTargetBitrate(cfg, pr, optKbps)
 				if targetCRF > plan.CpuCRF {
 					ceiling := plan.CpuCRF + MaxOptimalOverride

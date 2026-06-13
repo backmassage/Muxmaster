@@ -15,7 +15,7 @@ genuine blowups.
 1. SmartQuality        (planner/quality.go)     → base QP/CRF from curves
 2. OptimalBitrate      (planner/estimation.go)   → target output kbps
 3. QPForTargetBitrate  (planner/estimation.go)   → QP for that target
-4. Optimal override    (planner/planner.go)      → capped merge with SmartQuality
+4. Bounded push        (planner/planner.go)      → QP-ceiling merge (vendor-gated)
 5. PreflightAdjust     (planner/estimation.go)   → bump if estimate > 105% of input
 6. Post-encode escal.  (pipeline/runner.go)      → re-encode if output > input
 ```
@@ -31,9 +31,20 @@ on a different input signal:
 | Bitrate curve | kbps | -2 to +2 | -2 to +2 |
 | Density curve | kbps/Mpx | -2 to +4 | -1 to +3 |
 
-Formula: `QP = Clamp(default + adjustment + SmartQualityBias, QPMin, QPMax)`
+Formula: `QP = Clamp(default + adjustment + SmartQualityBias + tuneBias, contentClassMin, VaapiQPMax)`
 
-SmartQualityBias defaults to -2 (favors quality / lower QP).
+SmartQualityBias defaults to -2 (favors quality / lower QP). The whole bias
+stack is clamped in one step (the **stacked-bias invariant**) so no combination
+of global bias and per-tune bias can drive QP outside its range:
+
+- `tuneBias` — per-`--tune` adjustment. `anime` is 0 (the deband handles
+  banding; an earlier +1 was reversed for quality-first). `film`/`grain` are 0
+  unless `--denoise-qp-bias` is set, which makes them −1 (validation-gated, off
+  by default).
+- `contentClassMin` — the lower clamp bound, a per-content-class, per-vendor
+  floor. On AMD/VCN `grain` is pinned at its measured knee (≈22; below it spends
+  huge bits for invisible gains); everything else uses `VaapiQPMin` (14). This is
+  what stops `globalBias + tuneBias` from compounding past the knee.
 
 ### Stage 2: OptimalBitrate
 
@@ -54,17 +65,27 @@ down to -8 for premium quality).
 Searches VaapiQPMin–VaapiQPMax for the QP whose estimated output midpoint
 is closest to the target bitrate from Stage 2.
 
-### Stage 4: Optimal override (planner.go)
+### Stage 4: Bounded push (planner.go)
 
-Merges SmartQuality QP with the optimal-bitrate QP:
+Merges the SmartQuality QP with the optimal-bitrate QP. The behavior is
+**vendor-gated** (calibration is VCN-3.1-specific):
+
+**Quality-first (default, AMD/VCN):** the push may raise QP only up to an
+absolute per-content ceiling, not `base + 3`:
 
 ```
-finalQP = max(smartQP, min(targetQP, smartQP + 3))
+finalQP = max(baseQP, min(targetQP, qpCeiling))
 ```
 
-The +3 cap prevents the estimation model from overriding the quality curves
-by a huge margin. SmartQuality is the primary driver; optimal bitrate is a
-soft nudge.
+This recovers the quality the legacy `base + 3` cap discarded (it fired at the
+full cap on essentially every h264→HEVC encode) while staying past the visual
+knee. `qpCeiling` is a per-content-class constant (placeholder ~16; the real
+value comes from the rate–QP sweep).
+
+**Legacy (size-priority, and non-AMD/unknown vendors):** the conservative
+fallback restores the old unbounded push, capped at `base + maxOptimalOverride`
+(+3). Selected by `--size-priority`, or whenever the vendor is not the
+calibrated AMD/VCN profile. `--quality-priority` skips the push entirely.
 
 ### Stage 5: PreflightAdjust
 
@@ -74,6 +95,13 @@ on files where the model is unreliable.
 
 The 105% target (vs 100%) avoids chasing marginal overshoot at the cost of
 quality — the post-encode loop handles genuine blowups.
+
+> **Known coupling (plan Change 6, pending the sweep).** Preflight trips on the
+> *high* estimate (`point × 1.30 > 105%`), so on h264/hevc sources the current
+> (heuristic) `vaapiRatios` table makes it override the Stage 4 ceiling back up
+> to the legacy QP — Change 1's quality gain only fully lands on low-efficiency
+> sources until `vaapiRatios` is refit from the sweep and the trigger is relaxed
+> to true anti-bloat. See `TODO(Change 6)` in `tables.go`/`estimation.go`.
 
 ### Stage 6: Post-encode escalation
 
@@ -107,6 +135,12 @@ highEstimate = input × ratio × 130%
 
 The ratio is in per-mille (e.g. 770 means output ≈ 77% of input).
 
+> **`vaapiRatios` is a withdrawn heuristic, not measured VCN data.** It
+> over-predicts h264/hevc output, which is why Stage 5 preflight overrides the
+> Stage 4 quality ceiling on those codecs (see the Stage 5 note). The rate–QP
+> sweep refits it as per-(content-class, source-codec, resolution) curves; that
+> same fit produces the Stage 4 ceilings (plan Change 6).
+
 ---
 
 ## Constants reference
@@ -118,12 +152,19 @@ The ratio is in per-mille (e.g. 770 means output ≈ 77% of input).
 | CpuCRFMin | 16 | quality.go | Lowest allowed CRF |
 | CpuCRFMax | 30 | quality.go | Highest allowed CRF |
 | SmartQualityBias | -2 | config.go | Negative = favor quality |
-| maxOptimalOverride | 3 | planner.go | Cap on optimal bitrate QP override |
+| vcnQPCeilingClean | 16 ‡ | quality.go | Quality-first push ceiling, clean/film/anime (AMD/VCN) |
+| vcnQPCeilingGrain | 22 ‡ | quality.go | Quality-first push ceiling, grain (AMD/VCN) |
+| vcnContentClassMinGrain | 22 ‡ | quality.go | Grain QP floor (measured knee, AMD/VCN) |
+| fallbackQPCeiling | 21 ‡ | quality.go | Conservative push ceiling, non-AMD vendors |
+| maxOptimalOverride | 3 | quality.go | Legacy/size-priority push cap (base + 3) |
 | PreflightAdjust maxBumps | 4 | estimation.go | Max preflight bump iterations |
 | PreflightAdjust target | 105% | planner.go | Overshoot tolerance |
 | qualityBumpStep | 1 | runner.go | Post-encode QP increment |
 | maxQualityBumps | 2 | runner.go | Max post-encode re-encodes |
 | highRatio multiplier | 130% | estimation.go | Pessimistic estimate factor |
+
+‡ **Placeholder** — provisional value pending the on-hardware rate–QP sweep
+(plan: `hevc-vaapi-quality-maximization.md`). Calibrate before any major merge.
 
 ### Density thresholds (kbps per megapixel)
 
