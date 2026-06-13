@@ -47,7 +47,7 @@ func RunCheck(cfg *config.Config, log Logger) bool {
 		ok = false
 	}
 	checkHEVCEncoders(log)
-	if !checkVAAPI(log) {
+	if !checkVAAPI(cfg, log) {
 		ok = false
 	}
 	if !checkCPUx265(log) {
@@ -105,11 +105,12 @@ func checkHEVCEncoders(log Logger) {
 	}
 }
 
-// checkVAAPI finds the first render device and runs a minimal VAAPI encode test.
+// checkVAAPI selects the configured render device when it exists, otherwise the
+// first available render node, and runs a minimal VAAPI encode test.
 // Returns true if VAAPI works, false otherwise. A missing VAAPI device is not
 // fatal (CPU mode may be used instead), so this is logged as a warning.
-func checkVAAPI(log Logger) bool {
-	dev := getFirstRenderDevice()
+func checkVAAPI(cfg *config.Config, log Logger) bool {
+	dev := selectVaapiDevice(cfg)
 	if dev == "" {
 		log.Warn("No VAAPI device found")
 		return false
@@ -206,10 +207,7 @@ func CheckDeps(cfg *config.Config) error {
 	// The tested device is written back to cfg so the encode command
 	// targets the same render node the test passed on — the configured
 	// default (renderD128) may not be the node that exists on this host.
-	dev := cfg.Encoder.VaapiDevice
-	if _, err := os.Stat(dev); err != nil {
-		dev = getFirstRenderDevice()
-	}
+	dev := selectVaapiDevice(cfg)
 	if dev == "" {
 		return ErrNoVAAPIDevice
 	}
@@ -250,6 +248,15 @@ func testAudioEncoder(encoder string) bool {
 }
 
 // --- internal helpers ---
+
+func selectVaapiDevice(cfg *config.Config) string {
+	if cfg != nil && cfg.Encoder.VaapiDevice != "" {
+		if _, err := os.Stat(cfg.Encoder.VaapiDevice); err == nil {
+			return cfg.Encoder.VaapiDevice
+		}
+	}
+	return getFirstRenderDevice()
+}
 
 // getFirstRenderDevice returns the first available /dev/dri/renderD* path,
 // or empty string if none exist.

@@ -80,7 +80,7 @@ The 2.0 design doc is ambitious and well-structured, but it introduces several n
 
 ### 4.1 Package Dependency Map
 
-The project is organized into `cmd` (entrypoint) and 10 internal packages. Dependencies flow top-down; leaf packages have zero internal dependencies.
+The project is organized into `cmd` (entrypoint) and 11 internal packages. Dependencies flow top-down; leaf packages have zero internal dependencies.
 
 **Entrypoint:**
 
@@ -97,9 +97,10 @@ cmd/main.go
 
 | Package | Depends on | Role |
 |---|---|---|
-| `pipeline` | config, probe, naming, planner, ffmpeg, display, term | Batch orchestration: discover → process → summarize |
+| `pipeline` | config, probe, naming, planner, ffmpeg, tune, display, term | Batch orchestration: discover → auto-tune → process → summarize |
 | `planner` | config, probe | Per-file encode/remux/skip decisions + quality |
 | `ffmpeg` | config, planner | Command building, execution, error classification, retry |
+| `tune` | config | Grain pre-pass and `--tune auto` suggestion mapping |
 | `display` | term | Banner printing, byte/bitrate formatters |
 | `check` | config | System diagnostics (ffmpeg, ffprobe, VAAPI, x265) |
 | `config` | *(none)* | Config struct, flag parsing, defaults, validation |
@@ -107,7 +108,7 @@ cmd/main.go
 | `naming` | *(none — pure logic)* | Filename parser, output paths, collision resolution |
 | `probe` | *(none — wraps ffprobe)* | ffprobe JSON wrapper, typed ProbeResult |
 
-**Leaf packages** (no internal dependencies): `naming`, `probe`, `config`. Near-leaf (single dep): `term`, `check`, `display`. Near-leaf (two deps): `logging`.
+**Leaf packages** (no internal dependencies): `naming`, `probe`, `config`. Near-leaf: `term` (config), `check` (config), `tune` (config), `display` (term), `logging` (config, term).
 
 **Key constraint:** `naming` and `probe` must remain dependency-free. All file-level decisions flow through `planner`, which is the only package that combines probe data with config to produce a `FilePlan`.
 
@@ -116,7 +117,7 @@ cmd/main.go
 This section shows how the major domain types relate to each other. Full Go definitions are in Section 5.
 
 ```
-Config (40+ fields)
+Config (grouped sub-structs)
   │
   │  planner consumes Config + ProbeResult
   │  to produce ──────────────────────────────► FilePlan
@@ -146,8 +147,9 @@ ParsedName
   └── Year
 
 RetryState
-  ├── Attempt / MaxAttempts (4)
+  ├── Attempt / MaxAttempts (8)
   ├── IncludeAttach, IncludeSubs, MuxQueueSize, TimestampFix, HWDecode
+  ├── VaapiQVBR, VaapiBFrames
   ├── VaapiQP, CpuCRF
   └── Advance(stderr) → RetryAction
 
@@ -436,12 +438,36 @@ const (
 // config/config.go
 
 type Config struct {
-    // --- Paths ---
+    // Paths (set from positional args).
     InputDir  string
     OutputDir string
 
-    // --- Encoder ---
-    EncoderMode      EncoderMode
+    // Sub-configs grouped by concern.
+    Encoder EncoderConfig
+    Audio   AudioConfig
+    Display DisplayConfig
+
+    // Output format.
+    OutputContainer Container // default: "mkv"
+
+    // Behavior flags.
+    DryRun          bool // default: false
+    SkipExisting    bool // default: true
+    SkipHEVC        bool // default: true
+    StrictMode      bool // default: false
+    CleanTimestamps bool // default: true
+    KeepSubtitles   bool // default: true
+    KeepAttachments bool // default: true
+    CheckOnly       bool // default: false
+    AnalyzeOnly     bool // default: false (--analyze mode)
+
+    // ffmpeg probe constants (not user-configurable).
+    FFmpegProbesize       string // "100M"
+    FFmpegAnalyzeDuration string // "100M"
+}
+
+type EncoderConfig struct {
+    Mode             EncoderMode
     VaapiDevice      string // default: "/dev/dri/renderD128"
     VaapiQP          int    // default: 18
     VaapiProfile     string // derived at runtime: "main10" or "main"
@@ -451,50 +477,40 @@ type Config struct {
     CpuProfile       string // fixed: "main10"
     CpuPixFmt        string // fixed: "yuv420p10le"
     KeyframeInterval int    // fallback: 48; planner derives ~2s GOP from source fps
+    HandleHDR        HDRMode
+    DeinterlaceAuto  bool
 
-    // --- Output ---
-    OutputContainer Container // default: "mkv"
+    Tune            TuneMode // default: "auto"
+    QualityPriority bool     // default: false
 
-    // --- Audio ---
-    AudioChannels   int    // default: 2
-    AudioBitrate    string // default: "320k"
-    AudioSampleRate int    // fixed: 48000
-    AudioEncoder    string // fixed: "libfdk_aac"
+    VaapiRC               VaapiRCMode // default: "cqp"; qvbr requires detected support
+    VaapiCompressionLevel int         // default: 1
+    VaapiQVBR             bool        // detected by CheckDeps
+    VaapiBFrames          bool        // detected by CheckDeps
 
-    // --- Behavior ---
-    DryRun           bool    // default: false
-    SkipExisting     bool    // default: true
-    SkipHEVC         bool    // default: true
-    StrictMode       bool    // default: false
-    SmartQuality     bool    // default: true
-    CleanTimestamps  bool    // default: true
-    MatchAudioLayout bool    // default: true
-    KeepSubtitles    bool    // default: true
-    KeepAttachments  bool    // default: true
-    HandleHDR        HDRMode // default: "preserve"
-    DeinterlaceAuto  bool    // default: true
+    SmartQuality     bool // default: true
+    SmartQualityBias int  // default: -2
 
-    // --- Quality tuning (configurable constants) ---
-    SmartQualityBias int // default: -2 (applied to smart-computed QP/CRF, favors higher quality)
-
-    // --- Display ---
-    Verbose       bool      // default: false
-    ShowFileStats bool      // default: true
-    ShowFfmpegFPS bool      // default: true
-    ColorMode     ColorMode // default: "auto"
-    LogFile       string    // default: ""
-    CheckOnly     bool      // default: false
-    AnalyzeOnly   bool      // default: false (--analyze mode)
-
-    // --- Quality overrides (set during flag parsing) ---
     QualityOverride       string // from --quality
     CpuCRFFixedOverride   string // from --cpu-crf
     VaapiQPFixedOverride  string // from --vaapi-qp
-    ActiveQualityOverride string // derived: set only when manual override applies to active mode
+    ActiveQualityOverride string // derived for the active encoder mode
+}
 
-    // --- ffmpeg constants (not user-configurable) ---
-    FFmpegProbesize       string // "100M"
-    FFmpegAnalyzeDuration string // "100M"
+type AudioConfig struct {
+    Channels    int    // default: 2
+    Bitrate     string // default: "320k"
+    SampleRate  int    // fixed: 48000
+    Encoder     string // fixed default: "libfdk_aac"
+    MatchLayout bool   // default: true
+}
+
+type DisplayConfig struct {
+    Verbose   bool
+    FileStats bool      // default: true
+    FfmpegFPS bool      // default: true
+    ColorMode ColorMode // default: "auto"
+    LogFile   string
 }
 ```
 
@@ -674,7 +690,7 @@ type AudioPlan struct {
 type AudioStreamPlan struct {
     StreamIndex int
     Copy        bool   // true for AAC passthrough
-    Channels    int    // target (capped at Config.AudioChannels)
+    Channels    int    // target (capped at Config.Audio.Channels)
     Bitrate     string // "320k"
     SampleRate  int    // 48000
     Layout      string // "mono", "stereo", or ""
@@ -702,21 +718,27 @@ type AttachmentPlan struct {
 type RetryAction int
 
 const (
-    RetryNone        RetryAction = iota
-    RetryDropAttach
-    RetryDropSubs
-    RetryIncreaseMux
-    RetryFixTimestamps
+    RetryNone            RetryAction = iota
+    RetryDropAttach                  // Remove attachment streams.
+    RetryDropSubs                    // Remove subtitle streams.
+    RetryIncreaseMux                 // Raise mux queue.
+    RetryFixTimestamps               // Enable timestamp repair.
+    RetryDisableHWDecode             // Fall back to software decode + hwupload.
+    RetryDisableQVBR                 // Fall back from QVBR to CQP.
+    RetryDropBFrames                 // Drop -bf.
 )
 
 type RetryState struct {
     Attempt     int
-    MaxAttempts int // 4
+    MaxAttempts int // 8
 
     IncludeAttach bool
     IncludeSubs   bool
     MuxQueueSize  int  // 4096 → 16384
     TimestampFix  bool // false (remux) | Config.CleanTimestamps (encode)
+    HWDecode      bool
+    VaapiQVBR     bool
+    VaapiBFrames  bool
 
     VaapiQP int
     CpuCRF  int

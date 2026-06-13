@@ -11,6 +11,9 @@ import (
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/ffmpeg"
 	"github.com/backmassage/muxmaster/internal/logging"
+	"github.com/backmassage/muxmaster/internal/naming"
+	"github.com/backmassage/muxmaster/internal/planner"
+	"github.com/backmassage/muxmaster/internal/tune"
 )
 
 // --- Discover tests ---
@@ -255,7 +258,269 @@ func TestDryRunPipeline(t *testing.T) {
 	}
 }
 
+func TestRunAutoTuneDryRunSkipsPrepassEvenTTY(t *testing.T) {
+	requireFfmpegProbe(t)
+
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	generateSyntheticMP4(t, filepath.Join(inputDir, "Show S01E01.mp4"))
+
+	var detects int
+	withAutoTuneDeps(t, autoTuneDeps{
+		isTerminal: func() bool { return true },
+		detectContent: func(context.Context, string, float64) (tune.ContentSignal, error) {
+			detects++
+			return tune.ContentSignal{Grain: 0.90, Frames: 4}, nil
+		},
+	})
+
+	cfg := config.DefaultConfig()
+	cfg.InputDir = inputDir
+	cfg.OutputDir = outputDir
+	cfg.DryRun = true
+	cfg.Display.ColorMode = config.ColorNever
+
+	noExec := ffmpeg.RunFunc(func(_ context.Context, args []string) ffmpeg.ExecResult {
+		t.Fatalf("unexpected ffmpeg execution in dry run: %v", args)
+		return ffmpeg.ExecResult{}
+	})
+
+	stats := Run(context.Background(), &cfg, nopLogger{}, noExec)
+	if detects != 0 {
+		t.Fatalf("dry-run should not run auto-tune pre-pass, got %d calls", detects)
+	}
+	if stats.Encoded != 1 || stats.Failed != 0 {
+		t.Fatalf("stats = %+v, want one dry-run encoded and no failures", stats)
+	}
+}
+
+func TestRunAutoTuneSkipsExistingOutputCandidate(t *testing.T) {
+	requireFfmpegProbe(t)
+
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	input := filepath.Join(inputDir, "Show S01E01.mp4")
+	generateSyntheticMP4(t, input)
+
+	cfg := config.DefaultConfig()
+	cfg.InputDir = inputDir
+	cfg.OutputDir = outputDir
+	cfg.Display.ColorMode = config.ColorNever
+
+	files := []string{input}
+	yearIndex := naming.BuildYearVariantIndex(files)
+	out := predictedOutputPath(&cfg, input, yearIndex)
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		t.Fatalf("mkdir output: %v", err)
+	}
+	if err := os.WriteFile(out, []byte("already encoded"), 0o644); err != nil {
+		t.Fatalf("write output: %v", err)
+	}
+
+	var detects int
+	withAutoTuneDeps(t, autoTuneDeps{
+		isTerminal: func() bool { return true },
+		detectContent: func(context.Context, string, float64) (tune.ContentSignal, error) {
+			detects++
+			return tune.ContentSignal{Grain: 0.90, Frames: 4}, nil
+		},
+	})
+
+	noExec := ffmpeg.RunFunc(func(_ context.Context, args []string) ffmpeg.ExecResult {
+		t.Fatalf("skip-existing file should not execute ffmpeg: %v", args)
+		return ffmpeg.ExecResult{}
+	})
+
+	stats := Run(context.Background(), &cfg, nopLogger{}, noExec)
+	if detects != 0 {
+		t.Fatalf("existing output should not run auto-tune pre-pass, got %d calls", detects)
+	}
+	if stats.Skipped != 1 || stats.Failed != 0 {
+		t.Fatalf("stats = %+v, want one skipped existing output and no failures", stats)
+	}
+}
+
+func TestRunAutoTuneAppliesResolvedTuneToPlan(t *testing.T) {
+	requireFfmpegProbe(t)
+
+	inputDir := t.TempDir()
+	outputDir := t.TempDir()
+	generateSyntheticMP4(t, filepath.Join(inputDir, "Show S01E01.mp4"))
+
+	var detects int
+	var prompt strings.Builder
+	withAutoTuneDeps(t, autoTuneDeps{
+		isTerminal: func() bool { return true },
+		reader:     strings.NewReader("\n"),
+		writer:     &prompt,
+		probeDuration: func(context.Context, string) (float64, error) {
+			return 300, nil
+		},
+		detectContent: func(context.Context, string, float64) (tune.ContentSignal, error) {
+			detects++
+			return tune.ContentSignal{Grain: 0.90, Frames: 6}, nil
+		},
+	})
+
+	cfg := config.DefaultConfig()
+	cfg.InputDir = inputDir
+	cfg.OutputDir = outputDir
+	cfg.Display.ColorMode = config.ColorNever
+
+	var gotArgs []string
+	run := ffmpeg.RunFunc(func(_ context.Context, args []string) ffmpeg.ExecResult {
+		gotArgs = append([]string(nil), args...)
+		out := args[len(args)-1]
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			return ffmpeg.ExecResult{Err: err}
+		}
+		if err := os.WriteFile(out, []byte("ok"), 0o644); err != nil {
+			return ffmpeg.ExecResult{Err: err}
+		}
+		return ffmpeg.ExecResult{}
+	})
+
+	stats := Run(context.Background(), &cfg, nopLogger{}, run)
+	if detects != 1 {
+		t.Fatalf("detect calls: got %d, want 1", detects)
+	}
+	if stats.Encoded != 1 || stats.Failed != 0 {
+		t.Fatalf("stats = %+v, want one encoded and no failures", stats)
+	}
+	if !strings.Contains(strings.Join(gotArgs, " "), "hqdn3d=4:4:9:9") {
+		t.Fatalf("ffmpeg args did not include grain prefilter:\n%v", gotArgs)
+	}
+	if !strings.Contains(prompt.String(), "Enter = grain") {
+		t.Fatalf("prompt did not default to grain:\n%s", prompt.String())
+	}
+}
+
+func TestExecuteWithRetryQVBRSizeEscalationShrinksBitrateArgs(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.mkv")
+	output := filepath.Join(dir, "output.mkv")
+	if err := os.WriteFile(input, make([]byte, 1000), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Encoder.Mode = config.EncoderVAAPI
+	cfg.Encoder.VaapiDevice = "/dev/dri/renderD128"
+	cfg.Encoder.VaapiProfile = "main10"
+	cfg.Display.ColorMode = config.ColorNever
+
+	plan := &planner.FilePlan{
+		Action:             planner.ActionEncode,
+		InputPath:          input,
+		OutputPath:         output,
+		VideoStreamIdx:     0,
+		Audio:              planner.AudioPlan{NoAudio: true},
+		MuxQueueSize:       4096,
+		VaapiQP:            20,
+		VaapiQVBR:          true,
+		OptimalBitrateKbps: 1000,
+		MaxRateKbps:        1200,
+		BufSizeKbps:        2400,
+	}
+	rs := ffmpeg.NewRetryState(plan)
+
+	var calls [][]string
+	run := ffmpeg.RunFunc(func(_ context.Context, args []string) ffmpeg.ExecResult {
+		calls = append(calls, append([]string(nil), args...))
+		size := 800
+		if len(calls) == 1 {
+			size = 1200
+		}
+		if err := os.WriteFile(output, make([]byte, size), 0o644); err != nil {
+			return ffmpeg.ExecResult{Err: err}
+		}
+		return ffmpeg.ExecResult{}
+	})
+
+	if ok := executeWithRetry(context.Background(), &cfg, nopLogger{}, plan, rs, run); !ok {
+		t.Fatal("executeWithRetry returned false")
+	}
+	if len(calls) != 2 {
+		t.Fatalf("ffmpeg calls: got %d, want 2", len(calls))
+	}
+	if got := argValue(calls[0], "-b:v"); got != "1000k" {
+		t.Fatalf("first -b:v = %q, want 1000k", got)
+	}
+	if got := argValue(calls[1], "-global_quality"); got != "21" {
+		t.Fatalf("second -global_quality = %q, want 21", got)
+	}
+	if got := argValue(calls[1], "-b:v"); got != "850k" {
+		t.Fatalf("second -b:v = %q, want 850k", got)
+	}
+	if got := argValue(calls[1], "-maxrate"); got != "1020k" {
+		t.Fatalf("second -maxrate = %q, want 1020k", got)
+	}
+	if got := argValue(calls[1], "-bufsize"); got != "2040k" {
+		t.Fatalf("second -bufsize = %q, want 2040k", got)
+	}
+}
+
 // --- Helpers ---
+
+type nopLogger struct{}
+
+func (nopLogger) Info(string, ...interface{})    {}
+func (nopLogger) Success(string, ...interface{}) {}
+func (nopLogger) Warn(string, ...interface{})    {}
+func (nopLogger) Error(string, ...interface{})   {}
+func (nopLogger) Debug(bool, string, ...interface{}) {
+}
+func (nopLogger) Outlier(string, ...interface{}) {}
+func (nopLogger) Blank()                         {}
+
+func withAutoTuneDeps(t *testing.T, deps autoTuneDeps) {
+	t.Helper()
+	old := autoTune
+	autoTune = deps
+	t.Cleanup(func() { autoTune = old })
+}
+
+func requireFfmpegProbe(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not available")
+	}
+}
+
+func generateSyntheticMP4(t *testing.T, path string) {
+	t.Helper()
+	gen := exec.Command("ffmpeg",
+		"-f", "lavfi", "-i", "testsrc=duration=1:size=320x240:rate=24",
+		"-c:v", "libx264", "-profile:v", "high", "-pix_fmt", "yuv420p",
+		"-y", path,
+	)
+	gen.Stderr = os.Stderr
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generate %s: %v", path, err)
+	}
+}
+
+func predictedOutputPath(cfg *config.Config, path string, yearIndex naming.YearVariantIndex) string {
+	parsed := naming.ParseFilename(filepath.Base(path), filepath.Dir(path))
+	if parsed.MediaType == naming.MediaTV {
+		parsed.ShowName = naming.HarmonizeShowName(parsed.ShowName, yearIndex)
+	}
+	resolver := naming.NewCollisionResolver()
+	out := naming.GetOutputPath(parsed, cfg.OutputDir, string(cfg.OutputContainer))
+	return resolver.Resolve(path, out)
+}
+
+func argValue(args []string, flag string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			return args[i+1]
+		}
+	}
+	return ""
+}
 
 func touch(t *testing.T, dir, name string) {
 	t.Helper()

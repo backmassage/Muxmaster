@@ -39,11 +39,13 @@ func Run(ctx context.Context, cfg *config.Config, log Logger, run ffmpeg.RunFunc
 	logBatchHeader(cfg, log, &stats)
 
 	// --tune auto: detect grain per series and prompt the user once each,
-	// before processing. Gated on an interactive stdin — non-interactive runs
-	// fall back to no prefilter (seriesTunes stays nil → effectiveTune none).
+	// before processing. Gated on an interactive stdin and skipped for dry-runs
+	// so preview mode stays lightweight; non-interactive/dry-run files fall back
+	// to no prefilter (seriesTunes stays nil → effectiveTune none).
 	var seriesTunes map[string]config.TuneMode
-	if cfg.Encoder.Tune == config.TuneAuto && term.IsTerminal(os.Stdin) {
-		seriesTunes = resolveSeriesTunes(ctx, log, files, yearIndex)
+	if cfg.Encoder.Tune == config.TuneAuto && !cfg.DryRun && autoTune.IsTerminal() {
+		candidates := autoTuneCandidateFiles(ctx, cfg, files, yearIndex)
+		seriesTunes = resolveSeriesTunes(ctx, log, candidates, yearIndex, autoTune)
 	}
 
 	for i, path := range files {
@@ -59,6 +61,48 @@ func Run(ctx context.Context, cfg *config.Config, log Logger, run ffmpeg.RunFunc
 
 	logSummary(cfg, log, &stats)
 	return stats
+}
+
+func autoTuneCandidateFiles(ctx context.Context, cfg *config.Config, files []string, yearIndex naming.YearVariantIndex) []string {
+	candidates := make([]string, 0, len(files))
+	resolver := naming.NewCollisionResolver()
+
+	for _, path := range files {
+		if ctx.Err() != nil {
+			break
+		}
+		fi, err := os.Stat(path)
+		if err != nil || fi.Size() < minFileSize {
+			continue
+		}
+
+		parsed := naming.ParseFilename(filepath.Base(path), filepath.Dir(path))
+		if parsed.MediaType == naming.MediaTV {
+			parsed.ShowName = naming.HarmonizeShowName(parsed.ShowName, yearIndex)
+		}
+
+		outputPath := naming.GetOutputPath(parsed, cfg.OutputDir, string(cfg.OutputContainer))
+		outputPath = resolver.Resolve(path, outputPath)
+		if cfg.SkipExisting {
+			if _, err := os.Stat(outputPath); err == nil {
+				continue
+			}
+		}
+
+		pr, err := probe.Probe(ctx, path)
+		if err != nil || pr.PrimaryVideo == nil || pr.PrimaryVideo.Width <= 0 || pr.PrimaryVideo.Height <= 0 {
+			continue
+		}
+		planCfg := *cfg
+		planCfg.Encoder.Tune = config.TuneNone
+		if planner.BuildPlan(&planCfg, pr).Action != planner.ActionEncode {
+			continue
+		}
+
+		candidates = append(candidates, path)
+	}
+
+	return candidates
 }
 
 // processFile handles one media file: validate → probe → name → plan → execute.

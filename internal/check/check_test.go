@@ -1,7 +1,13 @@
 // check_test.go covers pure-logic helpers in the check package.
 package check
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/backmassage/muxmaster/internal/config"
+)
 
 // TestPictTypesContainB table-drives the ffprobe pict_type parsing that backs
 // the B-frame capability probe: a B anywhere → true (Intel iHD); only I/P →
@@ -27,5 +33,20 @@ func TestPictTypesContainB(t *testing.T) {
 				t.Errorf("pictTypesContainB(%q) = %v, want %v", c.in, got, c.want)
 			}
 		})
+	}
+}
+
+func TestSelectVaapiDevicePrefersConfiguredExistingPath(t *testing.T) {
+	dir := t.TempDir()
+	dev := filepath.Join(dir, "renderD999")
+	if err := os.WriteFile(dev, []byte{}, 0o644); err != nil {
+		t.Fatalf("write fake device: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Encoder.VaapiDevice = dev
+
+	if got := selectVaapiDevice(&cfg); got != dev {
+		t.Fatalf("selectVaapiDevice = %q, want configured device %q", got, dev)
 	}
 }

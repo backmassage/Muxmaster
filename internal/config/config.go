@@ -83,7 +83,7 @@ type EncoderConfig struct {
 	DeinterlaceAuto  bool
 
 	// Content-aware pre-filtering and QP strategy.
-	Tune            TuneMode // Default: "none". Injects a denoise/deband prefilter (forces sw decode).
+	Tune            TuneMode // Default: "auto". Resolves to a denoise/deband prefilter or none.
 	QualityPriority bool     // Default: false. Skip the optimal-bitrate upward QP/CRF push.
 
 	// VAAPI rate control and tuning.

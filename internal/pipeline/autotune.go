@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/backmassage/muxmaster/internal/config"
@@ -24,8 +25,74 @@ import (
 type seriesGroup struct {
 	key   string
 	label string
-	rep   string // representative file path (first seen)
+	rep   string // representative file path (first seen until ranked)
+	files []string
 	count int
+}
+
+type autoTuneDeps struct {
+	isTerminal    func() bool
+	reader        io.Reader
+	writer        io.Writer
+	probeDuration func(context.Context, string) (float64, error)
+	detectContent func(context.Context, string, float64) (tune.ContentSignal, error)
+}
+
+var autoTune = defaultAutoTuneDeps()
+
+func defaultAutoTuneDeps() autoTuneDeps {
+	return autoTuneDeps{
+		isTerminal: func() bool { return term.IsTerminal(os.Stdin) },
+		reader:     os.Stdin,
+		writer:     os.Stdout,
+		probeDuration: func(ctx context.Context, path string) (float64, error) {
+			pr, err := probe.Probe(ctx, path)
+			if err != nil {
+				return 0, err
+			}
+			return pr.Format.Duration, nil
+		},
+		detectContent: tune.DetectContent,
+	}
+}
+
+func (d autoTuneDeps) IsTerminal() bool {
+	if d.isTerminal != nil {
+		return d.isTerminal()
+	}
+	return term.IsTerminal(os.Stdin)
+}
+
+func (d autoTuneDeps) Reader() io.Reader {
+	if d.reader != nil {
+		return d.reader
+	}
+	return os.Stdin
+}
+
+func (d autoTuneDeps) Writer() io.Writer {
+	if d.writer != nil {
+		return d.writer
+	}
+	return os.Stdout
+}
+
+func (d autoTuneDeps) ProbeDuration(ctx context.Context, path string) (float64, error) {
+	if d.probeDuration != nil {
+		return d.probeDuration(ctx, path)
+	}
+	pr, err := probe.Probe(ctx, path)
+	if err != nil {
+		return 0, err
+	}
+	return pr.Format.Duration, nil
+}
+
+func (d autoTuneDeps) DetectContent(ctx context.Context, path string, duration float64) (tune.ContentSignal, error) {
+	if d.detectContent != nil {
+		return d.detectContent(ctx, path, duration)
+	}
+	return tune.DetectContent(ctx, path, duration)
 }
 
 // seriesKey derives a stable grouping key and display label for a parsed file.
@@ -73,6 +140,7 @@ func groupBySeries(files []string, yearIndex naming.YearVariantIndex) []seriesGr
 			groups[key] = g
 			order = append(order, key)
 		}
+		g.files = append(g.files, path)
 		g.count++
 	}
 	out := make([]seriesGroup, 0, len(order))
@@ -84,8 +152,9 @@ func groupBySeries(files []string, yearIndex naming.YearVariantIndex) []seriesGr
 
 // resolveSeriesTunes runs the grain pre-pass per series and prompts the user to
 // pick a prefilter for each, returning a key→tune map consumed during
-// processing. Caller gates this on `--tune auto` and an interactive stdin.
-func resolveSeriesTunes(ctx context.Context, log Logger, files []string, yearIndex naming.YearVariantIndex) map[string]config.TuneMode {
+// processing. Caller gates this on `--tune auto`, an interactive stdin, and
+// candidate pruning (dry-run / known skip-existing / non-encode files).
+func resolveSeriesTunes(ctx context.Context, log Logger, files []string, yearIndex naming.YearVariantIndex, deps autoTuneDeps) map[string]config.TuneMode {
 	groups := groupBySeries(files, yearIndex)
 	result := make(map[string]config.TuneMode, len(groups))
 	if len(groups) == 0 {
@@ -93,14 +162,14 @@ func resolveSeriesTunes(ctx context.Context, log Logger, files []string, yearInd
 	}
 
 	log.Info("Auto-tune: analyzing %d series for grain (pick a prefilter per series)…", len(groups))
-	in := bufio.NewReader(os.Stdin)
+	in := bufio.NewReader(deps.Reader())
 	for i := range groups {
 		g := groups[i]
 		if ctx.Err() != nil {
 			break
 		}
-		sug := suggestForRep(ctx, log, g)
-		choice := promptSeriesTune(os.Stdout, in, g, sug)
+		sug, sampled := suggestForGroup(ctx, log, g, deps)
+		choice := promptSeriesTune(deps.Writer(), in, sampled, sug)
 		result[g.key] = choice
 		log.Success("  %s → --tune %s", g.label, choice)
 	}
@@ -108,19 +177,108 @@ func resolveSeriesTunes(ctx context.Context, log Logger, files []string, yearInd
 	return result
 }
 
-// suggestForRep probes the representative for duration, runs the grain pre-pass,
-// and maps it to a suggestion; failures degrade to a low-confidence none.
-func suggestForRep(ctx context.Context, log Logger, g seriesGroup) tune.Suggestion {
-	dur := 0.0
-	if pr, err := probe.Probe(ctx, g.rep); err == nil && pr.Format.Duration > 0 {
-		dur = pr.Format.Duration
+// suggestForGroup ranks candidate samples, runs the grain pre-pass on the best
+// viable one, and falls through to the next candidate when a pre-pass fails.
+// Complete failure degrades to a low-confidence none.
+func suggestForGroup(ctx context.Context, log Logger, g seriesGroup, deps autoTuneDeps) (tune.Suggestion, seriesGroup) {
+	candidates := rankRepresentativeCandidates(ctx, g, deps)
+	for _, c := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
+		sig, err := deps.DetectContent(ctx, c.path, c.duration)
+		if err != nil {
+			log.Warn("  %s: grain pre-pass failed on %s (%v)", g.label, filepath.Base(c.path), err)
+			continue
+		}
+		g.rep = c.path
+		return tune.Suggest(sig), g
 	}
-	sig, err := tune.DetectContent(ctx, g.rep, dur)
-	if err != nil {
-		log.Warn("  %s: grain pre-pass failed (%v) — suggesting none", g.label, err)
-		return tune.Suggestion{Tune: config.TuneNone, Confidence: tune.ConfidenceLow, Reason: "pre-pass failed"}
+
+	if len(candidates) > 0 {
+		g.rep = candidates[0].path
 	}
-	return tune.Suggest(sig)
+	log.Warn("  %s: grain pre-pass failed for all samples — suggesting none", g.label)
+	return tune.Suggestion{Tune: config.TuneNone, Confidence: tune.ConfidenceLow, Reason: "pre-pass failed"}, g
+}
+
+const minRepresentativeDurationSec = 120
+
+type representativeCandidate struct {
+	path          string
+	duration      float64
+	durationKnown bool
+	special       bool
+}
+
+func rankRepresentativeCandidates(ctx context.Context, g seriesGroup, deps autoTuneDeps) []representativeCandidate {
+	paths := g.files
+	if len(paths) == 0 && g.rep != "" {
+		paths = []string{g.rep}
+	}
+
+	candidates := make([]representativeCandidate, 0, len(paths))
+	for _, path := range paths {
+		dur, err := deps.ProbeDuration(ctx, path)
+		known := err == nil && dur > 0
+		if !known {
+			dur = 0
+		}
+		candidates = append(candidates, representativeCandidate{
+			path:          path,
+			duration:      dur,
+			durationKnown: known,
+			special:       likelySpecialSample(path),
+		})
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		a, b := candidates[i], candidates[j]
+		if a.special != b.special {
+			return !a.special
+		}
+		ar, br := durationRank(a), durationRank(b)
+		if ar != br {
+			return ar < br
+		}
+		if a.durationKnown && b.durationKnown && a.duration != b.duration {
+			return a.duration > b.duration
+		}
+		return false
+	})
+
+	return candidates
+}
+
+func durationRank(c representativeCandidate) int {
+	switch {
+	case c.durationKnown && c.duration >= minRepresentativeDurationSec:
+		return 0
+	case !c.durationKnown:
+		return 1
+	default:
+		return 2
+	}
+}
+
+func likelySpecialSample(path string) bool {
+	parsed := naming.ParseFilename(filepath.Base(path), filepath.Dir(path))
+	if parsed.MediaType == naming.MediaTV && (parsed.Season == 0 || parsed.Episode >= 100) {
+		return true
+	}
+
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
+	slashPath := "/" + strings.ToLower(filepath.ToSlash(path)) + "/"
+	for _, marker := range []string{
+		"/specials/", "/season 00/", "/season 0/", "/ncop", "/nced",
+		"creditless", "trailer", "sample", "preview", "recap",
+		"opening", "ending", " ncop", " nced", " op-", " ed-",
+	} {
+		if strings.Contains(base, marker) || strings.Contains(slashPath, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // sampleNameWidth caps the sampled filename shown in the prompt so a long

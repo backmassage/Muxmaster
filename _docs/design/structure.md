@@ -6,7 +6,7 @@ Folder layout for navigation and maintenance. For architecture and type referenc
 
 ```
 cmd/             CLI entrypoint
-internal/        All application logic (10 packages)
+internal/        All application logic (11 packages)
 _docs/           Design docs and project reference
 ```
 

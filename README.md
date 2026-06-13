@@ -214,7 +214,7 @@ Validate → Probe → Parse filename → Resolve output path → Plan → Execu
 - **Execute**: runs ffmpeg with automatic retry (up to 8 attempts) covering attachment errors, subtitle mux issues, queue overflow, timestamp discontinuities, hardware-decode fallback, QVBR→CQP, and B-frame drop
 - **Quality escalation**: if output exceeds input size, QP/CRF is bumped and re-encoded (up to 2 times) to ensure output stays smaller than the original
 
-On an interactive run, `--tune auto` (the default) first groups files by series, runs a cheap grain pre-pass on one episode per series, and prompts you once per series to confirm the suggested denoise profile — applied to every episode. Non-interactive runs skip this and apply no prefilter.
+On an interactive run, `--tune auto` (the default) first groups files by series, picks a representative main episode when possible, runs a cheap grain pre-pass, and prompts you once per series to confirm the suggested denoise profile — applied to every episode. Non-interactive runs and dry-runs skip this and apply no prefilter.
 
 ### Audio handling
 
@@ -243,7 +243,7 @@ Collision resolution appends ` - dup1`, ` - dup2`, etc. TV show names with year 
 
 ```
 cmd/             CLI entrypoint
-internal/        All application logic (10 packages)
+internal/        All application logic (11 packages)
   config/        Defaults, CLI flags, validation
   term/          ANSI color state, TTY detection
   logging/       Leveled logger, optional file sink
@@ -252,6 +252,7 @@ internal/        All application logic (10 packages)
   probe/         ffprobe JSON parsing, HDR/interlace/HEVC detection
   naming/        Filename parser, output paths, collision, harmonization
   planner/       Per-file quality, estimation, filters, audio/subtitle plans
+  tune/          Grain pre-pass and --tune auto suggestions
   ffmpeg/        Command builder, executor, error patterns, retry state
   pipeline/      File discovery, per-file orchestration, batch stats
 _docs/           Design docs and project reference

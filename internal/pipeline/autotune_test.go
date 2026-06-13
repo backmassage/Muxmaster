@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -105,8 +107,74 @@ func TestGroupBySeries(t *testing.T) {
 	if groups[0].rep != files[0] {
 		t.Errorf("representative: got %s, want %s", groups[0].rep, files[0])
 	}
+	if !sliceEqual(groups[0].files, files[:3]) {
+		t.Errorf("first group files: got %v, want %v", groups[0].files, files[:3])
+	}
 	if groups[1].count != 1 {
 		t.Errorf("second group count: got %d, want 1", groups[1].count)
+	}
+}
+
+func TestRankRepresentativeCandidatesPrefersMainLongEpisode(t *testing.T) {
+	op := "/m/Show/NCOP/Show.S01.NCOP1.mkv"
+	ep1 := "/m/Show/Season 01/Show.S01E01.mkv"
+	ep2 := "/m/Show/Season 01/Show.S01E02.mkv"
+	g := seriesGroup{key: "tv:show", label: "Show", rep: op, files: []string{op, ep1, ep2}, count: 3}
+
+	durations := map[string]float64{
+		op:  90,
+		ep1: 1200,
+		ep2: 1500,
+	}
+	deps := autoTuneDeps{
+		probeDuration: func(_ context.Context, path string) (float64, error) {
+			return durations[path], nil
+		},
+	}
+
+	got := rankRepresentativeCandidates(context.Background(), g, deps)
+	if len(got) != 3 {
+		t.Fatalf("got %d candidates, want 3", len(got))
+	}
+	if got[0].path != ep2 {
+		t.Errorf("first candidate: got %s, want longest main episode %s", got[0].path, ep2)
+	}
+	if !got[2].special {
+		t.Errorf("special sample should sort last: %+v", got[2])
+	}
+}
+
+func TestSuggestForGroupFallsBackToNextCandidate(t *testing.T) {
+	bad := "/m/Show/Season 01/Show.S01E01.mkv"
+	good := "/m/Show/Season 01/Show.S01E02.mkv"
+	g := seriesGroup{key: "tv:show", label: "Show", rep: bad, files: []string{bad, good}, count: 2}
+
+	var sampled []string
+	deps := autoTuneDeps{
+		probeDuration: func(_ context.Context, path string) (float64, error) {
+			if path == bad {
+				return 1500, nil
+			}
+			return 1200, nil
+		},
+		detectContent: func(_ context.Context, path string, _ float64) (tune.ContentSignal, error) {
+			sampled = append(sampled, path)
+			if path == bad {
+				return tune.ContentSignal{}, errors.New("corrupt sample")
+			}
+			return tune.ContentSignal{Grain: 0.30, Frames: 12}, nil
+		},
+	}
+
+	sug, sampledGroup := suggestForGroup(context.Background(), nopLogger{}, g, deps)
+	if sug.Tune != config.TuneFilm {
+		t.Errorf("suggestion: got %s, want %s", sug.Tune, config.TuneFilm)
+	}
+	if sampledGroup.rep != good {
+		t.Errorf("sampled rep: got %s, want fallback %s", sampledGroup.rep, good)
+	}
+	if !sliceEqual(sampled, []string{bad, good}) {
+		t.Errorf("sampled order: got %v, want bad then good", sampled)
 	}
 }
 
