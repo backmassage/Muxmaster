@@ -27,7 +27,7 @@ docs-naming:
 			case "$$1" in README.md|CHANGELOG.md|AGENTS.md) return 0 ;; *) return 1 ;; esac; \
 		}; \
 		is_allowed_markdown_path() { \
-			case "$$1" in _docs/plans/2.6-deep-debug-and-fix-plan.md) return 0 ;; *) return 1 ;; esac; \
+			case "$$1" in _docs/plans/2.6-deep-debug-and-fix-plan.md|_docs/plans/2.7-measure-dont-guess.md) return 0 ;; *) return 1 ;; esac; \
 		}; \
 		while IFS= read -r file; do \
 			rel="$${file#./}"; \

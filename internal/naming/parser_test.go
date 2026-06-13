@@ -258,6 +258,21 @@ func TestGetOutputPath(t *testing.T) {
 			p:    ParsedName{MediaType: MediaMovie, MovieName: "Cool Film"},
 			want: "/output/Cool Film/Cool Film.mkv",
 		},
+		{
+			name: "TV show name with path separator is sanitized",
+			p:    ParsedName{MediaType: MediaTV, ShowName: "AC/DC Live", Season: 1, Episode: 1},
+			want: "/output/AC DC Live/Season 01/AC DC Live - S01E01.mkv",
+		},
+		{
+			name: "Movie name with illegal characters is sanitized",
+			p:    ParsedName{MediaType: MediaMovie, MovieName: "Mission: Impossible", Year: "1996"},
+			want: "/output/Mission Impossible (1996)/Mission Impossible (1996).mkv",
+		},
+		{
+			name: "name that is only illegal characters falls back to Unknown",
+			p:    ParsedName{MediaType: MediaMovie, MovieName: "??:*"},
+			want: "/output/Unknown/Unknown.mkv",
+		},
 	}
 
 	for _, tc := range cases {

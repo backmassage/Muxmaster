@@ -14,20 +14,21 @@ import (
 //	Movie: <outputDir>/<Name (Year)>/<Name (Year)>.<ext>    (or <Name>/<Name>.<ext> if no year)
 func GetOutputPath(p ParsedName, outputDir, container string) string {
 	if p.MediaType == MediaTV {
+		show := sanitizePathComponent(p.ShowName)
 		s := fmt.Sprintf("%02d", p.Season)
 		e := fmt.Sprintf("%02d", p.Episode)
-		dir := filepath.Join(outputDir, p.ShowName, "Season "+s)
+		dir := filepath.Join(outputDir, show, "Season "+s)
 		episodeToken := fmt.Sprintf("S%sE%s", s, e)
 		if p.EpisodeEnd > p.Episode {
 			episodeToken = fmt.Sprintf("%s-E%02d", episodeToken, p.EpisodeEnd)
 		}
-		file := fmt.Sprintf("%s - %s.%s", p.ShowName, episodeToken, container)
+		file := fmt.Sprintf("%s - %s.%s", show, episodeToken, container)
 		return filepath.Join(dir, file)
 	}
 
-	name := p.MovieName
+	name := sanitizePathComponent(p.MovieName)
 	if p.Year != "" {
-		name = fmt.Sprintf("%s (%s)", p.MovieName, p.Year)
+		name = fmt.Sprintf("%s (%s)", name, p.Year)
 	}
 	return filepath.Join(outputDir, name, name+"."+container)
 }

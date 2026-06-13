@@ -46,6 +46,31 @@ func stripReleaseTags(s string) string {
 	return strings.TrimSpace(s[:loc[0]])
 }
 
+// reUnsafePathChars matches characters that are illegal or unsafe in a path
+// component on the filesystems Jellyfin libraries commonly live on (NTFS/SMB
+// reject < > : " / \ | ? *; the path separators would also silently create or
+// escape directories). Control characters are stripped too. reWhitespaceRun
+// collapses the spaces this leaves behind.
+var (
+	reUnsafePathChars = regexp.MustCompile(`[<>:"/\\|?*\x00-\x1f]`)
+	reWhitespaceRun   = regexp.MustCompile(`\s+`)
+)
+
+// sanitizePathComponent makes s safe to use as a single path segment: unsafe
+// characters become spaces, runs of whitespace collapse, and leading/trailing
+// spaces and dots are trimmed (Windows forbids trailing dots/spaces). An input
+// that sanitizes to empty returns "Unknown" so callers never build a path with
+// an empty segment.
+func sanitizePathComponent(s string) string {
+	s = reUnsafePathChars.ReplaceAllString(s, " ")
+	s = reWhitespaceRun.ReplaceAllString(s, " ")
+	s = strings.Trim(s, " .")
+	if s == "" {
+		return "Unknown"
+	}
+	return s
+}
+
 // reBrackets matches square-bracket groups like [SubGroup] or [1080p].
 var reBrackets = regexp.MustCompile(`\[[^\]]*\]`)
 

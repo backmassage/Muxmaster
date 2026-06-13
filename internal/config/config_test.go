@@ -186,3 +186,26 @@ func TestValidate_VaapiRC(t *testing.T) {
 		t.Error("negative compression level should fail validation")
 	}
 }
+
+func TestValidate_QualityAndSizePriorityMutuallyExclusive(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.CheckOnly = true
+
+	cfg.Encoder.QualityPriority = true
+	cfg.Encoder.SizePriority = false
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("quality-priority alone should validate: %v", err)
+	}
+
+	cfg.Encoder.QualityPriority = false
+	cfg.Encoder.SizePriority = true
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("size-priority alone should validate: %v", err)
+	}
+
+	cfg.Encoder.QualityPriority = true
+	cfg.Encoder.SizePriority = true
+	if err := cfg.Validate(); err == nil {
+		t.Error("quality-priority and size-priority together should fail validation")
+	}
+}

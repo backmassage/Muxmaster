@@ -293,6 +293,13 @@ func (c *Config) Validate() error {
 	default:
 		return errors.New("invalid tune (use 'auto', 'none', 'film', 'grain', or 'anime')")
 	}
+
+	// --quality-priority (skip the optimal-bitrate push) and --size-priority
+	// (restore the legacy unbounded push) are direct opposites; with both set
+	// the planner silently honours quality-priority. Reject the contradiction.
+	if c.Encoder.QualityPriority && c.Encoder.SizePriority {
+		return errors.New("--quality-priority and --size-priority are mutually exclusive")
+	}
 	normalizedBitrate, err := normalizeAudioBitrate(c.Audio.Bitrate)
 	if err != nil {
 		return err

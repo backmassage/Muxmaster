@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/naming"
@@ -19,6 +20,14 @@ import (
 	"github.com/backmassage/muxmaster/internal/term"
 	"github.com/backmassage/muxmaster/internal/tune"
 )
+
+// detectContentTimeout bounds a single grain pre-pass. The analysis window is
+// ~24 s of footage decoded at 2 fps on a downscaled stream — well under a
+// minute normally — so a longer wall-clock means ffmpeg is stuck on a bad
+// input (corrupt index, stalled network mount). Capping it keeps one
+// pathological file from hanging the whole interactive pre-pass; on timeout
+// DetectContent returns ctx.Err() and the series degrades to "none".
+const detectContentTimeout = 90 * time.Second
 
 // seriesGroup is one prompt unit: all files sharing a series key, with a
 // representative used for the grain pre-pass.
@@ -89,6 +98,8 @@ func (d autoTuneDeps) ProbeDuration(ctx context.Context, path string) (float64, 
 }
 
 func (d autoTuneDeps) DetectContent(ctx context.Context, path string, duration float64) (tune.ContentSignal, error) {
+	ctx, cancel := context.WithTimeout(ctx, detectContentTimeout)
+	defer cancel()
 	if d.detectContent != nil {
 		return d.detectContent(ctx, path, duration)
 	}
