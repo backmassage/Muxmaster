@@ -217,8 +217,11 @@ func OptimalBitrate(pr *probe.ProbeResult) int {
 
 // QPForTargetBitrate finds the VAAPI QP value that should produce output
 // closest to the target bitrate, given the input bitrate and all estimation
-// biases. It searches the QP range [VaapiQPMin, VaapiQPMax] and returns the
-// QP whose estimated midpoint output is closest to the target.
+// biases. It searches the QP range [VaapiQPMin, VaapiQPMax] and returns the QP
+// whose point estimate is closest to the target. (The Low/High bracket is an
+// asymmetric ±margin around the point — its average sits ~2.5% above the point
+// estimate — so matching against PointKbps avoids a silent quality-direction
+// skew and is consistent with PreflightAdjust, which also keys on the point.)
 func QPForTargetBitrate(cfg *config.Config, pr *probe.ProbeResult, targetKbps int) int {
 	if pr.VideoBitRate() <= 0 || targetKbps <= 0 {
 		return cfg.Encoder.VaapiQP
@@ -232,8 +235,7 @@ func QPForTargetBitrate(cfg *config.Config, pr *probe.ProbeResult, targetKbps in
 		if !est.Known {
 			continue
 		}
-		mid := (est.LowKbps + est.HighKbps) / 2
-		dist := mid - targetKbps
+		dist := est.PointKbps - targetKbps
 		if dist < 0 {
 			dist = -dist
 		}
@@ -261,8 +263,7 @@ func CRFForTargetBitrate(cfg *config.Config, pr *probe.ProbeResult, targetKbps i
 		if !est.Known {
 			continue
 		}
-		mid := (est.LowKbps + est.HighKbps) / 2
-		dist := mid - targetKbps
+		dist := est.PointKbps - targetKbps
 		if dist < 0 {
 			dist = -dist
 		}

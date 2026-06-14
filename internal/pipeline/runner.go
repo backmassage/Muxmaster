@@ -388,8 +388,8 @@ func executeWithRetry(
 	bumpsApplied := 0
 
 	for bump := 0; bump < maxQualityBumps && canEscalate; bump++ {
-		pct, ok := outputPct(plan)
-		if !ok || pct <= 100 {
+		pct, over, ok := outputPct(plan)
+		if !ok || !over {
 			break
 		}
 
@@ -431,7 +431,7 @@ func executeWithRetry(
 		}
 	}
 
-	if pct, ok := outputPct(plan); ok && pct > 100 {
+	if pct, over, ok := outputPct(plan); ok && over {
 		if bumpsApplied > 0 {
 			log.Warn("Output still larger than input (%d%%) after %d quality bump(s)", pct, bumpsApplied)
 		} else {
@@ -442,16 +442,22 @@ func executeWithRetry(
 	return true
 }
 
-func outputPct(plan *planner.FilePlan) (int, bool) {
+// outputPct reports the encoded output size as a percentage of the input and
+// whether the output is genuinely larger than the input. The size comparison
+// uses raw bytes, not the integer-floored percentage: a sub-1% overshoot (e.g.
+// 1004 vs 1000 bytes) floors to pct==100 but must still trip the anti-bloat
+// escalation, so callers gate on over, not pct.
+func outputPct(plan *planner.FilePlan) (pct int, over bool, ok bool) {
 	outInfo, err := os.Stat(plan.OutputPath)
 	if err != nil {
-		return 0, false
+		return 0, false, false
 	}
 	inInfo, err := os.Stat(plan.InputPath)
 	if err != nil || inInfo.Size() <= 0 {
-		return 0, false
+		return 0, false, false
 	}
-	return int(outInfo.Size() * 100 / inInfo.Size()), true
+	outSize, inSize := outInfo.Size(), inInfo.Size()
+	return int(outSize * 100 / inSize), outSize > inSize, true
 }
 
 // attemptWithErrorRetry runs the inner retry loop: execute ffmpeg, classify

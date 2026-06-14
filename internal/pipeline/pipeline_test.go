@@ -460,6 +460,57 @@ func TestExecuteWithRetryQVBRSizeEscalationShrinksBitrateArgs(t *testing.T) {
 	}
 }
 
+// TestExecuteWithRetrySubOnePercentBloatEscalates guards the size-trigger fix:
+// an output that is larger than the input by less than 1% floors to pct==100
+// under integer division, but must still trip the anti-bloat escalation (the
+// trigger compares raw bytes, not the floored percentage).
+func TestExecuteWithRetrySubOnePercentBloatEscalates(t *testing.T) {
+	dir := t.TempDir()
+	input := filepath.Join(dir, "input.mkv")
+	output := filepath.Join(dir, "output.mkv")
+	if err := os.WriteFile(input, make([]byte, 1000), 0o644); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Encoder.Mode = config.EncoderCPU
+	cfg.Display.ColorMode = config.ColorNever
+
+	plan := &planner.FilePlan{
+		Action:         planner.ActionEncode,
+		InputPath:      input,
+		OutputPath:     output,
+		VideoStreamIdx: 0,
+		Audio:          planner.AudioPlan{NoAudio: true},
+		MuxQueueSize:   4096,
+		CpuCRF:         22,
+	}
+	rs := ffmpeg.NewRetryState(plan)
+
+	var calls int
+	run := ffmpeg.RunFunc(func(_ context.Context, _ []string) ffmpeg.ExecResult {
+		calls++
+		size := 900 // second pass: comfortably under input
+		if calls == 1 {
+			size = 1001 // 1 byte over → floors to 100% but is genuinely larger
+		}
+		if err := os.WriteFile(output, make([]byte, size), 0o644); err != nil {
+			return ffmpeg.ExecResult{Err: err}
+		}
+		return ffmpeg.ExecResult{}
+	})
+
+	if ok := executeWithRetry(context.Background(), &cfg, nopLogger{}, plan, rs, run); !ok {
+		t.Fatal("executeWithRetry returned false")
+	}
+	if calls != 2 {
+		t.Fatalf("ffmpeg calls: got %d, want 2 (sub-1%% bloat should escalate once)", calls)
+	}
+	if rs.CpuCRF != 23 {
+		t.Fatalf("CpuCRF after escalation: got %d, want 23", rs.CpuCRF)
+	}
+}
+
 // --- Helpers ---
 
 type nopLogger struct{}

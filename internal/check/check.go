@@ -107,13 +107,14 @@ func checkHEVCEncoders(log Logger) {
 
 // checkVAAPI selects the configured render device when it exists, otherwise the
 // first available render node, and runs a minimal VAAPI encode test.
-// Returns true if VAAPI works, false otherwise. A missing VAAPI device is not
-// fatal (CPU mode may be used instead), so this is logged as a warning.
+// A missing VAAPI device is not fatal (CPU mode may be used instead), so it is
+// logged as a warning and treated as a pass; only a device that is present but
+// fails the test encode is a hard failure. Returns false only in the latter case.
 func checkVAAPI(cfg *config.Config, log Logger) bool {
 	dev := selectVaapiDevice(cfg)
 	if dev == "" {
-		log.Warn("No VAAPI device found")
-		return false
+		log.Warn("No VAAPI device found (CPU mode available)")
+		return true
 	}
 	log.Info("Testing VAAPI on %s...", dev)
 	if testVAAPI(dev, "p010", "main10") {

@@ -129,7 +129,11 @@ func (p *ProbeResult) VideoBitRate() int64 {
 	if fb > 0 {
 		return fb
 	}
-	return p.Format.BitRate
+	// fb <= 0 means audio is reported at or above the whole-container bitrate
+	// (corrupt/incomplete metadata) or the format bitrate itself is unknown.
+	// Returning the audio-inclusive total would mislabel audio as video, so
+	// report 0 ("unknown") and let callers fall back to their defaults.
+	return 0
 }
 
 // TotalAudioBitRate returns the sum of all known audio stream bitrates

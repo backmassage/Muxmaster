@@ -394,6 +394,21 @@ func TestVideoBitRate_SubtractsAudio(t *testing.T) {
 	}
 }
 
+func TestVideoBitRate_AudioExceedsFormat(t *testing.T) {
+	// Corrupt/incomplete metadata: audio reported at or above the whole
+	// container bitrate. Rather than mislabel the audio-inclusive total as
+	// video, VideoBitRate reports 0 ("unknown") so callers fall back to
+	// their defaults.
+	pr := &ProbeResult{
+		PrimaryVideo: &VideoStream{Codec: "h264", Width: 1920, Height: 1080, BitRate: 0},
+		AudioStreams: []AudioStream{{BitRate: 6000000}},
+		Format:       FormatInfo{BitRate: 5000000},
+	}
+	if got := pr.VideoBitRate(); got != 0 {
+		t.Errorf("audio >= format: got %d, want 0", got)
+	}
+}
+
 func TestTotalAudioBitRate(t *testing.T) {
 	pr := &ProbeResult{
 		AudioStreams: []AudioStream{

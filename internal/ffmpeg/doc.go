@@ -8,6 +8,6 @@
 // Files:
 //   - builder.go:     Build — constructs the full ffmpeg argument list from plan + retry state
 //   - executor.go:    Execute, RunFunc, NewRunFunc — injectable subprocess execution
-//   - errors.go:      Error pattern regexes and ClassifyError — maps stderr to RetryAction
-//   - retry.go:       RetryState, NewRetryState, Advance — state machine for error recovery
+//   - errors.go:      Error pattern regexes and MatchXxxIssue matchers — classify stderr by failure class
+//   - retry.go:       RetryState, NewRetryState, Advance — maps a matched failure to a RetryAction and drives recovery
 package ffmpeg
