@@ -52,6 +52,23 @@ func extractShowFromParent(parent string) string {
 var reGreedyRecovery = regexp.MustCompile(
 	`^(.+)\s-\s([0-9]{1,3})$`)
 
+// reTrailingSeason matches a trailing season token on an anime show name, e.g.
+// "Vinland Saga S2" or "Lucky Star Season 2". The number must be S-prefixed or
+// follow the word "Season" so plain trailing numerals (e.g. "Mob Psycho 100")
+// are left intact.
+var reTrailingSeason = regexp.MustCompile(
+	`(?i)^(.+?)\s+(?:[Ss]|[Ss]eason\s*)([0-9]{1,2})$`)
+
+// splitTrailingSeason separates a trailing season token from a show name.
+// Returns the bare show and the season number, or the original name and 0 when
+// no token is present.
+func splitTrailingSeason(show string) (string, int) {
+	if m := reTrailingSeason.FindStringSubmatch(show); m != nil {
+		return strings.TrimSpace(m[1]), parseIntOr0(m[2])
+	}
+	return show, 0
+}
+
 // --- Year resolution for group-release (rule 12) ---
 
 var reTrailingYear = regexp.MustCompile(
@@ -83,7 +100,7 @@ var (
 		`(^|[^0-9])([0-9]{1,2})[xX]([0-9]{1,3})([Vv][0-9]+)?([^0-9]|$)`)
 
 	reSeasonOPED = regexp.MustCompile(
-		`(?i)^(.*?)[\s_.\-]*[Ss]([0-9]{1,2})[\s_.\-]*(NC)?(OP|ED)([0-9]{0,2})([^[:alnum:]]|$)`)
+		`(?i)^(.*?)[\s_.\-]*[Ss]([0-9]{1,2})[\s_.\-]*(NC)?(OP|ED)[\s_.\-]*([0-9]{0,2})([^[:alnum:]]|$)`)
 
 	reCreditless = regexp.MustCompile(
 		`(?i)^(\[.+\]\s*)?(.+)[\s_.\-]+([0-9]{1,3})\s*-\s+.*\[(Creditless\s+Opening|Creditless\s+Ending)\]`)
@@ -101,7 +118,7 @@ var (
 		`(?i)^(.+\s+The\s+Movie)\s+([0-9]{1,2})\s*-\s*(.+)$`)
 
 	reAnimeDash = regexp.MustCompile(
-		`^(\[.+\])?\s*(.+)\s+-\s*([0-9]{1,3})(\s|\[|v[0-9]|$)`)
+		`^(\[.+\])?\s*(.+)\s+-\s*([0-9]{1,3})([._][0-9]+)?(\s|\[|v[0-9]|$)`)
 
 	reEpisodicTitle = regexp.MustCompile(
 		`^(\[.+\]\s*)?(.+)[\s_.\-]+([0-9]{1,3})'?\s+-\s+(.+)$`)
@@ -114,6 +131,9 @@ var (
 
 	reUnderscoreAnime = regexp.MustCompile(
 		`^(\[.+\])?(.+)_([0-9]{2,3})(_[^.]*)?$`)
+
+	reBareNamedSpecial = regexp.MustCompile(
+		`(?i)^(NC)?(OP|ED)([0-9]{1,2})?([vV][0-9]+)?$`)
 
 	reMovieYear = regexp.MustCompile(
 		`(.+)[._\s]\(?((19[0-9]{2}|20[0-9]{2}))\)?`)
@@ -134,6 +154,7 @@ var Rules = []ParseRule{
 	{"Episodic-title", reEpisodicTitle, extractEpisodicTitle},
 	{"Group-release", reGroupRelease, extractGroupRelease},
 	{"Underscore-anime", reUnderscoreAnime, extractUnderscoreAnime},
+	{"Bare-named-special", reBareNamedSpecial, extractBareNamedSpecial},
 	{"Movie-year", reMovieYear, extractMovieYear},
 }
 
@@ -305,10 +326,26 @@ func extractAnimeDash(_ string, matches []string, _, _ string) ParsedName {
 		show = strings.TrimSpace(m[1])
 		ep = parseIntOr0(m[2])
 	}
+
+	show = cleanName(show)
+	season := 1
+	if bare, s := splitTrailingSeason(show); s > 0 {
+		show = bare
+		season = s
+	}
+
+	// Fractional episodes (e.g. "18.5") are between-episode specials: route them
+	// to Season 00 with a concatenated number, matching the Episode-keyword
+	// fractional convention (16.5 -> 165).
+	if minor := matches[4]; minor != "" {
+		season = 0
+		ep = parseIntOr0(matches[3] + strings.TrimLeft(minor, "._"))
+	}
+
 	return ParsedName{
 		MediaType: MediaTV,
-		ShowName:  cleanName(show),
-		Season:    1,
+		ShowName:  show,
+		Season:    season,
 		Episode:   ep,
 	}
 }
@@ -352,6 +389,27 @@ func extractGroupRelease(_ string, matches []string, parent, _ string) ParsedNam
 		ShowName:  show,
 		Season:    1,
 		Episode:   parseIntOr0(matches[3]),
+	}
+}
+
+// extractBareNamedSpecial handles filenames that are nothing but a creditless
+// special token (e.g. "NCOP1", "NCED02", "NCOP1v2", "OP", "ED2"). The show name
+// is unavailable in the basename, so it is taken from the parent directory.
+func extractBareNamedSpecial(_ string, matches []string, parent, _ string) ParsedName {
+	kind := strings.ToUpper(matches[2])
+	num := parseIntOr0(matches[3])
+	if num == 0 {
+		num = 1
+	}
+	offset := 100
+	if kind == "ED" {
+		offset = 200
+	}
+	return ParsedName{
+		MediaType: MediaTV,
+		ShowName:  extractShowFromParent(parent),
+		Season:    0,
+		Episode:   offset + num,
 	}
 }
 

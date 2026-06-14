@@ -44,6 +44,35 @@ func Probe(ctx context.Context, path string) (*ProbeResult, error) {
 	return ParseJSON(out)
 }
 
+// Duration runs a lightweight ffprobe that reads only the container's
+// format-level duration, skipping the per-stream classification and the 100M
+// probesize/analyzeduration window that Probe needs. It exists for callers
+// that only want a rough title length — e.g. the `--tune auto` pre-pass
+// ranking representative samples — where spawning a full Probe per file is
+// wasteful. Returns 0 (nil error) when the container reports no duration
+// (e.g. ffprobe prints "N/A"); callers that need a value in that case should
+// fall back to Probe, whose deeper analysis can compute one.
+func Duration(ctx context.Context, path string) (float64, error) {
+	cmd := exec.CommandContext(ctx, "ffprobe",
+		"-v", "error",
+		"-show_entries", "format=duration",
+		"-of", "default=nokey=1:noprint_wrappers=1",
+		path,
+	)
+
+	out, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			return 0, fmt.Errorf("ffprobe duration %q: %w: %s",
+				path, err, strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return 0, fmt.Errorf("ffprobe duration %q: %w", path, err)
+	}
+
+	return parseFloat(strings.TrimSpace(string(out))), nil
+}
+
 // ParseJSON converts raw ffprobe JSON output into a ProbeResult.
 // Exported for testing without a real ffprobe binary.
 func ParseJSON(data []byte) (*ProbeResult, error) {

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/backmassage/muxmaster/internal/config"
@@ -55,6 +56,15 @@ func defaultAutoTuneDeps() autoTuneDeps {
 		reader:     os.Stdin,
 		writer:     os.Stdout,
 		probeDuration: func(ctx context.Context, path string) (float64, error) {
+			// Cheap path: read only the container's format-level duration,
+			// which is all the candidate ranking and sample-window seeking
+			// consume. Avoids a full per-stream Probe (100M probesize) per file.
+			if dur, err := probe.Duration(ctx, path); err == nil && dur > 0 {
+				return dur, nil
+			}
+			// Containers that report no format duration (some raw/TS streams)
+			// fall back to the full probe, whose deeper analysis can derive one
+			// — preserving the ranking/seek accuracy of the pre-lightweight path.
 			pr, err := probe.Probe(ctx, path)
 			if err != nil {
 				return 0, err
@@ -215,6 +225,11 @@ func suggestForGroup(ctx context.Context, log Logger, g seriesGroup, deps autoTu
 
 const minRepresentativeDurationSec = 120
 
+// maxProbeWorkers bounds concurrent ffprobe spawns while ranking a series'
+// representative candidates, so a large season doesn't launch one process per
+// episode at once.
+const maxProbeWorkers = 8
+
 type representativeCandidate struct {
 	path          string
 	duration      float64
@@ -228,20 +243,34 @@ func rankRepresentativeCandidates(ctx context.Context, g seriesGroup, deps autoT
 		paths = []string{g.rep}
 	}
 
-	candidates := make([]representativeCandidate, 0, len(paths))
-	for _, path := range paths {
-		dur, err := deps.ProbeDuration(ctx, path)
-		known := err == nil && dur > 0
-		if !known {
-			dur = 0
-		}
-		candidates = append(candidates, representativeCandidate{
-			path:          path,
-			duration:      dur,
-			durationKnown: known,
-			special:       likelySpecialSample(path),
-		})
+	// Probe durations concurrently: each file is independent and ffprobe is
+	// I/O-bound, so a bounded fan-out collapses N sequential spawns into ~one
+	// wall-clock. Results are written into their input position so the stable
+	// sort below keeps the same first-seen tiebreak (and thus picks the same
+	// representative) as the sequential version.
+	candidates := make([]representativeCandidate, len(paths))
+	sem := make(chan struct{}, maxProbeWorkers)
+	var wg sync.WaitGroup
+	for i, path := range paths {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			dur, err := deps.ProbeDuration(ctx, path)
+			known := err == nil && dur > 0
+			if !known {
+				dur = 0
+			}
+			candidates[i] = representativeCandidate{
+				path:          path,
+				duration:      dur,
+				durationKnown: known,
+				special:       likelySpecialSample(path),
+			}
+		}(i, path)
 	}
+	wg.Wait()
 
 	sort.SliceStable(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
