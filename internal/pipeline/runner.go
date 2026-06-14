@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/backmassage/muxmaster/internal/config"
@@ -64,9 +65,13 @@ func Run(ctx context.Context, cfg *config.Config, log Logger, run ffmpeg.RunFunc
 }
 
 func autoTuneCandidateFiles(ctx context.Context, cfg *config.Config, files []string, yearIndex naming.YearVariantIndex) []string {
-	candidates := make([]string, 0, len(files))
 	resolver := naming.NewCollisionResolver()
 
+	// Cheap, order-dependent gates run sequentially: the collision resolver is
+	// stateful (first-seen output path wins), so its calls must stay ordered.
+	// Survivors keep input order so the later per-series prompts appear in a
+	// stable sequence.
+	var prelim []string
 	for _, path := range files {
 		if ctx.Err() != nil {
 			break
@@ -89,19 +94,43 @@ func autoTuneCandidateFiles(ctx context.Context, cfg *config.Config, files []str
 			}
 		}
 
-		pr, err := probe.Probe(ctx, path)
-		if err != nil || pr.PrimaryVideo == nil || pr.PrimaryVideo.Width <= 0 || pr.PrimaryVideo.Height <= 0 {
-			continue
-		}
-		planCfg := *cfg
-		planCfg.Encoder.Tune = config.TuneNone
-		if planner.BuildPlan(&planCfg, pr).Action != planner.ActionEncode {
-			continue
-		}
-
-		candidates = append(candidates, path)
+		prelim = append(prelim, path)
 	}
 
+	// The expensive per-file probe + plan check is independent across files and
+	// I/O-bound (one full ffprobe each), so fan it out across a bounded pool
+	// rather than probing the whole batch one at a time — this is the stall
+	// between the batch header and the auto-tune prompt. BuildPlan only reads
+	// cfg; each goroutine plans against its own shallow copy.
+	keep := make([]bool, len(prelim))
+	sem := make(chan struct{}, maxProbeWorkers)
+	var wg sync.WaitGroup
+	for i, path := range prelim {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int, path string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			pr, err := probe.Probe(ctx, path)
+			if err != nil || pr.PrimaryVideo == nil || pr.PrimaryVideo.Width <= 0 || pr.PrimaryVideo.Height <= 0 {
+				return
+			}
+			planCfg := *cfg
+			planCfg.Encoder.Tune = config.TuneNone
+			if planner.BuildPlan(&planCfg, pr).Action != planner.ActionEncode {
+				return
+			}
+			keep[i] = true
+		}(i, path)
+	}
+	wg.Wait()
+
+	candidates := make([]string, 0, len(prelim))
+	for i, path := range prelim {
+		if keep[i] {
+			candidates = append(candidates, path)
+		}
+	}
 	return candidates
 }
 

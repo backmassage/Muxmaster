@@ -29,6 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Changed
 
 - **QVBR reframed as opt-in peak-bounding, not a quality default.** VCN 3.1 benchmarking showed CQP wins quality-per-bit over QVBR at matched size (98.9 vs 95.9 VMAF — `-b:v` binds before `-global_quality`), so CQP stays the permanent default and the previously planned "flip to QVBR" is cancelled. QVBR's documented use is now bounding peak bitrate for bandwidth-limited streaming only. `-compression_level` is documented as inert for HEVC on AMD VCN (bit-identical across all values), kept solely for Intel/discrete-AMD portability.
+- **Faster `--tune auto` candidate ranking.** The per-series grain pre-pass ranks representative samples by duration, but probed every episode with the full `-probesize 100M -analyzeduration 100M` stream-classification call, sequentially — dozens of heavy ffprobe spawns before the first prompt. Ranking now uses a lightweight `format=duration` probe (container header only) and fans the probes out across a bounded worker pool (8) instead of running them one at a time. A 24-episode season drops from 24 sequential 100M probes to a few batches of header reads. Containers that report no format duration (some raw/TS streams) fall back to the full probe, and results are written in input order so the stable-sort tiebreak picks the same representative as before — ranking, sample-window seeking, and the chosen sample are byte-identical.
 
 ### Fixed
 
