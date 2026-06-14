@@ -93,8 +93,13 @@ func resolveGroupReleaseYear(show, parent string) string {
 // --- Compiled rule patterns (order matters) ---
 
 var (
+	// The second episode group accepts an optional separator before it so both
+	// the concatenated form (S02E01E02) and the dashed multi-episode form
+	// (S06E01-E02) are recognized. The separator is non-capturing, so the
+	// season/episode/end capture-group indices used by extractSxxExx are
+	// unchanged.
 	reSxxExx = regexp.MustCompile(
-		`(^|[^[:alnum:]])[Ss]([0-9]{1,2})[Ee]([0-9]{1,3})([Ee]([0-9]{1,3}))?([Vv][0-9]+)?([^[:alnum:]]|$)`)
+		`(^|[^[:alnum:]])[Ss]([0-9]{1,2})[Ee]([0-9]{1,3})([-\s._]?[Ee]([0-9]{1,3}))?([Vv][0-9]+)?([^[:alnum:]]|$)`)
 
 	re1x01 = regexp.MustCompile(
 		`(^|[^0-9])([0-9]{1,2})[xX]([0-9]{1,3})([Vv][0-9]+)?([^0-9]|$)`)
@@ -140,22 +145,31 @@ var (
 )
 
 // Rules is the ordered parse-rule table. First match wins.
-var Rules = []ParseRule{
-	{"SxxExx", reSxxExx, extractSxxExx},
-	{"1x01", re1x01, extract1x01},
-	{"S01-OP/ED", reSeasonOPED, extractSeasonOPED},
-	{"Creditless-OP/ED", reCreditless, extractCreditless},
-	{"Episode-keyword", reEpisodeKeyword, extractEpisodeKeyword},
-	{"Named-special-index", reNamedSpecialIdx, extractNamedSpecialIdx},
-	{"Named-special-bare", reBareSpecial, extractBareSpecial},
-	{"Movie-part", reMoviePart, extractMoviePart},
-	{"Anime-dash", reAnimeDash, extractAnimeDash},
-	{"Bare-number-dash", reBareNumberDash, extractBareNumberDash},
-	{"Episodic-title", reEpisodicTitle, extractEpisodicTitle},
-	{"Group-release", reGroupRelease, extractGroupRelease},
-	{"Underscore-anime", reUnderscoreAnime, extractUnderscoreAnime},
-	{"Bare-named-special", reBareNamedSpecial, extractBareNamedSpecial},
-	{"Movie-year", reMovieYear, extractMovieYear},
+var Rules = buildRules()
+
+// buildRules assembles the ordered rule table. The per-show absolute-numbering
+// rules are spliced in just before the broad Movie-year/fallback handling so a
+// known absolute-numbered show is recognized before its dotted scene name is
+// mistaken for a movie.
+func buildRules() []ParseRule {
+	rules := []ParseRule{
+		{"SxxExx", reSxxExx, extractSxxExx},
+		{"1x01", re1x01, extract1x01},
+		{"S01-OP/ED", reSeasonOPED, extractSeasonOPED},
+		{"Creditless-OP/ED", reCreditless, extractCreditless},
+		{"Episode-keyword", reEpisodeKeyword, extractEpisodeKeyword},
+		{"Named-special-index", reNamedSpecialIdx, extractNamedSpecialIdx},
+		{"Named-special-bare", reBareSpecial, extractBareSpecial},
+		{"Movie-part", reMoviePart, extractMoviePart},
+		{"Anime-dash", reAnimeDash, extractAnimeDash},
+		{"Bare-number-dash", reBareNumberDash, extractBareNumberDash},
+		{"Episodic-title", reEpisodicTitle, extractEpisodicTitle},
+		{"Group-release", reGroupRelease, extractGroupRelease},
+		{"Underscore-anime", reUnderscoreAnime, extractUnderscoreAnime},
+		{"Bare-named-special", reBareNamedSpecial, extractBareNamedSpecial},
+	}
+	rules = append(rules, absoluteRules()...)
+	return append(rules, ParseRule{"Movie-year", reMovieYear, extractMovieYear})
 }
 
 // --- Extract functions (one per rule) ---

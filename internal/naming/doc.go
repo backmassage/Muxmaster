@@ -4,7 +4,8 @@
 //
 // Files:
 //   - parser.go:      ParseFilename — ordered regex rule matching
-//   - rules.go:       ParseRule definitions — 15 regex rules with priority ordering (plus an in-code fallback in parser.go)
+//   - rules.go:       ParseRule definitions — 15 base regex rules with priority ordering, plus one rule per allowlisted absolute-numbered show, plus an in-code fallback in parser.go
+//   - absolute.go:    Absolute-numbered show allowlist + season-set splitting ("Absolute-scene" rules)
 //   - postprocess.go: Title-casing, bracket stripping, release tag removal
 //   - outputpath.go:  GetOutputPath — Jellyfin-style directory/file naming
 //   - collision.go:   CollisionResolver — deduplicates output paths with -dupN suffixes

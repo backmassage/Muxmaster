@@ -42,6 +42,12 @@ func TestParseFilename(t *testing.T) {
 			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 2, wantEpisode: 1,
 		},
 
+		{
+			name: "SxxExx dashed double episode", basename: "Series.Name.S06E01-E02.Title.1080p.BluRay.x265.mkv",
+			parentDir: "/media/Series Name",
+			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 6, wantEpisode: 1,
+		},
+
 		// Rule 2: 1x01
 		{
 			name: "1x01 format", basename: "Series.Name.1x05.mkv",
@@ -184,6 +190,21 @@ func TestParseFilename(t *testing.T) {
 			name: "Release tag stripping", basename: "Series.Name.S01E01.1080p.BluRay.x265.HEVC.mkv",
 			parentDir: "/media/Series Name",
 			wantType:  MediaTV, wantShow: "Series Name", wantSeason: 1, wantEpisode: 1,
+		},
+
+		// Guard: a title that merely ends in a number must NOT be captured as an
+		// absolute episode — only allowlisted shows get that treatment, so an
+		// unknown dotted scene name falls through to the movie fallback. (The
+		// allowlist itself is exercised media-agnostically in absolute_test.go.)
+		{
+			name: "Title ending in number stays movie", basename: "Generic.Title.13.1080p.BluRay.x264.mkv",
+			parentDir: "/media/Movies",
+			wantType:  MediaMovie, wantMovie: "Generic Title 13",
+		},
+		{
+			name: "Unknown show dotted bare number falls back", basename: "Some.Other.Show.012.1080p.BluRay.x264-GRP.mkv",
+			parentDir: "/media",
+			wantType:  MediaMovie, wantMovie: "Some Other Show 012",
 		},
 	}
 
