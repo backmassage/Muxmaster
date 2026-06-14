@@ -107,6 +107,47 @@ func TestBuild_VAAPI_NoX265Params(t *testing.T) {
 	}
 }
 
+// hevc_vaapi has no -master_display/-max_cll options; it re-emits the HDR10
+// SEI from decoded-frame side data, gated by -sei. When the plan carries HDR10
+// static metadata we pin -sei to the encoder default (hdr+a53_cc) so the SEI no
+// longer depends on an ffmpeg default that could change silently. Verified on
+// ffmpeg 8.1 / Mesa radeonsi that the output bitstream carries the SEI.
+func TestBuild_VAAPI_SEI_HDR10(t *testing.T) {
+	cfg := vaapiCfg()
+	plan := &planner.FilePlan{
+		Action:        planner.ActionEncode,
+		VideoCodec:    "hevc_vaapi",
+		InputPath:     "/in/test.mkv",
+		OutputPath:    "/out/test.mkv",
+		VaapiQP:       18,
+		MuxQueueSize:  4096,
+		MasterDisplay: "G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,50)",
+		MaxCLL:        "1000,400",
+	}
+	args := Build(cfg, plan, NewRetryState(plan))
+	if got := argValue(args, "-sei"); got != "hdr+a53_cc" {
+		t.Errorf("HDR10 VAAPI encode should pin -sei hdr+a53_cc, got %q", got)
+	}
+}
+
+func TestBuild_VAAPI_SEI_SDR(t *testing.T) {
+	cfg := vaapiCfg()
+	plan := &planner.FilePlan{
+		Action:       planner.ActionEncode,
+		VideoCodec:   "hevc_vaapi",
+		InputPath:    "/in/test.mkv",
+		OutputPath:   "/out/test.mkv",
+		VaapiQP:      18,
+		MuxQueueSize: 4096,
+	}
+	args := Build(cfg, plan, NewRetryState(plan))
+	// No HDR10 metadata: leave -sei at the encoder default (which still passes
+	// a53_cc captions through) rather than emitting a redundant override.
+	if containsArg(args, "-sei") {
+		t.Error("SDR VAAPI encode should not emit -sei")
+	}
+}
+
 func TestBuild_VAAPI_HWDecodeFallback(t *testing.T) {
 	cfg := vaapiCfg()
 	plan := &planner.FilePlan{
@@ -127,7 +168,7 @@ func TestBuild_VAAPI_HWDecodeFallback(t *testing.T) {
 	if !containsArg(args, "-hwaccel") {
 		t.Error("expected -hwaccel when HW decode is active")
 	}
-	if got := argValue(args, "-vf"); got != "scale_vaapi=format=p010" {
+	if got := argValue(args, "-filter:v:0"); got != "scale_vaapi=format=p010" {
 		t.Errorf("expected hw filter chain, got %q", got)
 	}
 
@@ -137,7 +178,7 @@ func TestBuild_VAAPI_HWDecodeFallback(t *testing.T) {
 	if containsArg(args, "-hwaccel") {
 		t.Error("did not expect -hwaccel after HW decode fallback")
 	}
-	if got := argValue(args, "-vf"); got != "format=p010,hwupload" {
+	if got := argValue(args, "-filter:v:0"); got != "format=p010,hwupload" {
 		t.Errorf("expected software fallback chain, got %q", got)
 	}
 }
@@ -352,6 +393,74 @@ func TestBuild_AttachedPicMaps(t *testing.T) {
 	}
 	if globalIdx == -1 || specificIdx < globalIdx {
 		t.Errorf("-c:v:1 (at %d) must come after -c:v (at %d)", specificIdx, globalIdx)
+	}
+}
+
+// TestBuild_FilterScopedToPrimaryVideo guards files that both encode the main
+// video and preserve embedded cover art. A global -vf applies to every output
+// video stream, which collides with the cover stream's -c:v:N copy; the filter
+// must be scoped to the primary output video stream instead.
+func TestBuild_FilterScopedToPrimaryVideo(t *testing.T) {
+	cfg := vaapiCfg()
+	plan := &planner.FilePlan{
+		Action:          planner.ActionEncode,
+		VideoCodec:      "hevc_vaapi",
+		InputPath:       "/in/test.mkv",
+		OutputPath:      "/out/test.mkv",
+		VaapiQP:         18,
+		MuxQueueSize:    4096,
+		VideoFilters:    "format=p010,hwupload",
+		AttachedPicIdxs: []int{4},
+	}
+	args := Build(cfg, plan, NewRetryState(plan))
+	if got := argValue(args, "-filter:v:0"); got != "format=p010,hwupload" {
+		t.Errorf("expected primary-video filter, got %q", got)
+	}
+	if containsArg(args, "-vf") {
+		t.Errorf("global -vf must not be emitted with cover art, got %v", args)
+	}
+	if got := argValue(args, "-c:v:1"); got != "copy" {
+		t.Errorf("expected cover art to remain stream-copied, got %q", got)
+	}
+}
+
+// TestBuild_AttachedPicBeforeAttachments guards the matroska muxer ordering
+// constraint: the cover-art (attached_pic) -map must precede the -map 0:t?
+// attachment map, or ffmpeg mis-routes the cover packet to an attachment slot
+// and fails with EINVAL ("Received a packet for an attachment stream").
+func TestBuild_AttachedPicBeforeAttachments(t *testing.T) {
+	cfg := vaapiCfg()
+	plan := &planner.FilePlan{
+		Action:          planner.ActionRemux,
+		InputPath:       "/in/test.mkv",
+		OutputPath:      "/out/test.mkv",
+		MuxQueueSize:    4096,
+		AttachedPicIdxs: []int{5},
+		Attachments:     planner.AttachmentPlan{Include: true},
+		Container:       config.ContainerMKV,
+		IncludeAttach:   true,
+	}
+	args := Build(cfg, plan, NewRetryState(plan))
+
+	coverMapIdx, attachMapIdx := -1, -1
+	for i, a := range args {
+		if a == "-map" && i+1 < len(args) {
+			switch args[i+1] {
+			case "0:5":
+				coverMapIdx = i
+			case "0:t?":
+				attachMapIdx = i
+			}
+		}
+	}
+	if coverMapIdx == -1 {
+		t.Fatalf("expected cover-art map 0:5, got %v", args)
+	}
+	if attachMapIdx == -1 {
+		t.Fatalf("expected attachment map 0:t?, got %v", args)
+	}
+	if coverMapIdx > attachMapIdx {
+		t.Errorf("cover-art -map (at %d) must precede attachment -map 0:t? (at %d)", coverMapIdx, attachMapIdx)
 	}
 }
 

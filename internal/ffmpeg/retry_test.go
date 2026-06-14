@@ -116,9 +116,11 @@ func TestSubtitleIssue_MatchesSubtitleErrors(t *testing.T) {
 
 func TestTimestampIssue_Matches(t *testing.T) {
 	cases := []string{
-		"Non-monotonous DTS in output stream",
+		"Non-monotonous DTS in output stream",                                          // pre-5.1 spelling
+		"Non-monotonic DTS; previous: 100, current: 90;",                               // n5.1+ / n8.1 spelling
+		"Non-increasing DTS in stream 1: packet 4 with DTS 200, packet 5 with DTS 200", // lavf 62 interleave
 		"non monotonically increasing dts in output",
-		"invalid, non monotonically increasing dts",
+		"Application provided invalid, non monotonically increasing dts to muxer in stream 0: 5 >= 5",
 		"DTS 12345 out of order",
 		"PTS 12345 out of order",
 		"pts has no value",
@@ -137,6 +139,26 @@ func TestAdvance_TimestampFix(t *testing.T) {
 	rs.IncludeAttach = false
 	rs.IncludeSubs = false
 	action := rs.Advance("Non-monotonous DTS in output stream")
+	if action != RetryFixTimestamps {
+		t.Errorf("expected RetryFixTimestamps, got %d", action)
+	}
+	if !rs.TimestampFix {
+		t.Error("TimestampFix should be true")
+	}
+}
+
+// Regression: modern ffmpeg (n8.1 / lavf 62) emits "Non-monotonic DTS" rather
+// than the pre-5.1 "Non-monotonous DTS". Buried in carriage-return progress
+// noise (as captured from a real eac3-in-MP4 → MKV remux), it must still route
+// to the timestamp fix instead of "no applicable retry".
+func TestAdvance_TimestampFix_ModernWordingInProgressNoise(t *testing.T) {
+	rs := NewRetryState(testPlan())
+	rs.IncludeAttach = false
+	rs.IncludeSubs = false
+	stderr := "frame=  120 fps=2455 q=-1.0 size=16KiB time=N/A bitrate=N/A speed=N/A\r" +
+		"Non-monotonic DTS; previous: 100, current: 90;\r" +
+		"frame=120298 fps=2455 q=-1.0 size=16KiB time=N/A bitrate=N/A speed=N/A\r"
+	action := rs.Advance(stderr)
 	if action != RetryFixTimestamps {
 		t.Errorf("expected RetryFixTimestamps, got %d", action)
 	}

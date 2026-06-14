@@ -20,8 +20,14 @@ var (
 	reMuxQueueOverflow = regexp.MustCompile(
 		`Too many packets buffered for output stream`)
 
+	// "Non-monoton(ous|ic) DTS" spans ffmpeg versions: pre-5.1 emitted
+	// "Non-monotonous DTS", n5.1+ (incl. n8.1 / lavf 62) emits the corrected
+	// "Non-monotonic DTS". "Non-increasing DTS in stream" is the lavf 62
+	// interleave wording. Missing the modern spelling sent fixable remux
+	// timestamp failures (e.g. eac3-in-MP4 → MKV) to "no applicable retry".
 	reTimestampIssue = regexp.MustCompile(
-		`(?i)Non-monotonous DTS|non monotonically increasing dts|` +
+		`(?i)Non-monoton(ous|ic) DTS|Non-increasing DTS|` +
+			`non monotonically increasing dts|` +
 			`invalid, non monotonically increasing dts|` +
 			`DTS .*out of order|PTS .*out of order|` +
 			`pts has no value|missing PTS|Timestamps are unset`)

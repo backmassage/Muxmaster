@@ -34,12 +34,15 @@ const vaapiRatioBase = 14 // QP 14 → index 0
 
 // vaapiRatios: QP 14 (930‰) through QP 36+ (180‰).
 //
-// TODO(Change 6, plan: hevc-vaapi-quality-maximization): these are a withdrawn
-// heuristic, not measured VCN data — they over-predict h264/hevc output, so
-// PreflightAdjust overrides the quality-first QP ceiling on those codecs. Refit
-// from the rate–QP sweep as per-(content-class, source-codec, resolution) curves
-// (subsuming the codec/res/density biases) and land with the relaxed preflight
-// trigger. Calibrate before merge.
+// Change 6 (plan: hevc-vaapi-quality-maximization) — RESOLVED: this table is an
+// approximate heuristic, not measured VCN data, and it over-predicts h264/hevc
+// output. That used to let PreflightAdjust override the Change 1 quality-first QP
+// ceiling on those codecs. The override is resolved by re-keying preflight to the
+// POINT estimate (see estimation.go PreflightAdjust), NOT by refitting this table.
+// The table is no longer load-bearing for the ceiling: it only drives the softened
+// preflight and the estimate display (report.go). It remains approximate-for-display
+// — a future per-(content-class, source-codec, resolution) refit would tighten the
+// displayed range but is not required for correctness.
 var vaapiRatios = [...]int{
 	930, // QP 14
 	900, // QP 15

@@ -239,13 +239,17 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 	if cfg.OutputContainer == config.ContainerMP4 {
 		plan.ContainerOpts = []string{"-movflags", "+faststart"}
 		plan.TagOpts = []string{"-tag:v", "hvc1"}
-	} else if plan.Subtitles.Include {
-		// Sparse subtitle streams trip the muxer's default 10 s interleave
-		// cap (max_interleave_delta), forcing premature flushes and bad
-		// audio/video interleaving. Disabling the cap trades a bounded
-		// amount of muxer buffering memory for correct interleaving.
-		plan.ContainerOpts = []string{"-max_interleave_delta", "0"}
 	}
+	// NB: do NOT set -max_interleave_delta 0 for MKV with subtitles. That
+	// disables the muxer's bounded interleave flush, so a single sparse
+	// stream (e.g. a forced-narrative subtitle track with cues only late in
+	// the file) makes the muxer buffer every video packet in RAM waiting to
+	// interleave. On a long 4K remux that grows unbounded until the OOM
+	// killer sends SIGKILL — which prints nothing, so the run fails silently
+	// with "size=16KiB time=N/A" and the retry engine has no error to match.
+	// ffmpeg's default 10 s cap flushes A/V correctly; the only cost is
+	// slightly less-optimal interleaving around sparse subs, which is
+	// harmless for local playback (cues keep their PTS, players use the index).
 
 	// Cover art: the builder maps only the primary video stream, so attached
 	// pictures would be silently dropped. MKV carries them as video streams

@@ -805,7 +805,7 @@ ffmpeg -hide_banner -nostdin -y
     [-hwaccel vaapi -hwaccel_device va -hwaccel_output_format vaapi]  (VAAPI HW decode)
     [-filter_hw_device va]                                       (VAAPI encode only)
     -i {input}
-    [-vf {filter chain}]                                         (encode only)
+    [-filter:v:0 {filter chain}]                                 (encode only; primary video only)
     -map 0:{video_idx} {audio_maps} {sub_maps} {attach_maps}
     -dn
     -max_muxing_queue_size {4096|16384}

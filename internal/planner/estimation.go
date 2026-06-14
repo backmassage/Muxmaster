@@ -9,12 +9,18 @@ import (
 )
 
 // BitrateEstimate holds the estimated output bitrate range for display.
+//
+// Low/High bracket the range (±) for the human-facing report; Point is the raw
+// model estimate (the unbiased-by-±margin midpoint-ish ratio) and is what the
+// anti-bloat preflight keys on — see PreflightAdjust.
 type BitrateEstimate struct {
-	LowKbps  int
-	HighKbps int
-	LowPct   int
-	HighPct  int
-	Known    bool
+	LowKbps   int
+	HighKbps  int
+	PointKbps int
+	LowPct    int
+	HighPct   int
+	PointPct  int
+	Known     bool
 }
 
 // EstimateBitrate predicts the output video bitrate range for an encode
@@ -57,22 +63,30 @@ func EstimateBitrate(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF 
 	// awareness in the quality curves.
 	ratio += estimationDensityBias(inputKbps, pixels)
 
-	ratio = Clamp(ratio, 220, 1050)
+	// Upper bound is 1300‰ (130% of input), not 100%: the point estimate is now
+	// the preflight anti-bloat trigger (re-keyed off the HIGH estimate — see
+	// PreflightAdjust), so the model must be able to *represent* a genuinely
+	// oversized prediction above 100% for the trigger to fire. A hard cap at
+	// 1050 would peg every pathological source at exactly the 105% threshold and
+	// neuter the signal. 130% mirrors the previous effective High display ceiling.
+	ratio = Clamp(ratio, 220, 1300)
 
 	lowRatio := ratio * 75 / 100
 	highRatio := ratio * 130 / 100
 
 	return BitrateEstimate{
-		LowKbps:  (inputKbps*lowRatio + 500) / 1000,
-		HighKbps: (inputKbps*highRatio + 500) / 1000,
-		LowPct:   (lowRatio + 5) / 10,
-		HighPct:  (highRatio + 5) / 10,
-		Known:    true,
+		LowKbps:   (inputKbps*lowRatio + 500) / 1000,
+		HighKbps:  (inputKbps*highRatio + 500) / 1000,
+		PointKbps: (inputKbps*ratio + 500) / 1000,
+		LowPct:    (lowRatio + 5) / 10,
+		HighPct:   (highRatio + 5) / 10,
+		PointPct:  (ratio + 5) / 10,
+		Known:     true,
 	}
 }
 
 // PreflightAdjust checks whether the estimated output would overshoot the
-// input file size and iteratively bumps QP/CRF until the high estimate is
+// input file size and iteratively bumps QP/CRF until the POINT estimate is
 // within targetPct of the input. Returns the adjusted QP, CRF, and how
 // many bumps were applied.
 //
@@ -81,19 +95,23 @@ func EstimateBitrate(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF 
 // cost). The adjustment is capped at 4 steps from the starting values to
 // prevent the estimator from over-correcting on unreliable models.
 //
-// TODO(Change 6, plan: hevc-vaapi-quality-maximization): the trigger keys on the
-// HIGH estimate (point × 1.30), so it enforces a hard ~19%-shrink floor that
-// overrides the Change 1 quality ceiling on h264/hevc. Once vaapiRatios is refit
-// from the sweep, re-key this to true anti-bloat (point estimate near ~100% of
-// input); the post-encode escalation loop stays the backstop. Land with the
-// table refit, not before (relaxing it against the over-predicting table is unsafe).
+// Change 6 (plan: hevc-vaapi-quality-maximization) — RESOLVED: the trigger used
+// to key on the HIGH estimate (point × 1.30), which enforced a hard ~19%-shrink
+// floor that overrode the Change 1 quality ceiling on the dominant h264/hevc
+// path (e.g. a 1080p h264 Blu-ray landed at QP ~20 instead of the ceiling 16).
+// The fix is the point-estimate re-key below, NOT a vaapiRatios refit: the table
+// stays an approximate display heuristic (see tables.go). Softening preflight
+// means the estimator is no longer the anti-bloat net for real overshoots — the
+// post-encode escalation loop in pipeline/runner.go (output>input → bump QP,
+// re-encode) is now the primary real-size size guard. Preflight only catches the
+// model-predicted pathological case (point estimate > ~105% of input).
 func PreflightAdjust(cfg *config.Config, pr *probe.ProbeResult, vaapiQP, cpuCRF, targetPct int) (adjQP, adjCRF, bumps int) {
 	const maxBumps = 4
 	adjQP, adjCRF = vaapiQP, cpuCRF
 
 	for i := 0; i < maxBumps; i++ {
 		est := EstimateBitrate(cfg, pr, adjQP, adjCRF)
-		if !est.Known || est.HighPct <= targetPct {
+		if !est.Known || est.PointPct <= targetPct {
 			return adjQP, adjCRF, i
 		}
 

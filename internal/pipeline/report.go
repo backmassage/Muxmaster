@@ -16,12 +16,38 @@ import (
 
 const maxStderrLines = 20
 
+// logSignal reports when ffmpeg was terminated by a signal rather than exiting
+// on its own. A signal kill writes nothing to stderr, so without this the
+// failure looks like a contentless "no error message captured". SIGKILL on a
+// remux/encode is almost always the OOM killer (e.g. unbounded muxer
+// interleave buffering on a sparse stream); calling it out points straight at
+// the cause instead of leaving an empty error.
+func logSignal(log Logger, signal string) {
+	if signal == "" {
+		return
+	}
+	if signal == "killed" {
+		log.Error("ffmpeg was killed by the kernel (SIGKILL) — almost certainly out of memory")
+	} else {
+		log.Error("ffmpeg terminated by signal: %s", signal)
+	}
+}
+
 func logStderr(log Logger, stderr string) {
 	if stderr == "" {
 		return
 	}
+	lines := meaningfulStderrLines(stderr)
+	if len(lines) == 0 {
+		// Only progress output was captured (the real error, if any, never
+		// reached stderr). Show the final progress line so the call isn't silent.
+		log.Error("Last ffmpeg output: (progress only — no error message captured)")
+		if last := lastNonEmptyLine(stderr); last != "" {
+			log.Error("  %s", last)
+		}
+		return
+	}
 	log.Error("Last ffmpeg output:")
-	lines := strings.Split(strings.TrimSpace(stderr), "\n")
 	if len(lines) > maxStderrLines {
 		log.Error("  ... %d lines omitted ...", len(lines)-maxStderrLines)
 		lines = lines[len(lines)-maxStderrLines:]
@@ -29,6 +55,49 @@ func logStderr(log Logger, stderr string) {
 	for _, l := range lines {
 		log.Error("  %s", l)
 	}
+}
+
+// meaningfulStderrLines normalizes ffmpeg stderr and drops progress-meter
+// noise. ffmpeg rewrites its progress line in place with carriage returns, so
+// the raw buffer is one long `\r`-joined string with the real error message
+// buried among (and sometimes visually overwritten by) stats lines. We split
+// on both `\r` and `\n` and discard progress lines so the actual diagnostic —
+// the line the retry classifier and the user both need — survives.
+func meaningfulStderrLines(stderr string) []string {
+	raw := strings.FieldsFunc(stderr, func(r rune) bool { return r == '\n' || r == '\r' })
+	out := make([]string, 0, len(raw))
+	for _, l := range raw {
+		t := strings.TrimSpace(l)
+		if t == "" || isProgressLine(t) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// isProgressLine reports whether a stderr line is an ffmpeg progress/stats
+// update (e.g. "frame=120298 fps=2455 ... time=N/A bitrate=N/A speed=N/A")
+// rather than a real log message.
+func isProgressLine(line string) bool {
+	if strings.HasPrefix(line, "frame=") || strings.HasPrefix(line, "size=") {
+		return true
+	}
+	// Frameless audio/remux progress omits the "frame=" prefix but always
+	// carries the time/bitrate/speed triple.
+	return strings.Contains(line, "time=") &&
+		strings.Contains(line, "bitrate=") &&
+		strings.Contains(line, "speed=")
+}
+
+func lastNonEmptyLine(stderr string) string {
+	raw := strings.FieldsFunc(stderr, func(r rune) bool { return r == '\n' || r == '\r' })
+	for i := len(raw) - 1; i >= 0; i-- {
+		if t := strings.TrimSpace(raw[i]); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 func logBatchHeader(cfg *config.Config, log Logger, stats *RunStats) {

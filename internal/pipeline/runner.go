@@ -327,6 +327,14 @@ const (
 // for output size overshoot. If the encode produces a file larger than the
 // input (smart quality enabled, no manual override), QP/CRF is bumped and
 // the encode is re-attempted up to maxQualityBumps times.
+//
+// This loop is the PRIMARY anti-bloat / size guard (plan: hevc-vaapi-quality-
+// maximization, Change 6). The planner's PreflightAdjust was re-keyed to the
+// point estimate so the Change 1 quality-first QP ceiling actually binds at
+// encode time; that intentionally stops the estimator from being the size net
+// for real overshoots. The estimator runs on the approximate vaapiRatios
+// heuristic and can mispredict, so genuine output>input cases are caught HERE
+// against the measured real output size — not predicted — and escalated.
 func executeWithRetry(
 	ctx context.Context,
 	cfg *config.Config,
@@ -452,6 +460,7 @@ func attemptWithErrorRetry(
 
 		if cfg.StrictMode {
 			log.Error("ffmpeg failed (strict mode, no retry)")
+			logSignal(log, result.Signal)
 			logStderr(log, result.Stderr)
 			return false
 		}
@@ -459,6 +468,7 @@ func attemptWithErrorRetry(
 		action := rs.Advance(result.Stderr)
 		if action == ffmpeg.RetryNone {
 			log.Error("ffmpeg failed (no applicable retry)")
+			logSignal(log, result.Signal)
 			logStderr(log, result.Stderr)
 			return false
 		}

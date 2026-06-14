@@ -358,38 +358,51 @@ func TestPreflightAdjust_NoBumpNeeded(t *testing.T) {
 
 func TestPreflightAdjust_CompressedSource(t *testing.T) {
 	cfg := defaultCfg()
+	// A genuinely oversized case: an already heavily-compressed 1080p source
+	// (~800 kbps, ultra-low density) where re-encoding at a low QP is predicted
+	// to produce output well above the input. With preflight re-keyed to the
+	// POINT estimate (Change 6), this is exactly the pathological case the
+	// trigger must still catch — the point estimate exceeds 105% of input.
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{
-			Codec: "h264", Width: 1920, Height: 1080, BitRate: 3900000,
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 800000,
 		},
-		Format: probe.FormatInfo{BitRate: 4100000},
+		Format: probe.FormatInfo{BitRate: 900000},
 	}
-	// Start at QP 20 where the estimate overshoots, verifying the
-	// preflight mechanism still bumps when needed.
-	qp, _, bumps := PreflightAdjust(cfg, pr, 20, 20, 100)
+	// Sanity: the point estimate at the starting QP must actually overshoot,
+	// otherwise the test would pass vacuously.
+	startEst := EstimateBitrate(cfg, pr, 16, 16)
+	if startEst.PointPct <= 105 {
+		t.Fatalf("test setup: point estimate %d%% at QP16 should exceed 105%%", startEst.PointPct)
+	}
+	qp, _, bumps := PreflightAdjust(cfg, pr, 16, 16, 105)
 	if bumps == 0 {
-		t.Error("compressed source at QP 20 should need preflight bumps at 100% target")
+		t.Error("oversized low-QP source should need preflight bumps at the 105% point-estimate target")
 	}
-	if qp <= 20 {
-		t.Errorf("QP should be bumped above 20, got %d", qp)
+	if qp <= 16 {
+		t.Errorf("QP should be bumped above 16, got %d", qp)
 	}
-	t.Logf("Compressed 1080p: QP %d→%d (%d bumps)", 20, qp, bumps)
+	t.Logf("Oversized 1080p: QP %d→%d (%d bumps, point %d%%→%d%%)",
+		16, qp, bumps, startEst.PointPct, EstimateBitrate(cfg, pr, qp, qp).PointPct)
 }
 
 func TestPreflightAdjust_RespectsClampMax(t *testing.T) {
-	// Start near the max QP with a source that would trigger bumps.
-	// 1080p at 2 Mbps, starting at QP 28 with a tight target.
-	// QP should never exceed VaapiQPMax.
+	// Start near the max QP with an oversized source that keeps wanting to bump.
+	// An ultra-compressed 1080p source at a tight target overshoots even near
+	// the top of the QP range; preflight must clamp at VaapiQPMax and stop.
 	cfg := defaultCfg()
 	pr := &probe.ProbeResult{
 		PrimaryVideo: &probe.VideoStream{
-			Codec: "h264", Width: 1920, Height: 1080, BitRate: 2000000,
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 800000,
 		},
-		Format: probe.FormatInfo{BitRate: 2500000},
+		Format: probe.FormatInfo{BitRate: 900000},
 	}
-	qp, _, _ := PreflightAdjust(cfg, pr, 28, 28, 80)
+	qp, _, bumps := PreflightAdjust(cfg, pr, 29, 29, 70)
 	if qp > VaapiQPMax {
 		t.Errorf("QP %d exceeds max %d", qp, VaapiQPMax)
+	}
+	if qp != VaapiQPMax {
+		t.Errorf("expected preflight to clamp at max QP %d, got %d (%d bumps)", VaapiQPMax, qp, bumps)
 	}
 }
 
@@ -1295,16 +1308,17 @@ func TestSmartQuality_Matrix(t *testing.T) {
 				}
 			}
 
-			// Run preflight: after adjustment, the estimated high output
-			// should be within tolerance. Quality-first preflight uses
-			// 105% target with max 4 bumps; mild overshoot is acceptable
-			// since the post-encode escalation loop handles it.
+			// Run preflight: it is re-keyed to the POINT estimate (Change 6),
+			// so after adjustment the point estimate must be within the 105%
+			// target unless preflight hit a cap (QP/CRF at max, or 4 bumps
+			// exhausted). The ±margin HIGH display is no longer squeezed —
+			// genuine real-size overshoots are caught by the post-encode loop.
 			adjQP, adjCRF, bumps := PreflightAdjust(cfg, pr, q.VaapiQP, q.CpuCRF, 105)
 			est := EstimateBitrate(cfg, pr, adjQP, adjCRF)
-			atMax := adjQP >= VaapiQPMax || adjCRF >= CpuCRFMax || (bumps >= 4 && density < 2500)
-			if est.Known && est.HighPct > 120 && !atMax {
-				t.Errorf("after preflight (%d bumps): estimated high=%d%% exceeds 120%% "+
-					"(QP=%d CRF=%d)", bumps, est.HighPct, adjQP, adjCRF)
+			atMax := adjQP >= VaapiQPMax || adjCRF >= CpuCRFMax || bumps >= 4
+			if est.Known && est.PointPct > 105 && !atMax {
+				t.Errorf("after preflight (%d bumps): point estimate=%d%% exceeds 105%% "+
+					"(QP=%d CRF=%d)", bumps, est.PointPct, adjQP, adjCRF)
 			}
 
 			// Optimal bitrate should be positive and ≤ input.
@@ -1733,11 +1747,15 @@ func TestFullPipeline_DebugMatrix(t *testing.T) {
 
 				plan := BuildPlan(cfg, pr)
 
-				// (a) Estimated output should not exceed 110% unless QP/CRF
-				// is at max (ultra-compressed sources handled by post-encode loop).
-				atMax := plan.VaapiQP >= VaapiQPMax || plan.CpuCRF >= CpuCRFMax
-				if plan.Estimate.Known && plan.Estimate.HighPct > 110 && !atMax {
-					t.Errorf("estimated high=%d%% exceeds 110%%", plan.Estimate.HighPct)
+				// (a) The POINT estimate (preflight's anti-bloat key, Change 6)
+				// should not exceed the 105% target unless preflight hit a cap
+				// (QP/CRF at max, or 4 bumps exhausted). The ±margin HIGH display
+				// is no longer squeezed by preflight; real overshoots that the
+				// approximate estimator misses are caught by the post-encode loop.
+				atMax := plan.VaapiQP >= VaapiQPMax || plan.CpuCRF >= CpuCRFMax ||
+					plan.PreflightBumps >= 4
+				if plan.Estimate.Known && plan.Estimate.PointPct > 105 && !atMax {
+					t.Errorf("point estimate=%d%% exceeds 105%%", plan.Estimate.PointPct)
 				}
 
 				// (b) Optimal bitrate ≤ input.
@@ -2012,12 +2030,16 @@ func TestBuildSubtitlePlan_MP4AllBitmap(t *testing.T) {
 
 // --- Container opts tests ---
 
-func TestBuildPlan_MKVSubsInterleaveDelta(t *testing.T) {
+func TestBuildPlan_MKVSubsNoInterleaveDelta(t *testing.T) {
 	cfg := defaultCfg()
 	plan := BuildPlan(cfg, h264SDR()) // has an ass subtitle stream
-	want := []string{"-max_interleave_delta", "0"}
-	if fmt.Sprint(plan.ContainerOpts) != fmt.Sprint(want) {
-		t.Errorf("MKV with subs: ContainerOpts got %v, want %v", plan.ContainerOpts, want)
+	// -max_interleave_delta 0 must NOT be set: it disables the bounded
+	// interleave flush and makes a sparse subtitle track balloon muxer memory
+	// until OOM on long remuxes (silent SIGKILL, "size=16KiB time=N/A").
+	for _, a := range plan.ContainerOpts {
+		if a == "-max_interleave_delta" {
+			t.Errorf("MKV with subs must not set -max_interleave_delta (got %v)", plan.ContainerOpts)
+		}
 	}
 }
 

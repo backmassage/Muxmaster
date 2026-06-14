@@ -75,13 +75,21 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 		videoFilters = plan.SWVideoFilters
 	}
 	if plan.Action == planner.ActionEncode && videoFilters != "" {
-		args = append(args, "-vf", videoFilters)
+		// Scope the filter graph to the primary output video stream. A global
+		// -vf also matches attached-picture video streams, which conflicts with
+		// the later -c:v:N copy used to preserve MKV cover art.
+		args = append(args, "-filter:v:0", videoFilters)
 	}
 
 	// --- Stream maps ---
 	args = append(args, "-map", fmt.Sprintf("0:%d", plan.VideoStreamIdx))
 	args = appendAudioMaps(args, cfg, plan, rs)
 	args = appendSubtitleMaps(args, plan, rs)
+	// Cover-art video streams must be mapped BEFORE the font/image
+	// attachments: when -map 0:t? precedes an attached_pic video stream in
+	// output order, the matroska muxer mis-routes the cover packet to an
+	// attachment slot ("Received a packet for an attachment stream" -> EINVAL).
+	args = appendAttachedPicMaps(args, plan)
 	args = appendAttachmentMaps(args, plan, rs)
 
 	// --- Global stream flags ---
@@ -96,9 +104,10 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	// --- Bitstream filters (e.g. dovi_rpu=strip=1 on remux) ---
 	args = append(args, plan.BSFOpts...)
 
-	// --- Cover art (after the video codec section: the per-stream -c:v:N
-	// copy must come later than the global -c:v to win for that stream) ---
-	args = appendAttachedPicMaps(args, plan)
+	// --- Cover art codec (after the video codec section: the per-stream
+	// -c:v:N copy must come later than the global -c:v to win for that
+	// stream). The maps themselves are emitted earlier, before attachments. ---
+	args = appendAttachedPicCodecs(args, plan)
 
 	// --- Tag opts (e.g. -tag:v hvc1 for MP4) ---
 	args = append(args, plan.TagOpts...)
@@ -175,6 +184,26 @@ func appendVideoCodec(args []string, cfg *config.Config, plan *planner.FilePlan,
 			)
 			if rs.VaapiBFrames {
 				args = append(args, "-bf", "4")
+			}
+			// HDR10 static metadata (ST.2086 mastering display + CTA-861.3
+			// MaxCLL/MaxFALL) on the VAAPI path. Unlike libx265, hevc_vaapi has
+			// no -master_display/-max_cll options: it re-emits the HDR SEI from
+			// the decoded frames' AVMasteringDisplayMetadata/AVContentLightMetadata
+			// side data, which the decoder parses from the source bitstream and
+			// which survives the HW-decode surface chain and the SW prefilter
+			// chains (hqdn3d/gradfun + hwupload). That is why plan.MasterDisplay
+			// and plan.MaxCLL are not consumed here — the encoder reads the side
+			// data directly, not these formatted strings.
+			//
+			// Emission is gated by the encoder's -sei flag, which defaults to
+			// "hdr+a53_cc". We set it explicitly (to the same value, preserving
+			// a53_cc caption passthrough) only when the plan carries HDR10
+			// metadata, so the HDR SEI no longer depends on an ffmpeg default
+			// that a future version could change silently. Verified on ffmpeg
+			// 8.1 / Mesa radeonsi (VCN 3.1): ffprobe confirms "Mastering display
+			// metadata" + "Content light level metadata" in the output bitstream.
+			if plan.MasterDisplay != "" || plan.MaxCLL != "" {
+				args = append(args, "-sei", "hdr+a53_cc")
 			}
 		case config.EncoderCPU:
 			// aq-mode=3: auto-variance AQ biased toward dark scenes —
@@ -290,18 +319,31 @@ func appendSubtitleMaps(args []string, plan *planner.FilePlan, rs *RetryState) [
 	return args
 }
 
-// appendAttachedPicMaps carries cover-art video streams (MKV only). They are
-// always stream-copied; the codec spec is emitted by video-stream ordinal
-// (primary video is v:0, covers follow), which overrides the global encode
-// codec because it is the later, more specific option.
+// appendAttachedPicMaps maps cover-art video streams (MKV only) and tags them
+// with the attached_pic disposition. These maps must precede the font/image
+// attachment maps (0:t?) in output stream order; otherwise the matroska muxer
+// mis-routes the cover packet to an attachment slot and fails with EINVAL. The
+// stream-copy codec spec is emitted separately by appendAttachedPicCodecs.
 func appendAttachedPicMaps(args []string, plan *planner.FilePlan) []string {
 	for i, idx := range plan.AttachedPicIdxs {
 		ord := i + 1
 		args = append(args,
 			"-map", fmt.Sprintf("0:%d", idx),
-			fmt.Sprintf("-c:v:%d", ord), "copy",
 			fmt.Sprintf("-disposition:v:%d", ord), "attached_pic",
 		)
+	}
+	return args
+}
+
+// appendAttachedPicCodecs stream-copies the cover-art video streams. The codec
+// spec is emitted by video-stream ordinal (primary video is v:0, covers
+// follow), which overrides the global encode codec because it is the later,
+// more specific option — hence this is emitted after the video codec section,
+// separately from appendAttachedPicMaps.
+func appendAttachedPicCodecs(args []string, plan *planner.FilePlan) []string {
+	for i := range plan.AttachedPicIdxs {
+		ord := i + 1
+		args = append(args, fmt.Sprintf("-c:v:%d", ord), "copy")
 	}
 	return args
 }

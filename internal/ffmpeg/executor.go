@@ -4,9 +4,11 @@ package ffmpeg
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
+	"syscall"
 
 	"github.com/backmassage/muxmaster/internal/config"
 	"github.com/backmassage/muxmaster/internal/planner"
@@ -16,6 +18,24 @@ import (
 type ExecResult struct {
 	Stderr string
 	Err    error
+	// Signal is the name of the signal that terminated ffmpeg (e.g. "killed",
+	// "segmentation fault"), or "" when the process exited normally — including
+	// with a non-zero status. A signal kill prints nothing to stderr, so this is
+	// the only evidence of an OOM SIGKILL or a crash; the retry classifier and
+	// failure reporter use it to avoid the misleading "no error message captured".
+	Signal string
+}
+
+// signalName returns the terminating signal's name if err is an *exec.ExitError
+// whose process was killed by a signal, or "" otherwise.
+func signalName(err error) string {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		if ws, ok := ee.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			return ws.Signal().String()
+		}
+	}
+	return ""
 }
 
 // RunFunc executes a built ffmpeg argument list and returns the result.
@@ -42,6 +62,7 @@ func NewRunFunc(showOutput bool) RunFunc {
 		return ExecResult{
 			Stderr: stderrBuf.String(),
 			Err:    err,
+			Signal: signalName(err),
 		}
 	}
 }

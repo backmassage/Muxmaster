@@ -1,6 +1,11 @@
 # hevc_vaapi Quality Maximization — Content-Adaptive Default Tuning
 
-**Status:** draft (research + planning only; no encodes run, no code changed)
+**Status:** in progress — Changes 1, 5, 6 landed with production values
+(`vcnQPCeilingClean=16`, `vcnQPCeilingGrain=24`, `vcnContentClassMinGrain=24`,
+`fallbackQPCeiling=21`). Change 6 closed via a point-estimate re-key of
+`PreflightAdjust` (not a `vaapiRatios` refit); the ceiling now binds on h264/hevc
+(1080p h264 BD holds at QP16, point ≈92%) and the `pipeline/runner.go` post-encode
+loop is the primary real-size guard. Changes 2/3/4 and the VMAF sweep remain open.
 **Owner concern:** raise quality-per-bit (and absolute quality) of the default
 `hevc_vaapi` path on the VCN-class target hardware, content-adaptively, without
 regressing the size discipline beyond a flexible ~25% upper bound.
@@ -248,7 +253,7 @@ machinery so it composes with detection rather than bypassing it.
 - **What:** For `film`/`grain`, after denoise, nudge QP **down 1** (a negative
   `tuneQPBias` for those modes) so the bits denoise frees up buy fidelity instead
   of only shrinking the file. This bias is *not* self-clamping — it is bounded by
-  the Change 5 `contentClassMin` invariant (grain floor ≈ knee 22), which is
+  the Change 5 `contentClassMin` invariant (grain floor = knee 24, landed), which is
   enforced after the full bias stack so global −2 + tune −1 cannot compound below
   the knee.
 - **Rationale:** Denoise + lower-QP is the quality-first synergy: the denoised
@@ -296,8 +301,8 @@ is VCN-3.1-specific. Two safeguards:
   ```
 
   where `contentClassMin` is a per-class, per-device floor — for `grain` it is the
-  measured knee (≈22 on VCN; memory: below qp22 = huge bits, invisible gains), so
-  film/grain −1 can never drive grain QP below it. The ceiling (Change 1) is
+  measured knee (landed at 24 on VCN; memory: VMAF 99 at qp25, below qp22 = huge
+  bits for invisible gains), so film/grain −1 can never drive grain QP below it. The ceiling (Change 1) is
   applied to the *push target*, the min to the *bias stack*; the test matrix must
   prove no combination of (bias, tune, ceiling, push) exits `[contentClassMin,
   VaapiQPMax]`.
@@ -307,6 +312,23 @@ is VCN-3.1-specific. Two safeguards:
   on Intel; `-bf` gating follows the live result, not the cached claim.
 
 ### Change 6 — Recalibrate the estimate/preflight model so the ceiling actually binds  *(closes the Change 1 ↔ preflight coupling)*
+
+> **LANDED (resolved differently than originally planned).** The override is fixed
+> by **re-keying `PreflightAdjust` to the POINT estimate** (trigger when predicted
+> output > ~105% of input), **not** by refitting `vaapiRatios`. The table stays an
+> approximate **display-only** heuristic — it no longer gates the ceiling, so the
+> "land the relaxed trigger and the refit curves together, post-sweep" sequencing
+> below is moot: the re-key is safe on its own because the point estimate (≈92% for
+> a 1080p h264 BD at QP16) no longer over-predicts the way the ×1.30 HIGH band did.
+> Accepted consequence (the risk this section's sequencing worried about): softened
+> preflight is no longer the anti-bloat net, so the **`pipeline/runner.go` post-encode
+> escalation loop is now the primary real-size guard** (output>input → bump QP,
+> re-encode, max 2×) — it checks measured output, not a prediction. The per-(content
+> class, codec, resolution) curve refit and the dual-codec sweep below remain
+> available as a *future display-accuracy* improvement, not a correctness blocker.
+> Worked example (final): SmartQuality base ≈15 → bounded push → **QP16** (ceiling)
+> → preflight **no bump** (point 92%) → final **QP16**. Before the re-key the same
+> case settled at **QP19–20**.
 
 - **Problem (measured in-tree, not hypothetical).** Change 1 lowers QP to the
   quality ceiling, but `PreflightAdjust` immediately re-clamps it upward using
@@ -482,11 +504,12 @@ denoise/bias variants behind flags; only the *defaults* flip after calibration.
 
 - [ ] Rate–QP curves measured on VCN; `qpCeiling`/`contentClassMin` derived from
       them (the withdrawn "+12–15%" estimate replaced by measured slope).
-- [ ] Default `hevc_vaapi` implements `finalQP = max(base, min(pushTarget, ceiling))`;
+- [x] Default `hevc_vaapi` implements `finalQP = max(base, min(pushTarget, ceiling))`;
       the traced 25/8 Mbps cases land at the ceiling, not `base+3`. Edge cases
-      (base < / ≈ / > ceiling) unit-tested.
-- [ ] Stacked-bias QP invariant proven: no (bias, tune, ceiling, push) combination
-      exits `[contentClassMin, VaapiQPMax]`; grain never below its knee.
+      (base < / ≈ / > ceiling) unit-tested. **(Change 1, landed)**
+- [x] Stacked-bias QP invariant proven: no (bias, tune, ceiling, push) combination
+      exits `[contentClassMin, VaapiQPMax]`; grain never below its knee (24).
+      **(Change 5, landed — `TestQPInvariant_NoCombinationExitsRange`)**
 - [ ] Anime tune emits QP bias 0 (or the validated −1/−2); gradient spot-check
       shows no banding regression.
 - [ ] Grain/film denoise strengths and `grainLight/HeavyThreshold` set from the
@@ -496,10 +519,14 @@ denoise/bias variants behind flags; only the *defaults* flip after calibration.
 - [ ] Cross-vendor pass done: B-frames re-verified via `ffprobe pict_type` on the
       current driver + Intel; VCN-specific magnitudes gated by vendor/gen with
       conservative off-VCN fallbacks; CQP remains the VCN default.
-- [ ] `EstimateBitrate` rate–QP curves refit per (source codec, content class,
-      resolution) from the sweep and `PreflightAdjust` re-keyed to true anti-bloat;
-      Change 1's ceiling verified to bind on h264/hevc (no longer overridden to the
-      legacy QP) while output still never exceeds source. (Change 6)
+- [x] `PreflightAdjust` re-keyed to true anti-bloat (POINT estimate > ~105% of
+      input); Change 1's ceiling verified to bind on h264/hevc — a 1080p h264 BD
+      holds at QP16 (point ≈92%) with no preflight bump
+      (`TestQualityFirstCeilingBindsH264_1080pBD`). Output-never-exceeds-source is
+      now guarded by the `pipeline/runner.go` post-encode loop, not the estimator.
+      **(Change 6, landed via point re-key — NOT the curve refit.)** Optional future
+      work: refit `EstimateBitrate` per (source codec, content class, resolution)
+      to tighten the *displayed* estimate; not a correctness blocker.
 - [ ] `make ci` green; this plan's `status` set to `done`.
 
 ## Sources

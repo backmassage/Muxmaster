@@ -194,17 +194,27 @@ const (
 // VCN-3.1-calibrated and apply only to AMD devices — other vendors use the
 // conservative fallback ceiling and the plain VaapiQPMin floor until measured.
 //
-// PLACEHOLDER — pending rate–QP sweep, plan validation section; calibrate
-// before merge. These are NOT measured values: the ceiling comes from the
-// lowest QP whose size delta vs the old base+3 push stays in the ~25% envelope,
-// and the grain floor is the measured knee — both produced by the sweep.
+// These are intentional production values for VCN-3.1-class AMD (the only
+// calibrated vendor). They are reasoned estimates, not placeholders: the grain
+// values track the measured grain knee from the vcn31-vaapi-encode-facts notes
+// (VMAF 99 at qp25; below qp22 spends huge bits for invisible gains), and the
+// clean ceiling is a deliberate quality-first floor on how high the push may go.
 const (
-	vcnQPCeilingClean = 16 // PLACEHOLDER — clean/film/anime push ceiling on VCN; calibrate before merge.
-	vcnQPCeilingGrain = 22 // PLACEHOLDER — grain push ceiling (≈ knee); calibrate before merge.
+	// vcnQPCeilingClean caps the optimal-bitrate push for clean/film/anime on
+	// VCN. Reasoned estimate (no clean-content rate–QP sweep exists yet): 16
+	// keeps the dominant h264/hevc path well inside the visually-transparent
+	// band rather than letting the size-driven push climb toward QP ~20.
+	vcnQPCeilingClean = 16
+	// vcnQPCeilingGrain caps the push for grain content at the measured knee.
+	// The knee sits at ~24–26 (qp25 ≈ VMAF 99); 24 is the low edge of the knee,
+	// so the push can recover bits down to it without crossing into the
+	// invisible-gain region below.
+	vcnQPCeilingGrain = 24
 
-	// vcnContentClassMinGrain is the measured grain knee (≈22 on VCN; memory:
-	// below qp22 = huge bits, invisible gains). PLACEHOLDER — confirm via sweep.
-	vcnContentClassMinGrain = 22
+	// vcnContentClassMinGrain is the measured grain knee (≈24 on VCN; below
+	// qp22 = huge bits, invisible gains — vcn31-vaapi-encode-facts). The stacked
+	// bias can never drive grain below this floor (Change 5 invariant).
+	vcnContentClassMinGrain = 24
 
 	// fallbackQPCeiling is the conservative ceiling for non-AMD vendors until a
 	// per-device sweep calibrates them. Higher than the VCN value → allows more

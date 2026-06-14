@@ -232,3 +232,61 @@ func TestQPInvariant_NoCombinationExitsRange(t *testing.T) {
 		}
 	}
 }
+
+// TestGrainKneePinnedAt24 locks the grain QP knee at its measured value (24) for
+// both the push ceiling and the stacked-bias floor. These are intentional
+// production values (vcn31-vaapi-encode-facts: VMAF 99 at qp25, invisible gains
+// below qp22), not free parameters — moving either off 24 must fail here.
+func TestGrainKneePinnedAt24(t *testing.T) {
+	if vcnQPCeilingGrain != 24 {
+		t.Errorf("vcnQPCeilingGrain = %d, want 24 (measured grain knee)", vcnQPCeilingGrain)
+	}
+	if vcnContentClassMinGrain != 24 {
+		t.Errorf("vcnContentClassMinGrain = %d, want 24 (measured grain knee)", vcnContentClassMinGrain)
+	}
+
+	// The full stacked bias (curves + smart bias + denoise tune bias) cannot
+	// drive AMD grain below 24, even under maximal downward pressure.
+	cfg := amdVAAPICfg()
+	cfg.Encoder.Tune = config.TuneGrain
+	cfg.Encoder.DenoiseQPBias = true   // the only downward tune bias (−1)
+	cfg.Encoder.SmartQualityBias = -10 // force maximal downward pressure
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 30_000_000,
+		},
+		Format: probe.FormatInfo{BitRate: 31_000_000},
+	}
+	if sq := SmartQuality(cfg, pr); sq.VaapiQP < 24 {
+		t.Errorf("AMD grain QP %d driven below knee 24 by stacked bias", sq.VaapiQP)
+	}
+}
+
+// TestQualityFirstCeilingBindsH264_1080pBD is the headline done-criterion of the
+// quality-first plan: a 1080p h264 Blu-ray under quality-first (AMD) must encode
+// at the clean QP ceiling (16) and must NOT be bumped by preflight. Before the
+// Change 6 point-estimate re-key, preflight keyed on the ×1.30 HIGH estimate and
+// dragged this case up to QP ~20, defeating the ceiling.
+func TestQualityFirstCeilingBindsH264_1080pBD(t *testing.T) {
+	cfg := amdVAAPICfg() // tune=auto → clean ceiling, quality-first on
+	pr := &probe.ProbeResult{
+		PrimaryVideo: &probe.VideoStream{
+			Codec: "h264", Width: 1920, Height: 1080, BitRate: 25_000_000,
+		},
+		Format: probe.FormatInfo{BitRate: 26_000_000},
+	}
+	plan := BuildPlan(cfg, pr)
+	if plan.Action != ActionEncode {
+		t.Fatalf("expected ActionEncode, got %v", plan.Action)
+	}
+	if plan.VaapiQP != vcnQPCeilingClean {
+		t.Errorf("quality-first QP = %d, want ceiling %d (the ceiling must bind)",
+			plan.VaapiQP, vcnQPCeilingClean)
+	}
+	if plan.PreflightBumps != 0 {
+		t.Errorf("preflight bumped QP by %d; the ceiling must hold (point estimate ≤105%%)",
+			plan.PreflightBumps)
+	}
+	t.Logf("1080p h264 BD quality-first: final QP=%d, preflight bumps=%d, estimate=%d-%d%% (point %d%%)",
+		plan.VaapiQP, plan.PreflightBumps, plan.Estimate.LowPct, plan.Estimate.HighPct, plan.Estimate.PointPct)
+}
