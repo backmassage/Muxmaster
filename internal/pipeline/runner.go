@@ -479,6 +479,7 @@ func attemptWithErrorRetry(
 		ffmpeg.RetryDisableHWDecode: "disable hardware decode",
 		ffmpeg.RetryDisableQVBR:     "fall back to constant-QP rate control",
 		ffmpeg.RetryDropBFrames:     "drop B-frames",
+		ffmpeg.RetryFallbackCPU:     "fall back to CPU (libx265) encoding",
 	}
 
 	for {

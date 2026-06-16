@@ -183,6 +183,50 @@ func TestBuild_VAAPI_HWDecodeFallback(t *testing.T) {
 	}
 }
 
+func TestBuild_VAAPI_ForceCPUFallback(t *testing.T) {
+	cfg := vaapiCfg()
+	plan := &planner.FilePlan{
+		Action:          planner.ActionEncode,
+		VideoCodec:      "hevc_vaapi",
+		InputPath:       "/in/test.mkv",
+		OutputPath:      "/out/test.mkv",
+		VaapiQP:         18,
+		CpuCRF:          20,
+		MuxQueueSize:    4096,
+		VideoFilters:    "gradfun=1.2:16,format=p010,hwupload",
+		CPUVideoFilters: "gradfun=1.2:16",
+	}
+
+	rs := NewRetryState(plan)
+	rs.ForceCPU = true
+	args := Build(cfg, plan, rs)
+
+	// VAAPI device setup must be gone — the CPU path needs no hardware graph.
+	if containsArg(args, "-init_hw_device") {
+		t.Error("ForceCPU should not emit -init_hw_device")
+	}
+	if containsArg(args, "-filter_hw_device") {
+		t.Error("ForceCPU should not emit -filter_hw_device")
+	}
+	if containsArg(args, "-hwaccel") {
+		t.Error("ForceCPU should not emit -hwaccel")
+	}
+	// Codec must be libx265 at the configured CPU CRF, not hevc_vaapi.
+	if got := argValue(args, "-c:v"); got != "libx265" {
+		t.Errorf("expected -c:v libx265, got %q", got)
+	}
+	if containsArg(args, "hevc_vaapi") {
+		t.Error("ForceCPU should not reference hevc_vaapi")
+	}
+	if got := argValue(args, "-crf"); got != "20" {
+		t.Errorf("expected -crf 20 (CpuCRF), got %q", got)
+	}
+	// Filter chain must be the hwupload-free CPU chain.
+	if got := argValue(args, "-filter:v:0"); got != "gradfun=1.2:16" {
+		t.Errorf("expected CPU filter chain, got %q", got)
+	}
+}
+
 func TestBuild_KeyframeInterval(t *testing.T) {
 	cfg := vaapiCfg()
 	plan := &planner.FilePlan{

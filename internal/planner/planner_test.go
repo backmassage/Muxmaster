@@ -21,6 +21,32 @@ func TestBuildPlan_H264Encode(t *testing.T) {
 	}
 }
 
+// The CPU fallback chain (used by RetryFallbackCPU) must never contain
+// hwupload — it runs without any VAAPI hardware graph.
+func TestBuildPlan_CPUFallbackChainHasNoHwupload(t *testing.T) {
+	cfg := defaultCfg() // VAAPI is the default mode
+	cfg.Encoder.Tune = config.TuneAnime
+	plan := BuildPlan(cfg, h264SDR())
+
+	if plan.VideoCodec != "hevc_vaapi" {
+		t.Fatalf("expected VAAPI encode, got codec %q", plan.VideoCodec)
+	}
+	if plan.CPUVideoFilters == "" {
+		// An empty chain is valid, but the anime prefilter should populate it.
+		t.Fatal("expected a non-empty CPU fallback chain for tune=anime")
+	}
+	if strings.Contains(plan.CPUVideoFilters, "hwupload") {
+		t.Errorf("CPU fallback chain must not contain hwupload, got %q", plan.CPUVideoFilters)
+	}
+	if !strings.Contains(plan.CPUVideoFilters, "gradfun") {
+		t.Errorf("CPU fallback chain should retain the anime prefilter, got %q", plan.CPUVideoFilters)
+	}
+	// The VAAPI chain itself does end in hwupload (sanity check on the fixture).
+	if !strings.Contains(plan.VideoFilters, "hwupload") {
+		t.Errorf("VAAPI chain should end in hwupload, got %q", plan.VideoFilters)
+	}
+}
+
 func TestBuildPlan_HEVCRemux(t *testing.T) {
 	plan := BuildPlan(defaultCfg(), hevcEdgeSafe())
 	if plan.Action != ActionRemux {

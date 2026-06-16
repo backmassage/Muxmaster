@@ -198,10 +198,51 @@ func TestAdvance_DisableHWDecode(t *testing.T) {
 }
 
 func TestAdvance_NoHWDecodeRetryForSoftwarePlans(t *testing.T) {
-	rs := NewRetryState(testPlan()) // plan.HWDecode = false
+	rs := NewRetryState(testPlan()) // plan.HWDecode = false, VideoCodec = "" (not VAAPI)
 	action := rs.Advance("No usable encoding profile found.")
 	if action != RetryNone {
-		t.Errorf("software-decode plan should not take HW decode retry, got %d", action)
+		t.Errorf("non-VAAPI software-decode plan should not retry, got %d", action)
+	}
+}
+
+// A VAAPI encode that already runs software decode (prefilter / Hi10p AVC) and
+// still can't configure the hwupload graph must fall back to CPU rather than
+// hard-fail with "no applicable retry".
+func TestAdvance_FallbackCPUForSoftwareVAAPI(t *testing.T) {
+	plan := testPlan()
+	plan.VideoCodec = "hevc_vaapi"
+	plan.HWDecode = false // prefilter forced software decode from the start
+	rs := NewRetryState(plan)
+
+	stderr := "Impossible to convert between the formats supported by the filter 'Parsed_hwupload_2' and the filter 'auto_scale_1'"
+	action := rs.Advance(stderr)
+	if action != RetryFallbackCPU {
+		t.Fatalf("expected RetryFallbackCPU, got %d", action)
+	}
+	if !rs.ForceCPU {
+		t.Error("ForceCPU should be set after the fallback")
+	}
+
+	// The fallback fires once: a second identical failure has no further fix.
+	if action := rs.Advance(stderr); action != RetryNone {
+		t.Errorf("CPU fallback should fire once, got %d on the second failure", action)
+	}
+}
+
+// HW-decode-active VAAPI plans first drop to software decode, then to CPU if the
+// software hwupload graph also fails.
+func TestAdvance_HWDecodeThenCPUFallback(t *testing.T) {
+	plan := testPlan()
+	plan.VideoCodec = "hevc_vaapi"
+	plan.HWDecode = true
+	rs := NewRetryState(plan)
+
+	stderr := "Impossible to convert between the formats supported by the filter 'hwupload' and the filter 'auto_scale'"
+	if action := rs.Advance(stderr); action != RetryDisableHWDecode {
+		t.Fatalf("first failure should disable HW decode, got %d", action)
+	}
+	if action := rs.Advance(stderr); action != RetryFallbackCPU {
+		t.Fatalf("second failure should fall back to CPU, got %d", action)
 	}
 }
 

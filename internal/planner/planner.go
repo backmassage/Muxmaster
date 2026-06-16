@@ -222,6 +222,17 @@ func BuildPlan(cfg *config.Config, pr *probe.ProbeResult) *FilePlan {
 			// retried with software decode + hwupload using this chain.
 			plan.SWVideoFilters = BuildVideoFilter(cfg, pr, false)
 		}
+		if cfg.Encoder.Mode == config.EncoderVAAPI {
+			// Last-resort fallback chain for the RetryFallbackCPU path: a pure
+			// CPU chain with no hwupload, for drivers where the SW-decode +
+			// hwupload + hevc_vaapi graph fails negotiation ("Impossible to
+			// convert between the formats supported by 'hwupload' and
+			// 'auto_scale'"). Built as if in CPU mode so BuildVideoFilter omits
+			// the hwupload tail and ends the tonemap chain in yuv420p.
+			cpuCfg := *cfg
+			cpuCfg.Encoder.Mode = config.EncoderCPU
+			plan.CPUVideoFilters = BuildVideoFilter(&cpuCfg, pr, false)
+		}
 		plan.ColorOpts = BuildColorOpts(cfg, pr)
 		BuildHDR10Meta(cfg, pr, plan)
 

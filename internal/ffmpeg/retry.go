@@ -15,6 +15,7 @@ const (
 	RetryDisableHWDecode             // Fall back to software decode + hwupload.
 	RetryDisableQVBR                 // Fall back from QVBR to constant-QP rate control.
 	RetryDropBFrames                 // Drop -bf (driver rejected B-frame encoding).
+	RetryFallbackCPU                 // Abandon VAAPI entirely; re-encode with libx265 (CPU).
 )
 
 const (
@@ -41,9 +42,14 @@ type RetryState struct {
 	HWDecode      bool
 	VaapiQVBR     bool
 	VaapiBFrames  bool
+	ForceCPU      bool
 
 	VaapiQP int
 	CpuCRF  int
+
+	// canFallbackCPU is true only for VAAPI encodes, gating the
+	// RetryFallbackCPU action. Set at construction from the plan's codec.
+	canFallbackCPU bool
 }
 
 // NewRetryState initializes a RetryState from the plan's initial values.
@@ -60,6 +66,9 @@ func NewRetryState(plan *planner.FilePlan) *RetryState {
 		VaapiBFrames:  plan.VaapiBFrames,
 		VaapiQP:       plan.VaapiQP,
 		CpuCRF:        plan.CpuCRF,
+		// CPU fallback only applies to VAAPI encodes. The CPU chain may be
+		// empty (plain decode→encode), which is a valid "-filter:v"-less command.
+		canFallbackCPU: plan.VideoCodec == "hevc_vaapi",
 	}
 }
 
@@ -96,6 +105,17 @@ func (s *RetryState) Advance(stderr string) RetryAction {
 	if s.HWDecode && MatchHWDecodeIssue(stderr) {
 		s.HWDecode = false
 		return RetryDisableHWDecode
+	}
+	// CPU fallback: the VAAPI filter graph still can't be configured even with
+	// software decode + hwupload. This happens on drivers/ffmpeg builds where
+	// the SW-frame -> hwupload -> hevc_vaapi chain fails format negotiation
+	// ("Impossible to convert between the formats supported by 'hwupload' and
+	// 'auto_scale'"), which the prefilter and Hi10p AVC paths hit because they
+	// force software decode from the start (so RetryDisableHWDecode is a no-op).
+	// Abandoning VAAPI for libx265 sidesteps the hardware graph entirely.
+	if s.canFallbackCPU && !s.ForceCPU && MatchHWDecodeIssue(stderr) {
+		s.ForceCPU = true
+		return RetryFallbackCPU
 	}
 	if s.VaapiQVBR && MatchRateControlIssue(stderr) {
 		s.VaapiQVBR = false

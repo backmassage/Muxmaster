@@ -24,6 +24,7 @@ type FilePlan struct {
 	VideoCodec       string   // "hevc_vaapi", "libx265", or "copy"
 	VideoFilters     string   // comma-joined filter chain (may be empty)
 	SWVideoFilters   string   // software-decode fallback chain (set only when HWDecode is true)
+	CPUVideoFilters  string   // pure-CPU fallback chain, no hwupload (set in VAAPI mode for the RetryFallbackCPU path)
 	ColorOpts        []string // -color_trc, -color_primaries, -colorspace pairs
 	BSFOpts          []string // bitstream filter args (e.g. -bsf:v dovi_rpu=strip=1 on remux)
 	HWDecode         bool     // Use VAAPI hardware decode (frames stay on GPU)

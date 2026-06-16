@@ -20,6 +20,17 @@ import (
 func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string {
 	args := make([]string, 0, 64)
 
+	// CPU fallback (RetryFallbackCPU): re-encode with libx265 and no VAAPI
+	// graph. Switching the effective encoder mode to CPU routes the hw-device
+	// block, filter selection, and codec section down their software paths
+	// without threading a flag through each one.
+	effCfg := cfg
+	if rs.ForceCPU {
+		c := *cfg
+		c.Encoder.Mode = config.EncoderCPU
+		effCfg = &c
+	}
+
 	// --- Preamble ---
 	args = append(args, "ffmpeg", "-hide_banner", "-nostdin", "-y")
 
@@ -52,7 +63,7 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	hwDecode := plan.HWDecode && rs.HWDecode
 
 	// --- VAAPI hardware device (encode path only) ---
-	if plan.Action == planner.ActionEncode && cfg.Encoder.Mode == config.EncoderVAAPI {
+	if plan.Action == planner.ActionEncode && effCfg.Encoder.Mode == config.EncoderVAAPI {
 		args = append(args,
 			"-init_hw_device", "vaapi=va:"+cfg.Encoder.VaapiDevice,
 		)
@@ -73,6 +84,10 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	videoFilters := plan.VideoFilters
 	if plan.HWDecode && !hwDecode {
 		videoFilters = plan.SWVideoFilters
+	}
+	if rs.ForceCPU {
+		// CPU fallback uses a hwupload-free chain (may be empty).
+		videoFilters = plan.CPUVideoFilters
 	}
 	if plan.Action == planner.ActionEncode && videoFilters != "" {
 		// Scope the filter graph to the primary output video stream. A global
@@ -99,7 +114,7 @@ func Build(cfg *config.Config, plan *planner.FilePlan, rs *RetryState) []string 
 	)
 
 	// --- Video codec ---
-	args = appendVideoCodec(args, cfg, plan, rs)
+	args = appendVideoCodec(args, effCfg, plan, rs)
 
 	// --- Bitstream filters (e.g. dovi_rpu=strip=1 on remux) ---
 	args = append(args, plan.BSFOpts...)
